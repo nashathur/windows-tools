@@ -95,6 +95,6 @@ pub(crate) fn on_data(a: &mut App, f: Box<Fetched>, ctx: &mut Ctx) {
     // retry sooner after an error
     let ms = if a.error.is_some() { 2 * 60_000 } else { a.cfg.refresh_minutes.max(5) * 60_000 };
     ctx.every(TIMER_REFRESH, ms);
-    ctx.after(flyout::invalidate);
+    ctx.redraw_panel();
     ctx.redraw();
 }

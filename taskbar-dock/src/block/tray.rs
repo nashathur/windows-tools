@@ -70,6 +70,37 @@ pub(crate) unsafe fn destroy(icon: HICON) {
     }
 }
 
+/// Where the tray icon is now: its box, and the box of the tray overflow panel when it sits in
+/// that (any shown window of Explorer's other than the taskbars). None: Windows doesn't say, or
+/// the icon isn't on screen (e.g. in the closed overflow).
+pub(crate) unsafe fn place(main: HWND) -> Option<(Box4, Option<Box4>)> {
+    use windows_sys::Win32::Foundation::{POINT, RECT};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowThreadProcessId, WindowFromPoint, GA_ROOT};
+    let id = NOTIFYICONIDENTIFIER { cbSize: std::mem::size_of::<NOTIFYICONIDENTIFIER>() as u32, hWnd: main, uID: ID, guidItem: std::mem::zeroed() };
+    let mut r: RECT = std::mem::zeroed();
+    if Shell_NotifyIconGetRect(&id, &mut r) != 0 || r.right <= r.left {
+        return None;
+    }
+    let icon = (r.left, r.top, r.right, r.bottom);
+    let root = GetAncestor(WindowFromPoint(POINT { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 }), GA_ROOT);
+    let pid = |h: HWND| {
+        let mut p = 0u32;
+        GetWindowThreadProcessId(h, &mut p);
+        p
+    };
+    let tb = crate::dock::taskbar();
+    if root == 0 || tb == 0 || pid(root) != pid(tb) {
+        return None; // not Explorer's at that spot: the icon isn't showing
+    }
+    let mut name = [0u16; 64];
+    let n = windows_sys::Win32::UI::WindowsAndMessaging::GetClassNameW(root, name.as_mut_ptr(), name.len() as i32);
+    if root == tb || String::from_utf16_lossy(&name[..n.max(0) as usize]) == "Shell_SecondaryTrayWnd" {
+        return Some((icon, None));
+    }
+    let o = crate::dock::rect(root);
+    Some((icon, Some((o.left, o.top, o.right, o.bottom))))
+}
+
 fn data(main: HWND) -> NOTIFYICONDATAW {
     let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
     nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;

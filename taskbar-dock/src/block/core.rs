@@ -163,6 +163,40 @@ pub(crate) fn menu_anchor(strip: Option<Box4>, pt: (i32, i32)) -> Box4 {
     strip.unwrap_or((pt.0, pt.1, pt.0 + 1, pt.1 + 1))
 }
 
+/// Where a `w`×`h` panel opened without a strip (from the tray icon) goes: centred on the
+/// pointer's x, at the bottom of the work area `work`, kept `margin` inside it.
+pub(crate) fn panel_at_pointer(pt: (i32, i32), w: i32, h: i32, work: Box4, margin: i32) -> (i32, i32) {
+    use crate::panel::{position, RECT};
+    let (left, top, right, bottom) = work;
+    let at = RECT { left: pt.0, top: bottom, right: pt.0, bottom: bottom + 1 };
+    position(at, w, h, RECT { left, top, right, bottom }, margin)
+}
+
+/// Where a `w`×`h` panel opened from the tray icon goes ([`tray::place`]). On the taskbar:
+/// above it, centred on the icon. In the tray overflow panel `o`: never over it, as Windows'
+/// own flyouts: above it, else beside it (left, then right) with the bottoms lined up; it
+/// covers the overflow only if nothing else fits. All kept `margin` inside the work area.
+pub(crate) fn panel_at_tray(icon: Box4, overflow: Option<Box4>, w: i32, h: i32, work: Box4, margin: i32) -> (i32, i32) {
+    use crate::panel::{position, RECT};
+    let r = |b: Box4| RECT { left: b.0, top: b.1, right: b.2, bottom: b.3 };
+    let Some(o) = overflow else {
+        return position(r(icon), w, h, r(work), margin);
+    };
+    let (wl, wt, wr, wb) = work;
+    let fit = |pos: i32, size: i32, lo: i32, hi: i32| pos.min(hi - margin - size).max(lo + margin);
+    if o.1 - margin - h >= wt + margin {
+        return (fit((o.0 + o.2) / 2 - w / 2, w, wl, wr), o.1 - margin - h);
+    }
+    let y = fit(o.3 - h, h, wt, wb);
+    if o.0 - margin - w >= wl + margin {
+        return (o.0 - margin - w, y);
+    }
+    if o.2 + margin + w <= wr - margin {
+        return (o.2 + margin, y);
+    }
+    position(r(o), w, h, r(work), margin)
+}
+
 /// The left `width` px of a `w`×`h` pixel buffer (cut off during a compact resize, or narrowed
 /// for room), with the last `fade` px fading out.
 pub(crate) fn cut(px: &[u32], w: i32, h: i32, width: i32, fade: i32) -> Vec<u32> {
@@ -477,6 +511,7 @@ mod tests {
     fn requests_are_recorded_not_done() {
         let mut ctx = Ctx::new(42);
         ctx.redraw();
+        ctx.redraw_panel();
         ctx.every(1, 1000);
         ctx.stop(1);
         ctx.open_panel();
@@ -486,13 +521,48 @@ mod tests {
         ctx.quit();
         assert_eq!(ctx.main_window(), 42);
         let s: Vec<String> = ctx.reqs.iter().map(|r| format!("{r:?}")).collect();
-        assert_eq!(s, ["Redraw", "Every(1, 1000)", "Stop(1)", "OpenPanel", "TogglePanel", "ClosePanel", "Menu", "Quit"]);
+        assert_eq!(s, ["Redraw", "RedrawPanel", "Every(1, 1000)", "Stop(1)", "OpenPanel", "TogglePanel", "ClosePanel", "Menu", "Quit"]);
     }
 
     #[test]
     fn the_menu_goes_above_the_strip_or_else_the_pointer() {
         assert_eq!(menu_anchor(Some((10, 20, 70, 68)), (500, 900)), (10, 20, 70, 68));
         assert_eq!(menu_anchor(None, (500, 900)), (500, 900, 501, 901), "no strip (tray icon): the pointer");
+    }
+
+    #[test]
+    fn a_tray_opened_panel_goes_above_the_pointer_at_the_work_areas_bottom() {
+        let work = (0, 0, 1920, 1032);
+        // measured with the old flyout.rs: pointer x 864 → (684, 526) for 360×494, margin 12
+        assert_eq!(panel_at_pointer((864, 761), 360, 494, work, 12), (684, 526));
+        // the pointer's y doesn't matter (the tray is on the taskbar, below the work area)
+        assert_eq!(panel_at_pointer((864, 1060), 360, 494, work, 12), (684, 526));
+        // kept inside the work area
+        assert_eq!(panel_at_pointer((1910, 1060), 360, 494, work, 12), (1920 - 12 - 360, 526));
+        assert_eq!(panel_at_pointer((5, 1060), 360, 494, work, 12), (12, 526));
+    }
+
+    #[test]
+    fn a_panel_from_the_tray_never_covers_the_overflow_panel() {
+        let work = (0, 0, 1920, 1032);
+        let overlaps = |(x, y): (i32, i32), o: Box4| x < o.2 && x + 360 > o.0 && y < o.3 && y + 494 > o.1;
+        // icon on the taskbar: above it, centred on the icon
+        assert_eq!(panel_at_tray((1600, 1040, 1624, 1072), None, 360, 494, work, 12), (1432, 526));
+        // in a small overflow panel above the chevron: above that
+        let o = (1500, 860, 1700, 1020);
+        let at = panel_at_tray((1520, 880, 1544, 904), Some(o), 360, 494, work, 12);
+        assert_eq!(at, (1420, 860 - 12 - 494));
+        assert!(!overlaps(at, o));
+        // a tall overflow (no room above): left of it, bottoms lined up
+        let o = (1500, 400, 1700, 1020);
+        let at = panel_at_tray((1520, 420, 1544, 444), Some(o), 360, 494, work, 12);
+        assert_eq!(at, (1500 - 12 - 360, 1020 - 494));
+        assert!(!overlaps(at, o));
+        // ... and right of it when it's at the screen's left edge
+        let o = (10, 400, 210, 1020);
+        let at = panel_at_tray((20, 420, 44, 444), Some(o), 360, 494, work, 12);
+        assert_eq!(at, (222, 526));
+        assert!(!overlaps(at, o));
     }
 
     #[test]

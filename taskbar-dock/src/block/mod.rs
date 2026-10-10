@@ -9,6 +9,9 @@
 //! - Explorer restarts, and the floating fallback when the taskbar can't be joined
 //! - hover highlight, button highlight boxes, the cover's hover / press feel
 //! - when the panel opens and closes ([`crate::panel::PanelBehaviour`]), one panel across widgets
+//! - the main (click / hover) panel's window (`shell.rs`): placed above the strip or the
+//!   pointer, faded in, closed on Esc or lost focus; the Content only sizes and draws it
+//!   ([`Content::panel_size`], [`Content::panel_draw`]) and gets its mouse ([`Content::panel_mouse`])
 //! - the right-click panel with the standard rows (Show on taskbar, Compact mode, Start with
 //!   Windows, Edit settings…, Quit)
 //! - the tray icon, shown whenever the strip isn't (switched off, or nothing to show), so the
@@ -20,10 +23,6 @@
 //! on a [`Ctx`] (`redraw`, `every`, `open_panel`, `quit`, `after`), and Block carries that out
 //! once its borrow has ended. Code outside the callbacks (the widget's own windows, posts from
 //! worker threads) reaches the Content through [`with`], which works the same way.
-//!
-//! Until step 4 of the plan the click / hover panel's window is still the widget's
-//! ([`Spec::panel`]); Block decides when it opens and closes, fades it in and closes it for drags,
-//! other widgets' panels and the right-click panel.
 
 mod core;
 mod place;
@@ -34,7 +33,7 @@ use crate::menu_panel::{self, Item, Menu, Row};
 use crate::style::Look;
 use crate::theme::Theme;
 
-pub use win::{panel_closed, right_click_on_panel, run, strip_window, with};
+pub use win::{run, strip_window, with};
 
 /// Content timer ids must be below this ([`Ctx::every`]); Block's own are above.
 pub const CONTENT_TIMERS: usize = 1000;
@@ -105,12 +104,6 @@ pub struct Spec {
     pub compact_when_crowded: bool,
     /// Crowded: may take any width between compact and full ([`crate::dock::Size::stretch`]).
     pub stretch: bool,
-    /// The click / hover panel's window, made by the widget (until the panel shell, step 4):
-    /// called outside Block's borrow. `Open` returns the new window (0: none); it must be a
-    /// `WS_EX_LAYERED` popup, not yet shown: Block places nothing, but shows, focuses and fades
-    /// it. `Close` destroys it. The widget reports a close of its own (lost focus, Esc) with
-    /// [`panel_closed`], and a right click on it with [`right_click_on_panel`].
-    pub panel: Option<fn(PanelCmd) -> isize>,
     /// The widget's log file, for dockctl's `log` (None: dockctl says there is none).
     pub log_file: Option<std::path::PathBuf>,
 }
@@ -130,20 +123,48 @@ impl Spec {
             hover_panel: true,
             compact_when_crowded: true,
             stretch: false,
-            panel: None,
             log_file: None,
         }
     }
 }
 
-/// For [`Spec::panel`].
+/// Which of the widget's panels ([`Content::panel_size`]); the right-click panel is Block's own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PanelCmd {
-    /// Create the panel for the strip window `strip` (place it with [`crate::panel::place`]);
-    /// `strip` 0: there's none (opened from a tray icon), place it above the pointer.
-    Open { strip: isize },
-    /// Destroy it.
-    Close,
+pub enum PanelKind {
+    /// The click / hover panel.
+    Main,
+}
+
+/// Everything [`Content::panel_draw`] needs.
+#[derive(Clone, Copy, Debug)]
+pub struct PanelFrame<'a> {
+    pub look: &'a Look,
+    /// Display scale of the panel's monitor (1.0 = 100%).
+    pub scale: f32,
+    /// The panel's size, px (what [`Content::panel_size`] gave).
+    pub w: i32,
+    pub h: i32,
+}
+
+impl PanelFrame<'_> {
+    /// `v` px at 100%, at this panel's scale, whole px.
+    pub fn px(&self, v: f32) -> i32 {
+        (v * self.scale).round() as i32
+    }
+
+    pub fn theme(&self) -> Theme {
+        Theme::new(self.look)
+    }
+}
+
+/// The mouse on a panel ([`Content::panel_mouse`]), panel px.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PanelMouse {
+    Move(i32, i32),
+    Down(i32, i32),
+    Up(i32, i32),
+    /// It left the panel.
+    Leave,
 }
 
 /// What is under the mouse on the strip ([`Content::hit`]).
@@ -270,6 +291,7 @@ pub struct Ctx {
 
 pub(crate) enum Request {
     Redraw,
+    RedrawPanel,
     Every(usize, u32),
     Stop(usize),
     OpenPanel,
@@ -284,6 +306,7 @@ impl std::fmt::Debug for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Request::Redraw => write!(f, "Redraw"),
+            Request::RedrawPanel => write!(f, "RedrawPanel"),
             Request::Every(id, ms) => write!(f, "Every({id}, {ms})"),
             Request::Stop(id) => write!(f, "Stop({id})"),
             Request::OpenPanel => write!(f, "OpenPanel"),
@@ -307,6 +330,13 @@ impl Ctx {
         self.reqs.push(Request::Redraw);
     }
 
+    /// Draw the open panel again ([`Content::panel_draw`]; nothing if none is open). Separate
+    /// from [`Ctx::redraw`], so a strip animation doesn't repaint the panel every frame. A look
+    /// change repaints it anyway.
+    pub fn redraw_panel(&mut self) {
+        self.reqs.push(Request::RedrawPanel);
+    }
+
     /// Call [`Content::timer`] with `id` every `ms` (replaces a running one with the same id).
     /// `id` < [`CONTENT_TIMERS`]. Animation frames (a pulse, a marquee) and data refreshes alike.
     pub fn every(&mut self, id: usize, ms: u32) {
@@ -324,7 +354,7 @@ impl Ctx {
     }
 
     /// Open, pin or close the panel as a click on the strip does (e.g. a tray icon's left click).
-    /// Works without a strip: the panel hook gets `strip: 0` and places it at the pointer.
+    /// Works without a strip: the panel then opens above the pointer.
     pub fn toggle_panel(&mut self) {
         self.reqs.push(Request::TogglePanel);
     }
@@ -418,6 +448,20 @@ pub trait Content: AsAny + 'static {
     /// (`ctx.after(|| window::raise(..))`).
     fn cover_click(&mut self, _ctx: &mut Ctx) {}
 
+    /// The panel's size at display scale `scale`, px (None: the widget has no such panel; a
+    /// click then opens nothing). Asked each time it opens.
+    fn panel_size(&mut self, _kind: PanelKind, _scale: f32) -> Option<(i32, i32)> {
+        None
+    }
+
+    /// Draws the open panel into `cv` (`f.w` × `f.h`), already filled with the theme's
+    /// background. Opaque GDI (ClearType text is fine: the panel fades as a whole). Called on
+    /// every paint: after [`Ctx::redraw_panel`], a look change, or Windows uncovering it.
+    fn panel_draw(&mut self, _kind: PanelKind, _cv: &mut Canvas, _f: &PanelFrame) {}
+
+    /// The mouse on the open panel (Esc, lost focus and right clicks are Block's).
+    fn panel_mouse(&mut self, _kind: PanelKind, _ev: PanelMouse, _ctx: &mut Ctx) {}
+
     /// The right-click panel's own rows; Block adds the standard ones ([`MenuBuilder`]).
     fn menu(&mut self, _m: &mut MenuBuilder) {}
 
@@ -433,7 +477,7 @@ pub trait Content: AsAny + 'static {
     fn settings_changed(&mut self, _ctx: &mut Ctx) {}
 
     /// Windows' theme, scaling, text size or another setting in the look changed (the strip is
-    /// redrawn anyway): e.g. redraw a tray icon or invalidate an open panel.
+    /// redrawn anyway, an open panel too).
     fn look_changed(&mut self, _ctx: &mut Ctx) {}
 
     /// Explorer restarted (the strip is re-created by Block): e.g. add a tray icon again.

@@ -5,7 +5,6 @@ mod knmi;
 mod render;
 mod weather;
 mod fetch;
-mod flyout;
 mod menu;
 mod tray;
 
@@ -13,7 +12,7 @@ use config::Config;
 use fetch::Fetched;
 use render::LabelContent;
 use std::ffi::c_void;
-use taskbar_dock::block::{self, Canvas, Content, Ctx, Float, Frame, MenuBuilder, Side, Spec};
+use taskbar_dock::block::{self, Canvas, Content, Ctx, Float, Frame, MenuBuilder, PanelFrame, PanelKind, Side, Spec};
 use taskbar_dock::dock;
 use taskbar_dock::style::Look;
 use weather::{deg, describe, Location, Weather};
@@ -24,7 +23,7 @@ pub(crate) const WM_DATA: u32 = WM_APP + 2;
 /// Content timer: the next fetch.
 pub(crate) const TIMER_REFRESH: usize = 1;
 
-/// The weather widget's state: Block's Content (the strip, the tray icon, the flyout's data).
+/// The weather widget's state: Block's Content (the strip, the tray icon, the flyout).
 pub(crate) struct App {
     /// Block's hidden main window: fetch results arrive there.
     main: isize,
@@ -34,8 +33,6 @@ pub(crate) struct App {
     weather: Option<Weather>,
     error: Option<String>,
     fetching: bool,
-    /// Shared style + Windows settings, for the flyout (the strip and tray icon get Block's).
-    look: Look,
 }
 
 fn log_file() -> std::path::PathBuf {
@@ -141,8 +138,13 @@ impl Content for App {
         menu::settings_changed(self, ctx);
     }
 
-    fn look_changed(&mut self, _ctx: &mut Ctx) {
-        self.look = Look::current();
+    fn panel_size(&mut self, _kind: PanelKind, scale: f32) -> Option<(i32, i32)> {
+        Some(((render::POPUP_W as f32 * scale) as i32, (render::POPUP_H as f32 * scale) as i32))
+    }
+
+    fn panel_draw(&mut self, _kind: PanelKind, cv: &mut Canvas, f: &PanelFrame) {
+        let dc = windows::Win32::Graphics::Gdi::HDC(cv.dc as _);
+        render::paint_panel(dc, f.w, f.h, self.weather.as_ref(), self.error.as_deref(), f.scale, f.look);
     }
 
     fn tray_icon(&mut self, cv: &mut Canvas, look: &Look) -> bool {
@@ -155,11 +157,9 @@ impl Content for App {
 }
 
 fn main() {
-    flyout::register();
     let mut spec = Spec::new("TaskbarWeatherLabel", "weather", "Weather", log);
     spec.mutex = "Local\\TaskbarWeather.SingleInstance".into();
     spec.float = Float::Off; // as before: nothing shows until the taskbar can be joined
-    spec.panel = Some(flyout::panel);
     spec.log_file = Some(log_file());
     let app = App {
         main: 0,
@@ -169,7 +169,6 @@ fn main() {
         weather: None,
         error: None,
         fetching: false,
-        look: Look::current(),
     };
     block::run(spec, app);
 }

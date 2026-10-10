@@ -1,4 +1,4 @@
-//! GDI drawing: the tray icon, the taskbar label (drawn into Block's strip canvas) and the forecast flyout.
+//! GDI drawing: the tray icon, the taskbar label (drawn into Block's strip canvas) and the forecast flyout (into Block's panel canvas).
 
 use crate::weather::{deg, describe, Weather};
 use taskbar_dock::{block, draw, emoji};
@@ -7,7 +7,6 @@ use taskbar_dock::theme::{self, size, space, Rgb, Theme};
 use std::ffi::c_void;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::UI::WindowsAndMessaging::*;
 
 pub const fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
     COLORREF(r as u32 | (g as u32) << 8 | (b as u32) << 16)
@@ -247,7 +246,6 @@ pub fn draw_label(cv: &mut block::Canvas, content: &LabelContent, height: i32, s
     }
 }
 struct Palette {
-    bg: COLORREF,
     fg: COLORREF,
     dim: COLORREF,
     line: COLORREF,
@@ -259,7 +257,7 @@ struct Palette {
 /// The theme's colours as GDI COLORREFs; rain and the temperature bar are brand entries.
 fn palette(t: &Theme) -> Palette {
     let cr = |c: Rgb| COLORREF(c.colorref());
-    Palette { bg: cr(t.color.bg), fg: cr(t.color.fg), dim: cr(t.color.dim), line: cr(t.color.line),
+    Palette { fg: cr(t.color.fg), dim: cr(t.color.dim), line: cr(t.color.line),
               rain: cr(t.brand("weather.rain")), track: cr(t.color.track), bar: cr(t.brand("weather.temp_bar")) }
 }
 
@@ -312,25 +310,17 @@ fn draw_emoji(dc: HDC, font: &Font, text: &str, px: i32, fg: COLORREF, bg: Rgb, 
     unsafe { let _ = BitBlt(dc, x - shift, y, w, h, cv.dc, 0, 0, SRCCOPY); }
 }
 
-/// Paints the forecast flyout. `scale` = DPI / 96.
-pub fn paint_popup(hwnd: HWND, weather: Option<&Weather>, status: Option<&str>, scale: f32, look: &Look) {
+/// Draws the forecast flyout into `dc` (`w` × `h`, Block's panel canvas, already filled with
+/// the theme's background). `scale` = DPI / 96.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_panel(dc: HDC, w: i32, h: i32, weather: Option<&Weather>, status: Option<&str>, scale: f32, look: &Look) {
     let s = |v: f32| (v * scale).round() as i32;
     let theme = Theme::new(look);
     let pal = palette(&theme);
     let (text, emoji_face) = (theme.font.text.as_str(), theme.font.emoji);
     let font = |t: theme::TextStyle, face: &str, q| Font::new(s(t.px), t.weight, face, q);
     unsafe {
-        let mut ps = PAINTSTRUCT::default();
-        let hdc = BeginPaint(hwnd, &mut ps);
-        let mut rc = RECT::default();
-        let _ = GetClientRect(hwnd, &mut rc);
-        let (w, h) = (rc.right, rc.bottom);
-        // Double buffer to avoid flicker.
-        let dc = CreateCompatibleDC(hdc);
-        let bmp = CreateCompatibleBitmap(hdc, w, h);
-        let old = SelectObject(dc, bmp);
         SetBkMode(dc, TRANSPARENT);
-        fill(dc, 0, 0, w, h, pal.bg);
 
         let q = CLEARTYPE_QUALITY;
         let small = font(theme::CAPTION, text, q);
@@ -434,12 +424,6 @@ pub fn paint_popup(hwnd: HWND, weather: Option<&Weather>, status: Option<&str>, 
                 draw_text(dc, &small, &credit, pal.dim, pad, h - s(30.0), inner, s(18.0), l | DT_END_ELLIPSIS);
             }
         }
-
-        let _ = BitBlt(hdc, 0, 0, w, h, dc, 0, 0, SRCCOPY);
-        SelectObject(dc, old);
-        let _ = DeleteObject(bmp);
-        let _ = DeleteDC(dc);
-        let _ = EndPaint(hwnd, &ps);
     }
 }
 

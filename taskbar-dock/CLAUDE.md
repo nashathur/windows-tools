@@ -16,9 +16,11 @@ zoom, compact resize animation; `Limits`; `keep_right_edge`; `move_strip`; `clie
 block (plan\PLAN.md; used by weather since step 3): the strip window and all its behaviour; a
 widget gives a `Spec` and a `Content` and calls `block::run`. `mod.rs` API (Spec, Content, Ctx requests
 applied after the borrow incl. `toggle_panel`/`open_menu` for a tray icon (no strip needed: the panel
-hook gets `strip: 0`, place at the pointer), Frame, Canvas, Hit, MenuBuilder with the standard rows,
-`with` for the widget's own windows/worker posts, `panel_closed`/`right_click_on_panel` for the interim
-`Spec::panel` hook). Block owns the section's `compact` and `show_on_taskbar` keys: a widget saving its section must merge,
+opens above the pointer) and `redraw_panel`, Frame, Canvas, Hit, MenuBuilder with the standard rows,
+`with` for the widget's own windows/worker posts). Main panel (step 4): Block's window (`shell.rs`,
+class `<class>Panel`: create, place, paint, Esc / lost focus / right click); the Content gives
+`panel_size(kind, scale)` (px; None: no panel), `panel_draw(kind, cv, &PanelFrame)` (theme bg already
+filled, opaque GDI) and optionally `panel_mouse`; no `Spec::panel` hook any more. Block owns the section's `compact` and `show_on_taskbar` keys: a widget saving its section must merge,
 not replace it (weather `Config::save`). Show on taskbar + tray icon (step 3b): the strip shows when
 the switch is on and `Content::visible()`; the tray icon (`tray.rs`, logo from `Content::tray_icon`,
 tooltip `tray_tip`) shows whenever the strip doesn't; a widget without `tray_icon` gets neither the

@@ -1,10 +1,12 @@
 //! Block's windows: the hidden main window (timers, Explorer restarts, Windows settings, worker
-//! posts), the strip (a taskbar child, or floating), and the widget's panel window (until step
-//! 4). Every handler borrows the state briefly, never across a Win32 call that can send
+//! posts), the strip (a taskbar child, or floating), and the main panel (`shell.rs`). Every
+//! handler borrows the state briefly, never across a Win32 call that can send
 //! messages, and carries out the Content's requests after the borrow ([`apply`]).
 
 #[path = "remote.rs"]
 mod remote;
+#[path = "shell.rs"]
+mod shell;
 
 use super::core::{self, Core, Route, Up};
 use super::place;
@@ -57,7 +59,7 @@ struct State {
     placed: bool,
     /// Floating and hidden for a full-screen app.
     fs_hidden: bool,
-    /// The widget's panel window while open (0: none).
+    /// The main panel's window while open (0: none; [`shell`]).
     panel: HWND,
     fade: Fade,
     hooks: dock::Hooks,
@@ -122,6 +124,7 @@ pub fn run<C: Content>(spec: Spec, content: C) {
             wc.lpszClassName = cls.as_ptr();
             RegisterClassW(&wc);
         }
+        shell::register(spec.class, hinst, cursor);
         let title = wide(spec.title);
         let main = CreateWindowExW(0, main_class.as_ptr(), title.as_ptr(), WS_OVERLAPPED, 0, 0, 0, 0, 0, 0, hinst, std::ptr::null());
         if main == 0 {
@@ -198,9 +201,9 @@ pub fn strip_window() -> isize {
     st(|s| s.strip).unwrap_or(0)
 }
 
-/// The widget's panel closed for a reason of its own (it lost focus, Esc): Block forgets it and
-/// asks the widget to destroy it ([`PanelCmd::Close`]).
-pub fn panel_closed(lost_focus: bool) {
+/// The main panel closes for a reason of its own (it lost focus, Esc; or a right click, another
+/// panel): the behaviour is told why, the window destroyed.
+fn panel_closed(lost_focus: bool) {
     let had = st(|s| {
         if s.panel == 0 {
             return false;
@@ -212,11 +215,6 @@ pub fn panel_closed(lost_focus: bool) {
         close_panel_window();
         hover_timer_sync();
     }
-}
-
-/// A right click on the widget's panel: switches to the right-click panel.
-pub fn right_click_on_panel() {
-    right_click(true);
 }
 
 // ---------------------------------------------------------------- requests
@@ -237,6 +235,11 @@ fn apply(reqs: Vec<Request>) {
     for r in reqs {
         match r {
             Request::Redraw => redraw_after = true,
+            Request::RedrawPanel => {
+                if let Some(p) = st(|s| s.panel).filter(|p| *p != 0) {
+                    unsafe { InvalidateRect(p, std::ptr::null(), 0) };
+                }
+            }
             Request::Every(id, ms) => {
                 if let Some(main) = st(|s| s.main) {
                     unsafe { SetTimer(main, id, ms, None) };
@@ -626,25 +629,21 @@ fn hover_timer_sync() {
     }
 }
 
-/// Opens the widget's panel, fading in. `activate`: opened by a click (takes focus; a click
+/// Opens the main panel, fading in. `activate`: opened by a click (takes focus; a click
 /// elsewhere closes it); opened by hovering it doesn't take focus. Without a strip (from a tray
-/// icon) the widget places it above the pointer.
+/// icon) it opens above the pointer.
 fn open_panel(activate: bool) {
-    let Some((hook, strip)) = st(|s| (s.spec.panel, s.strip)) else { return };
-    let undo = || st(|s| s.core.panel.closed(Instant::now(), false));
-    let Some(hook) = hook else {
-        undo();
-        return;
-    };
+    let Some(strip) = st(|s| s.strip) else { return };
     unsafe {
         // only one panel at a time: clicking a widget doesn't activate anything, so the other
         // widgets' panels wouldn't notice the click by themselves
         if strip != 0 {
             dock::close_other_panels(dock::taskbar(), strip);
         }
-        let p = hook(PanelCmd::Open { strip });
+        let p = shell::open(strip);
         if p == 0 {
-            undo();
+            // no panel (the Content has none): the behaviour forgets it opened
+            st(|s| s.core.panel.closed(Instant::now(), false));
             return;
         }
         SetLayeredWindowAttributes(p, 0, 0, LWA_ALPHA); // fade_step brings it in
@@ -662,15 +661,14 @@ fn open_panel(activate: bool) {
     timer(T_FADE, true);
 }
 
-/// Forgets the panel window and has the widget destroy it. Callers tell the behaviour why (or
-/// it decided it).
+/// Forgets the panel window and destroys it. Callers tell the behaviour why (or it decided it).
 fn close_panel_window() {
-    let Some((p, hook)) = st(|s| {
+    let Some(p) = st(|s| {
         s.fade.stop();
-        (std::mem::replace(&mut s.panel, 0), s.spec.panel)
+        std::mem::replace(&mut s.panel, 0)
     }) else { return };
-    if let (true, Some(hook)) = (p != 0, hook) {
-        hook(PanelCmd::Close);
+    if p != 0 {
+        shell::destroy(p);
     }
 }
 
