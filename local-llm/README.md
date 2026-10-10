@@ -51,6 +51,8 @@ Don't run alongside Marker (book.py / convert.py): both need the GPU memory.
 | `local_code_search` | search a code project by meaning; one hit per fn / struct / impl method (tree-sitter), with file:line range; `full=N` returns the code of the top N |
 | `local_docs` | search a Rust crate's dependency APIs (windows-sys features enabled in the build, ureq, serde, chrono, …); an exact identifier is looked up in ALL windows-sys features → which feature it needs and whether it's on |
 | `local_patch` | small, mechanical edit by the coding model in a scratch git worktree, `cargo check` after each round, errors fed back; returns PASS/FAIL + diff (`D:\lp\last.patch`) |
+| `rust_refs` | exact references of a Rust symbol across all crates of the repo (rust-analyzer; no model) |
+| `rust_rename` | exact rename of a Rust symbol + all uses (rust-analyzer), in the scratch worktree, cargo-checked; diff / `last.patch`, `apply=True` |
 | `local_widget_check` | screenshot a running widget's windows (docked strip + open panels) → PNGs in `shots\`; pixel diff vs a saved baseline; optional hover/click first; optional vision question |
 
 PDF input works in every tool that takes a path (text layer via PyMuPDF; scanned PDFs have none, so convert them first).
@@ -99,6 +101,39 @@ PDF input works in every tool that takes a path (text layer via PyMuPDF; scanned
 - **local_widget_check** finds strips as children of `Shell_TrayWnd` and panels as top-level
   windows; captures are screen copies at real pixels (per-monitor DPI). `hover`/`click`/`rightclick`
   move the real mouse (put back afterwards). Baselines in `shots\baseline\`.
+- **rust_refs / rust_rename** (`rust_analyzer.py`): one rust-analyzer process per repo with all
+  crates (`linkedProjects`), kept running, stopped after 10 idle minutes (~1-2 GB RAM while up);
+  first call ~15-50 s, then <1 s. rust-analyzer loads taskbar-dock once per widget (each enables
+  different features) and its references search only covers one copy, so the tools also check
+  every same-named word in the repo with go-to-definition and keep those landing on the same
+  definition. Tested: `dock::slot` -> 6 uses in 5 crates (rust-analyzer alone found 2); rename
+  of weather's `right_slot` in 3 s (local_patch: 37 s).
+- **Ollama settings** (2026-10-10, `ollama_settings.ps1`, user env vars): `OLLAMA_FLASH_ATTENTION=1`,
+  `OLLAMA_KV_CACHE_TYPE=q8_0` (8-bit context cache, half the VRAM). qwen3.5:9b at 32k: 19-20 tok/s
+  (was 15), 16k unchanged at ~36 tok/s. Desktop apps (Firefox, Discord, Steam, ...) hold ~2 GB of
+  VRAM, so the 9B never fits fully on the GPU while they run. local_patch uses 16k, or 32k when
+  the files need it.
+- **local_patch attempts** (default 3): up to N independent first tries (temperature 0.1, then
+  0.6), stops at the first that passes; otherwise the one with the fewest errors gets the repair
+  rounds. The loop is `run_patch()`, shared with the benchmark.
+- **Benchmark** (`codebench\`): `mine.py` turns past edits (src_backup_* snapshots, git commits)
+  still present in HEAD into candidates; `pick.py` keeps 4-25-line code edits whose "before"
+  state compiles; `tasks.json` adds an instruction per task; `run.py --label X [--model]
+  [--attempts] [--tries]` undoes each edit in `D:\lp\bench\wt`, lets the model redo it, and
+  scores compiles / exact / overlap with the real edit -> `results\summary.md`.
+- **Benchmark results** (2026-10-10, 30 tasks, `codebench\results\summary.md`):
+
+  | config | compiles | close to real edit | exact | s/task |
+  |---|---|---|---|---|
+  | qwen3.5:9b, 1 attempt | 26 | 14 | 11 | 17 |
+  | qwen3.5:9b, 3 attempts | 27 | 15 | 12 | 20 |
+  | qwen2.5-coder:7b, 1 attempt | 18 | 10 | 5 | 16 |
+
+  Hand review of the 9b 3-attempt run: 20 correct (12 exact, 8 same behaviour in other words),
+  **7 compile but are wrong** (4 did only part of a multi-part instruction, 1 deleted a
+  neighbouring test, 1 changed an argument it was told to keep, 1 mangled a reorder), 3 failed
+  visibly. So a PASS still needs Claude's review of the diff. Extra attempts: no measurable gain
+  (within noise). The coder model is clearly worse.
 - Also installed for direct use by Claude: `sccache` and `ast-grep` (`sg`) via winget, both on PATH.
   `ast-grep` does exact structural search/rewrite (e.g. `sg -p 'dock::slot($$$)' -l rust`), better
   than any model when a pattern fits.
@@ -125,7 +160,10 @@ change `DEFAULT_MODEL` / `LOCAL_LLM_CTX` in `server.py`. Pull new models with
 ## Files
 
 - `server.py`: the MCP server
-- `code_tools.py`: the four code tools (registered by server.py)
+- `code_tools.py`: the code tools (registered by server.py)
+- `rust_analyzer.py`: small LSP client for rust_refs / rust_rename
+- `codebench\`: local_patch benchmark (see Code tools notes)
+- `ollama_settings.ps1`: one-off Ollama env settings + restart (ran via scheduled task)
 - `shots\`: local_widget_check screenshots and baselines (safe to delete)
 - `whisper_worker.py`: Whisper transcription, run by server.py in its own process
 - `_whisper\`: worker job/result files, selftest video (safe to delete)

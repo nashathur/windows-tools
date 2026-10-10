@@ -1,0 +1,403 @@
+{
+ "summary": {
+  "label": "coder-a1",
+  "model": "qwen2.5-coder:7b",
+  "attempts": 1,
+  "tries": 3,
+  "n": 30,
+  "pass": 18,
+  "exact": 5,
+  "pass_and_close": 10,
+  "mean_overlap": 0.45,
+  "mean_secs": 16
+ },
+ "rows": [
+  {
+   "id": "c166",
+   "pass": true,
+   "exact": true,
+   "overlap": 1.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-media/src/placement.rs b/taskbar-media/src/placement.rs\nindex f333f44..a23d3ea 100644\n--- a/taskbar-media/src/placement.rs\n+++ b/taskbar-media/src/placement.rs\n@@ -112,7 +112,12 @@ fn limits(tb: HWND, w: i32) -> strip::Limits {\n /// Moves the strip to x, never past the tray boundary (also while dragged); `raise` puts it on\n /// top of its neighbours (while dragged).\n fn put(h: HWND, tb: HWND, x: i32, raise: bool) {\n-    unsafe { strip::move_strip(raw(h), raw(tb), x.min(max_x(tb, width(h))), raise); }\n+    unsafe {\n+        strip::move_strip(raw(h), raw(tb), x.min(max_x(tb, width(h))), raise);\n+        // while dragged: the slot it would drop into (does nothing otherwise)\n+        let scale = scale_of(tb);\n+        dock::track_drag(raw(tb), raw(h), dock::tray_boundary(raw(tb), scale), gap_px(scale));\n+    }\n }\n \n /// Head for x: a slide or a jump (rules in `taskbar_dock::strip`).\n",
+   "errs": [],
+   "secs": 30
+  },
+  {
+   "id": "c021",
+   "pass": true,
+   "exact": false,
+   "overlap": 1.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-dock/src/icons.rs b/taskbar-dock/src/icons.rs\nindex 29be9a2..0a86c98 100644\n--- a/taskbar-dock/src/icons.rs\n+++ b/taskbar-dock/src/icons.rs\n@@ -152,4 +152,12 @@ mod tests {\n         let half = RECT { left: 300, top: 1010, right: 340, bottom: 1050 }; // 18 of 40 px inside\n         assert_eq!(in_band(vec![r(0, 55), popup, half], &tb).len(), 1);\n     }\n-}\n+\n+    #[test]\n+    fn a_shrunk_tray_doesnt_turn_its_old_buttons_into_apps() {\n+        // scanned with the tray from 1745; then its first icon (the mic) went away: boundary 1777\n+        let b = [r(0, 55), r(319, 363), r(1745, 1777), r(1781, 1805)];\n+        assert_eq!(right_edge(&b, 1777), Some(1777), \"judged by today's boundary alone\");\n+        assert_eq!(right_edge(&b, 1777.min(1745)), Some(363));\n+    }\n+}\n\\ No newline at end of file\n",
+   "errs": [],
+   "secs": 19
+  },
+  {
+   "id": "c103",
+   "pass": false,
+   "exact": false,
+   "overlap": 0.05,
+   "calls": 3,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-media/src/main.rs b/taskbar-media/src/main.rs\nindex 721cb08..5bb1e73 100644\n--- a/taskbar-media/src/main.rs\n+++ b/taskbar-media/src/main.rs\n@@ -678,29 +678,6 @@ fn watch() {\n         }\n     });\n     if refresh_look() {\n-        with(|a| a.drawn = None);\n-    }\n-    watch_config();\n-    // the brand file was edited: read it again, and the logos it names\n-    let mtime = brands_mtime();\n-    if with(|a| a.brands_mtime != mtime) == Some(true) {\n-        let b = brands::Brands::load();\n-        logos::forget();\n-        with(|a| {\n-            a.brands = b;\n-            a.brands_mtime = mtime;\n-            a.drawn = None;\n-        });\n-    }\n-    let tb = taskbar();\n-    let Some((strip, floating, force, failed, fs_hidden)) = with(|a| {\n-        if tb.is_some() {\n-            a.no_taskbar_since = None;\n-        }\n-        (a.strip, a.floating, a.force_float, a.attach_failed, a.fs_hidden)\n-    }) else { return };\n-    unsafe {\n-        match strip {\n             // floating, and the taskbar is there (back, or worth another try): attach to it\n             Some(h) if floating && !force && tb.is_some() && failed.is_none_or(|t| t.elapsed() >= ATTACH_RETRY) => {\n                 if let Some(child) = tb.and_then(attach) {\n@@ -724,6 +701,28 @@ fn watch() {\n                     }\n                 }\n             }\n+            // floating: stay left of docked widgets\n+            Some(h) if floating => {\n+                let fs = fullscreen_app_active();\n+                if fs != fs_hidden {\n+                    with(|a| {\n+                        a.fs_hidden = fs;\n+                        a.drawn = None;\n+                    });\n+                    if fs {\n+                        let _ = ShowWindow(h, SW_HIDE);\n+                    } else {\n+                        let dock_rect = dock::rect(raw(h));\n+                        let w = dock_rect.width();\n+                        let ht = dock_rect.height();\n+                        let (x, y) = float_pos(w, ht, system::scale_for(raw(h)));\n+                        if x != dock_rect.left() || y != dock_rect.top() {\n+                            let _ = SetWindowPos(h, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);\n+                        }\n+                        redraw_strip();\n+                    }\n+                }\n+            }\n             // attached: Explorer restarted, the taskbar (and the strip with it) is gone\n             Some(h) => {\n                 let parent_ok = GetParent(h).ok().is_some_and(|p| Some(p) == tb);\n@@ -742,29 +741,6 @@ fn watch() {\n     check_fit(); // room next to the taskbar's buttons (also while squeezed out: no events then)\n     update_hooks();\n }\n-\n-fn watch_config() {\n-    let mtime = settings::mtime();\n-    if with(|a| a.cfg_mtime != mtime) != Some(true) {\n-        return;\n-    }\n-    let cfg = Config::load();\n-    with(|a| {\n-        a.cfg = cfg.clone();\n-        a.cfg_mtime = settings::mtime();\n-        a.drawn = None;\n-    });\n-    apply_startup(cfg.start_with_windows);\n-}\n-\n-fn set_config(f: impl FnOnce(&mut Config)) {\n-    let cfg = with(|a| {\n-        f(&mut a.cfg);\n-        a.cfg.save();\n-        a.cfg_mtime = settings::mtime();\n-        a.drawn = None;\n-        a.cfg.clone()\n-    });\n     if let Some(cfg) = cfg {\n         apply_startup(cfg.start_with_windows);\n     }\n",
+   "errs": [
+    "Your reply had no SEARCH/REPLACE blocks.",
+    "error: unexpected closing delimiter: `}`\n   --> taskbar-media/src/main.rs:743:1\n    |\n680 |     if refresh_look() {\n    |                       - this delimiter might not be properly closed...\n...\n736 |             None => {}\n    |                     -- block is empty, you might have not meant to c"
+   ],
+   "secs": 19
+  },
+  {
+   "id": "c185",
+   "pass": true,
+   "exact": true,
+   "overlap": 1.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-discord/src/main.rs b/taskbar-discord/src/main.rs\nindex ae839f4..142dedb 100644\n--- a/taskbar-discord/src/main.rs\n+++ b/taskbar-discord/src/main.rs\n@@ -363,10 +363,6 @@ extern \"system\" fn popup_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> L\n     }\n }\n \n-fn client_x(lp: LPARAM) -> i32 {\n-    (lp.0 & 0xFFFF) as i16 as i32\n-}\n-\n /// Tells the UI thread an avatar is ready (from the loader thread).\n fn notify_avatar(main: usize) {\n     unsafe { let _ = PostMessageW(HWND(main as *mut c_void), WM_AVATAR, WPARAM(0), LPARAM(0)); }\n",
+   "errs": [],
+   "secs": 13
+  },
+  {
+   "id": "c241",
+   "pass": true,
+   "exact": false,
+   "overlap": 1.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/buswidget/rust/src/popup.rs b/buswidget/rust/src/popup.rs\nindex c936cca..b4ae466 100644\n--- a/buswidget/rust/src/popup.rs\n+++ b/buswidget/rust/src/popup.rs\n@@ -346,6 +346,11 @@ pub(crate) unsafe extern \"system\" fn popup_proc(h: HWND, m: u32, w: WPARAM, l: L\n             popup_closed(false);\n             0\n         }\n+        WM_RBUTTONUP => {\n+            // right click on the departures: switch to the right-click panel\n+            context_menu();\n+            0\n+        }\n         _ => DefWindowProcW(h, m, w, l),\n     }\n-}\n+}\n\\ No newline at end of file\n",
+   "errs": [],
+   "secs": 7
+  },
+  {
+   "id": "c161",
+   "pass": false,
+   "exact": false,
+   "overlap": 0.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "",
+   "errs": [
+    "Your reply had no SEARCH/REPLACE blocks."
+   ],
+   "secs": 18
+  },
+  {
+   "id": "c023",
+   "pass": false,
+   "exact": false,
+   "overlap": 0.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "",
+   "errs": [
+    "Your reply had no SEARCH/REPLACE blocks."
+   ],
+   "secs": 2
+  },
+  {
+   "id": "c213",
+   "pass": true,
+   "exact": true,
+   "overlap": 1.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-discord/src/render.rs b/taskbar-discord/src/render.rs\nindex 1388afa..a7dd2b3 100644\n--- a/taskbar-discord/src/render.rs\n+++ b/taskbar-discord/src/render.rs\n@@ -553,8 +553,8 @@ pub enum Button {\n     Leave,\n }\n \n-pub const PANEL_W: f32 = 320.0;\n-const ROW_H: f32 = 40.0;\n+pub const PANEL_W: f32 = size::PANEL_STANDARD;\n+const ROW_H: f32 = space::ROW_HEIGHT_LARGE;\n const HEAD_H: f32 = 64.0;\n const BUTTONS_H: f32 = 60.0;\n const MAX_ROWS: usize = 10;\n",
+   "errs": [],
+   "secs": 16
+  },
+  {
+   "id": "c234",
+   "pass": false,
+   "exact": false,
+   "overlap": 0.25,
+   "calls": 3,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/buswidget/rust/src/data.rs b/buswidget/rust/src/data.rs\nindex 1c1287f..f426634 100644\n--- a/buswidget/rust/src/data.rs\n+++ b/buswidget/rust/src/data.rs\n@@ -32,7 +32,6 @@ pub struct Config {\n     pub badge_text: String,  // \"RRGGBB\" badge number colour; empty = black or white, whichever reads better\n     pub compact: bool,       // the strip shows only the badge and the next departure\n }\n-\n const FIELDS: [&str; 7] = [\"agency\", \"line\", \"stop_code\", \"label\", \"dest\", \"badge_color\", \"badge_text\"];\n \n impl Config {\n@@ -75,7 +74,9 @@ impl Config {\n     }\n \n     fn to_json(&self) -> serde_json::Value {\n-        serde_json::Value::Object(FIELDS.iter().map(|k| (k.to_string(), serde_json::json!(self.get(k)))).collect())\n+        let mut m: serde_json::Map<String, serde_json::Value> = FIELDS.iter().map(|k| (k.to_string(), serde_json::json!(self.get(k)))).collect();\n+        m.insert(\"compact\".to_string(), serde_json::json!(self.compact));\n+        serde_json::Value::Object(m)\n     }\n \n     /// The old data\\config.txt (key = value lines), migrated into the shared file once.\n@@ -120,6 +121,7 @@ impl Config {\n     pub fn save(&self, _dir: &Path) -> io::Result<()> {\n         settings::save_section(\"bus\", self.to_json())\n     }\n+}\n     /// What the cached schedule depends on.\n     pub fn sig(&self) -> String {\n         format!(\"{}/{}/{}\", self.agency, self.line, self.stop_code)\n",
+   "errs": [
+    "Your reply had no SEARCH/REPLACE blocks.",
+    "error: unexpected closing delimiter: `}`\n   --> buswidget/rust/src/data.rs:129:1\n    |\n126 |     pub fn sig(&self) -> String {\n    |                                 - this opening brace...\n127 |         format!(\"{}/{}/{}\", self.agency, self.line, self.stop_code)\n128 |     }\n    |     - ...matches th"
+   ],
+   "secs": 20
+  },
+  {
+   "id": "c143",
+   "pass": true,
+   "exact": false,
+   "overlap": 0.5,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-media/src/render.rs b/taskbar-media/src/render.rs\nindex 242b23d..bfbff66 100644\n--- a/taskbar-media/src/render.rs\n+++ b/taskbar-media/src/render.rs\n@@ -270,7 +270,7 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, height: i32, scale: f32, look:\n     // a static strip: the text column is always the full maximum width, so the strip (and the\n     // buttons, and the widgets next to it) never move when the track changes\n     let text_w = s(max_width);\n-    let l = match width {\n+    let mut l = match width {\n         Some(w) if !compact => layout::at_width(scale, cover, margin, text_w, w),\n         _ => layout::strip(scale, cover, margin, compact, text_w),\n     };\n",
+   "errs": [],
+   "secs": 24
+  },
+  {
+   "id": "c233",
+   "pass": false,
+   "exact": false,
+   "overlap": 0.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "",
+   "errs": [
+    "Your reply had no SEARCH/REPLACE blocks."
+   ],
+   "secs": 2
+  },
+  {
+   "id": "c079",
+   "pass": true,
+   "exact": false,
+   "overlap": 0.5,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-weather/src/label.rs b/taskbar-weather/src/label.rs\nindex 0a65f70..fd347a3 100644\n--- a/taskbar-weather/src/label.rs\n+++ b/taskbar-weather/src/label.rs\n@@ -371,7 +371,7 @@ pub(crate) fn redraw_label() {\n             // appearing (room again): straight into place\n             let x = label_x(tb, hwnd, &rc, drawn.cx, scale, &cfg, slot);\n             motion(|m| m.stop_glide());\n-            let _ = SetWindowPos(hwnd, HWND_TOP, x, 0, drawn.cx, drawn.cy, SWP_NOACTIVATE | SWP_SHOWWINDOW);\n+            let _ = SetWindowPos(hwnd, HWND_TOP, x, 0, drawn.cx, drawn.cy, SWP_NOACTIVATE | SWP_SHOWWINDOW | SET_WINDOW_POS_FLAGS(dock::raise_flag(raw(hwnd))));\n             dock::notify(raw(hwnd));\n             return;\n         }\n",
+   "errs": [],
+   "secs": 18
+  },
+  {
+   "id": "c038",
+   "pass": false,
+   "exact": false,
+   "overlap": 0.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "",
+   "errs": [
+    "Your reply had no SEARCH/REPLACE blocks."
+   ],
+   "secs": 16
+  },
+  {
+   "id": "c163",
+   "pass": false,
+   "exact": false,
+   "overlap": 0.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "",
+   "errs": [
+    "Your reply had no SEARCH/REPLACE blocks."
+   ],
+   "secs": 5
+  },
+  {
+   "id": "c227",
+   "pass": true,
+   "exact": false,
+   "overlap": 0.25,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-discord/src/render.rs b/taskbar-discord/src/render.rs\nindex 83a8d9e..c4e9ec4 100644\n--- a/taskbar-discord/src/render.rs\n+++ b/taskbar-discord/src/render.rs\n@@ -405,7 +405,7 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc\n             Ring::Dim => (fg24, 110),\n             Ring::Red => (brand24(\"discord.red\"), 255),\n         };\n-        avatars::draw_ring_a(buf, width, ring_x as f32, (cover_top - around) as f32, ring_d as f32, s(RING_WIDTH) as f32, rgb24, alpha);\n+        avatars::draw_ring_a(buf, width, ring_x as f32, (cover_top - around) as f32, ring_d as f32, s(RING_WIDTH) as f32, rgb24, 255);\n         // hovered / pressed: the logo and its ring grow / dip about their centre\n         draw::grow_pixels(buf, width, draw::centered_box(ring_x, ring_d, height), grow);\n \n@@ -444,7 +444,7 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc\n                 let (ring, d) = (2.0 * scale, ad);\n                 let inner = d - 2.0 * (ring + 1.0 * scale);\n                 let img = c.avatars.get(i).cloned().flatten();\n-                avatars::draw_circle(buf, width, x + ring + scale, y + ring + scale, inner, img.as_deref(), brand24(\"discord.blurple\"), if m.deafened { 150 } else { 255 });\n+                avatars::draw_circle(buf, width, x + ring + scale, y + ring + scale, inner, img.as_deref(), brand24(\"discord.blurple\"), 255);\n                 if m.speaking {\n                     avatars::draw_ring(buf, width, x, y, d, ring, brand24(\"discord.green\"));\n                 }\n",
+   "errs": [],
+   "secs": 26
+  },
+  {
+   "id": "c099",
+   "pass": false,
+   "exact": false,
+   "overlap": 0.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "",
+   "errs": [
+    "Your reply had no SEARCH/REPLACE blocks."
+   ],
+   "secs": 19
+  },
+  {
+   "id": "c226",
+   "pass": true,
+   "exact": false,
+   "overlap": 0.25,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-discord/src/render.rs b/taskbar-discord/src/render.rs\nindex 7795088..757c9c4 100644\n--- a/taskbar-discord/src/render.rs\n+++ b/taskbar-discord/src/render.rs\n@@ -411,7 +411,7 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc\n \n         // the people in the places, stacked, the first on top; everyone else (muted, deafened,\n         // quiet longest, or more than fit): \"+N\"\n-        if !compact && !members.is_empty() {\n+        if !compact && !c.people.is_empty() {\n             let ad = ring_d as f32;\n             let pill_h = (ad * 0.8).round() as i32;\n             let pill_font = Font::new(s(look.font_size) * 9 / 10, 600, &look.font, ANTIALIASED_QUALITY);\n@@ -423,7 +423,7 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc\n                 w.max(pill_h)\n             };\n             let mut shown = c.people.len().min(c.max_avatars.max(1));\n-            let extra_of = |n: usize| members.len() - n;\n+            let extra_of = |n: usize| c.people.len() - n;\n             // the avatars overlap as much as it takes for all of them and the pill to fit the\n             // column; only when that would hide too much of each one does one drop out\n             let reserve = |n: usize| if extra_of(n) > 0 { s(4.0) as f32 + pill_w(extra_of(n)) as f32 } else { 0.0 };\n@@ -436,7 +436,7 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc\n             let y = (height as f32 - ad) / 2.0;\n             let gap = (1.5 * scale).max(1.0);\n             for i in (0..shown).rev() {\n-                let m = &members[i];\n+                let m = &c.people[i];\n                 let x = text_x as f32 + step * i as f32;\n                 if i + 1 < shown {\n                     avatars::cut_circle(buf, width, x - gap, y - gap, ad + 2.0 * gap);\n@@ -480,7 +480,6 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc\n         tint_highlight(buf, width, draw::button_box(lay.button(i), height, scale), tint, over, radius);\n     }\n     tint_highlight(buf, width, (0, inset, width, height - inset), brand24(\"discord.blurple\"), if hover { over } else { rest }, radius);\n-\n     let size = SIZE { cx: width, cy: height };\n     let src = POINT::default();\n     let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };\n",
+   "errs": [],
+   "secs": 26
+  },
+  {
+   "id": "c205",
+   "pass": false,
+   "exact": false,
+   "overlap": 0.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "",
+   "errs": [
+    "Your reply had no SEARCH/REPLACE blocks."
+   ],
+   "secs": 3
+  },
+  {
+   "id": "c278",
+   "pass": false,
+   "exact": false,
+   "overlap": 0.71,
+   "calls": 3,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-weather/src/render.rs b/taskbar-weather/src/render.rs\nindex e45aa6e..c8b9473 100644\n--- a/taskbar-weather/src/render.rs\n+++ b/taskbar-weather/src/render.rs\n@@ -235,12 +235,14 @@ pub fn update_label(hwnd: HWND, content: &LabelContent, height: i32, scale: f32,\n         taskbar_dock::marquee::fade_edges(cv.pixels(), width, (tx, 0, width, height), s(12.0), false, true, 0);\n     }\n \n-    // coverage into colour: the humidity dimmer\n+    // coverage into colour: the humidity and feels-like line dimmer\n     let (fg, dim) = look.text_rgb();\n     let hum = if one_line { (0, 0, 0, 0) } else { (tx, top2, dx, top2 + h2) };\n+    let feels = if two_desc { (dx, top2, dx + w4, top2 + h4) } else { (0, 0, 0, 0) };\n+    let inside = |r, x, y| x >= r.0 && x < r.2 && y >= r.1 && y < r.3;\n     for (i, p) in cv.pixels().iter_mut().enumerate() {\n         let (x, y) = (i as i32 % width, i as i32 / width);\n-        let c = if x >= hum.0 && x < hum.2 && y >= hum.1 && y < hum.3 { dim } else { fg };\n+        let c = if inside(hum, x, y) || inside(feels, x, y) { dim } else { fg };\n         let a = ((*p >> 16) & 0xff).max((*p >> 8) & 0xff).max(*p & 0xff);\n         *p = a << 24 | (c.0 * a / 255) << 16 | (c.1 * a / 255) << 8 | (c.2 * a / 255);\n     }\n@@ -284,7 +286,6 @@ const RAIN_LIKELY: f64 = 50.0;\n fn rain_color(pal: &Palette, p: f64) -> COLORREF {\n     if p >= RAIN_LIKELY { pal.rain } else { pal.dim }\n }\n-\n pub const POPUP_W: i32 = size::PANEL_WIDE as i32;\n pub const POPUP_H: i32 = 494;\n \n",
+   "errs": [
+    "Your reply had no SEARCH/REPLACE blocks.",
+    "error[E0282]: type annotations needed\n   --> taskbar-weather/src/render.rs:242:19\n    |\n242 |     let inside = |r, x, y| x >= r.0 && x < r.2 && y >= r.1 && y < r.3;\n    |                   ^             - type must be known at this point\n    |\nhelp: consider giving this closure parameter an explicit"
+   ],
+   "secs": 42
+  },
+  {
+   "id": "c255",
+   "pass": true,
+   "exact": false,
+   "overlap": 0.33,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/buswidget/rust/src/bar.rs b/buswidget/rust/src/bar.rs\nindex 095f5d8..414ebe2 100644\n--- a/buswidget/rust/src/bar.rs\n+++ b/buswidget/rust/src/bar.rs\n@@ -154,8 +154,8 @@ unsafe fn draw_bar(text: &str, compact: bool, clip: Option<i32>, measure: bool)\n     let screen = GetDC(0);\n     let mem = CreateCompatibleDC(screen);\n     let cfg = current().0;\n-    // compact: one line (the next departure) beside the badge, no label\n-    let (line, label) = (cfg.line.as_str(), if compact { \"\" } else { cfg.label.as_str() });\n+    // compact: the next two departures on two lines beside the badge, no label\n+    let (line, label) = match text.split_once('\\n') { Some((a, b)) if compact => (a, b), _ => (if compact { \"\" } else { cfg.label.as_str() }, text) };\n     let (sw, sh) = if label.is_empty() { (0, 0) } else { text_size(mem, f_small, label) };\n     let (tw, th) = text_size(mem, f_big, text);\n     let (pad, gap) = (px(8.0), px(6.0));\n",
+   "errs": [],
+   "secs": 19
+  },
+  {
+   "id": "c254",
+   "pass": false,
+   "exact": false,
+   "overlap": 0.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "",
+   "errs": [
+    "Your reply had no SEARCH/REPLACE blocks."
+   ],
+   "secs": 4
+  },
+  {
+   "id": "c151",
+   "pass": true,
+   "exact": false,
+   "overlap": 0.67,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-media/src/main.rs b/taskbar-media/src/main.rs\nindex 53b6d9d..7494a27 100644\n--- a/taskbar-media/src/main.rs\n+++ b/taskbar-media/src/main.rs\n@@ -554,12 +554,13 @@ fn redraw_strip() {\n         };\n         // compact mode switched, or narrowed for room: the width animates to the new one\n         let resize_w = target_width(hwnd, &cfg, scale, &lk, parent.is_some() && IsWindowVisible(hwnd).as_bool());\n+        let draw_w = resize_w.map(|w| (w as f32 * zoom).round() as i32);\n         let key = format!(\"{:?}|{:?}|{}|{}|{:?}|{}|{:?}|{}\", content.title, content.artist,\n             content.cover.as_ref().map_or(0, |c| std::sync::Arc::as_ptr(&c.0) as usize),\n             ring_step, content.buttons, height, hover, zoom);\n         let key = format!(\"{key}|{:?}|{:?}\", content.badge, content.tint.map(|(c, a)| (c, (a * 255.0).round() as i32)));\n         let key = format!(\"{key}|{scale}|{:?}|{:?}|{}|{}\", lk, cfg, IsWindowVisible(hwnd).as_bool(), (opacity * 255.0).round());\n-        let key = format!(\"{key}|{resize_w:?}|{}\", (grow * 400.0).round());\n+        let key = format!(\"{key}|{draw_w:?}|{}\", (grow * 400.0).round());\n         if with(|a| a.drawn.as_deref() == Some(key.as_str())) == Some(true) {\n             return;\n         }\n@@ -567,10 +568,13 @@ fn redraw_strip() {\n         // appearing: start fully transparent, then fade in (below)\n         let opacity = if was_visible { opacity } else { 0.0 };\n         let before = dock::rect(raw(hwnd));\n-        let l = render::update_strip(hwnd, &content, height, scale * zoom, &lk, hover, cfg.compact && resize_w.is_none(), cfg.max_width, resize_w, cfg.live_rgb(), opacity, parent.is_none(), grow);\n+        let l = render::update_strip(hwnd, &content, height, scale * zoom, &lk, hover, cfg.compact && resize_w.is_none(), cfg.max_width, draw_w, cfg.live_rgb(), opacity, parent.is_none(), grow);\n         with(|a| {\n             a.layout = Some(l);\n             a.drawn = Some(key);\n+            if zoom == 1.0 {\n+                a.rest_layout = Some(l);\n+            }\n         });\n         let Some(tb) = parent else {\n             let (x, y) = float_pos(l.width, height, scale);\n",
+   "errs": [],
+   "secs": 19
+  },
+  {
+   "id": "c042",
+   "pass": true,
+   "exact": true,
+   "overlap": 1.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-dock/src/menu_panel.rs b/taskbar-dock/src/menu_panel.rs\nindex c84f36a..93bb5b5 100644\n--- a/taskbar-dock/src/menu_panel.rs\n+++ b/taskbar-dock/src/menu_panel.rs\n@@ -139,15 +139,15 @@ impl Layout {\n pub fn layout(menu: &Menu, scale: f32) -> Layout {\n     let s = |v: f32| (v * scale).round() as i32;\n     let w = s(WIDTH);\n-    let (inset, rh, pad) = (s(INSET), s(ROW_H), s(12.0));\n+    let (inset, rh, pad) = (s(INSET), s(ROW_H), s(space::MENU_PADDING));\n     let mut l = Layout { w, h: 0, title: Rc::default(), subtitle: Rc::default(), rows: Vec::new(), seps: Vec::new() };\n     let mut y = s(6.0);\n     if !menu.title.is_empty() {\n         l.title = Rc { x: pad, y: s(10.0), w: w - 2 * pad, h: s(20.0) };\n         l.subtitle = Rc { x: pad, y: s(30.0), w: w - 2 * pad, h: s(18.0) };\n         y = s(54.0);\n-        l.seps.push(y + s(4.0));\n-        y += s(8.0);\n+        l.seps.push(y + s(space::SECTION_GAP / 2.0));\n+        y += s(space::SECTION_GAP);\n     }\n     for item in &menu.items {\n         match item {\n",
+   "errs": [],
+   "secs": 22
+  },
+  {
+   "id": "c171",
+   "pass": true,
+   "exact": false,
+   "overlap": 0.83,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-media/src/track.rs b/taskbar-media/src/track.rs\nindex 7fb1c49..bd9e0c5 100644\n--- a/taskbar-media/src/track.rs\n+++ b/taskbar-media/src/track.rs\n@@ -184,16 +184,14 @@ pub(crate) fn update_live(a: &mut App, now: Instant) {\n             }\n         } else {\n             a.live_since.remove(&key);\n-            let r = &s.timeline;\n-            if !s.playing && r.end > r.start && !a.learned.realtime(&s.id) {\n-                a.live.remove(&key);\n-            }\n+            a.live.remove(&key);\n         }\n         keys.insert(key);\n     }\n     a.live.retain(|k| keys.contains(k));\n     a.live_since.retain(|k, _| keys.contains(k));\n     a.played.retain(|k| keys.contains(k));\n+    a.has_length.retain(|k| keys.contains(k));\n }\n \n /// The three buttons for the shown session (strip and click panel): glyph, and whether it\n@@ -225,4 +223,4 @@ pub(crate) fn button_cmd(a: &App, i: usize) -> Option<Cmd> {\n         (0, false) => Cmd::Skip(id, -by, live),\n         _ => Cmd::Skip(id, by, live),\n     })\n-}\n+}\n\\ No newline at end of file\n",
+   "errs": [],
+   "secs": 14
+  },
+  {
+   "id": "c080",
+   "pass": true,
+   "exact": false,
+   "overlap": 0.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-weather/src/label.rs b/taskbar-weather/src/label.rs\nindex 8fe7813..97c042b 100644\n--- a/taskbar-weather/src/label.rs\n+++ b/taskbar-weather/src/label.rs\n@@ -174,7 +174,6 @@ pub(crate) fn zoom_step() {\n fn drag_ended(hwnd: HWND) {\n     timer(TIMER_ZOOM, true); // put down: back to normal size while it glides into place\n     unsafe {\n-        dock::set_dragging(raw(hwnd), false);\n         with(|a| a.panel.drag_ended());\n         let Ok(tb) = GetParent(hwnd) else { return };\n         let right = with(|a| on_right(&a.cfg)) == Some(true);\n@@ -182,6 +181,7 @@ fn drag_ended(hwnd: HWND) {\n             let scale = scale_of(tb);\n             dock::drop_reorder(raw(tb), raw(hwnd), MY_CLASS, dock::tray_boundary(raw(tb), scale), gap_px(scale));\n         }\n+        dock::set_dragging(raw(hwnd), false);\n     }\n     reposition_label_with(true);\n     unsafe { dock::notify(raw(hwnd)); }\n",
+   "errs": [],
+   "secs": 15
+  },
+  {
+   "id": "c109",
+   "pass": true,
+   "exact": true,
+   "overlap": 1.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-media/src/main.rs b/taskbar-media/src/main.rs\nindex d2731f2..0e85147 100644\n--- a/taskbar-media/src/main.rs\n+++ b/taskbar-media/src/main.rs\n@@ -216,10 +216,6 @@ fn gap_px(scale: f32) -> i32 {\n     (look().gap * scale).round() as i32\n }\n \n-fn tb_left(tb: HWND) -> i32 {\n-    unsafe { dock::rect(raw(tb)).left }\n-}\n-\n // ---------------------------------------------------------------- start with Windows\n \n fn startup_enabled() -> bool {\n",
+   "errs": [],
+   "secs": 11
+  },
+  {
+   "id": "c261",
+   "pass": true,
+   "exact": false,
+   "overlap": 1.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/buswidget/rust/src/picker.rs b/buswidget/rust/src/picker.rs\nindex 16c0402..7855459 100644\n--- a/buswidget/rust/src/picker.rs\n+++ b/buswidget/rust/src/picker.rs\n@@ -76,7 +76,6 @@ unsafe fn set_text(h: HWND, s: &str) {\n unsafe fn status(s: &str) {\n     set_text(p(|p| p.status.get()), s);\n }\n-\n unsafe fn list_set(rows: impl Iterator<Item = String>) {\n     let list = p(|p| p.list.get());\n     SendMessageW(list, WM_SETREDRAW, 0, 0);\n@@ -119,8 +118,8 @@ pub unsafe fn open(scale: f32) {\n     let title = wide(\"Bus widget – change stop\");\n     let win = CreateWindowExW(0, cls.as_ptr(), title.as_ptr(), style, x, y, w, h, 0, 0, hinst, null());\n \n-    let face = wide(\"Segoe UI\");\n-    let font = CreateFontW(-px(14.0), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, face.as_ptr());\n+    let face = wide(taskbar_dock::theme::font_override::BUS_PICKER);\n+    let font = CreateFontW(-px(taskbar_dock::theme::BODY.px), 0, 0, 0, taskbar_dock::theme::BODY.weight, 0, 0, 0, 1, 0, 0, 5, 0, face.as_ptr());\n     let child = |class: &str, text: &str, style: u32, id: u16, x: i32, y: i32, w: i32, h: i32, ex: u32| {\n         let (c, t) = (wide(class), wide(text));\n         let hw = CreateWindowExW(ex, c.as_ptr(), t.as_ptr(), WS_CHILD | WS_VISIBLE | style, x, y, w, h, win, id as HMENU, hinst, null());\n",
+   "errs": [],
+   "secs": 19
+  },
+  {
+   "id": "c169",
+   "pass": true,
+   "exact": false,
+   "overlap": 0.86,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-media/src/render.rs b/taskbar-media/src/render.rs\nindex df2512e..669d4e7 100644\n--- a/taskbar-media/src/render.rs\n+++ b/taskbar-media/src/render.rs\n@@ -247,7 +247,6 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, height: i32, scale: f32, look:\n     let text_font = Font::new(s(look.font_size), 400, &look.font);\n     let (icon_top, icon) = draw::icon_box(height, scale);\n     let icon_font = Font::new(icon, 400, ICON_FONT);\n-\n     let measure = unsafe { CreateCompatibleDC(None) };\n     let (title, _) = fit(measure, &text_font, &c.title, s(max_width));\n     let (artist, _) = fit(measure, &text_font, &c.artist, s(max_width));\n@@ -290,14 +289,16 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, height: i32, scale: f32, look:\n \n     if l.text_w > 0 {\n         let flags = DT_LEFT | DT_TOP;\n-        draw_text(cv.dc, &text_font, &title, white, RECT { left: l.text_x, top: top1, right: l.text_x + l.text_w, bottom: top1 + h1 }, flags);\n+        let t1 = if artist.trim().is_empty() { (top1 + top2) / 2 } else { top1 };\n+        draw_text(cv.dc, &text_font, &title, white, RECT { left: l.text_x, top: t1, right: l.text_x + l.text_w, bottom: t1 + h1 }, flags);\n         // the artist line dimmer (78%, like the shared second-line colour), to set it apart\n         draw_text(cv.dc, &text_font, &artist, rgb(199, 199, 199), RECT { left: l.text_x, top: top2, right: l.text_x + l.text_w, bottom: top2 + h2 }, flags);\n     }\n     // buttons: tray-icon sized glyphs centred in their columns; unsupported ones dimmed\n     for (i, (g, enabled)) in c.buttons.iter().enumerate() {\n         let (bl, br) = l.button(i);\n-        let col = if *enabled { white } else { rgb(0x60, 0x60, 0x60) };\n+        let off = (taskbar_dock::theme::Theme::new(look).strip.disabled * 255.0).round() as u8;\n+        let col = if *enabled { white } else { rgb(off, off, off) };\n         draw_text(cv.dc, &icon_font, &g.to_string(), col, RECT { left: bl, top: icon_top, right: br, bottom: icon_top + icon }, DT_CENTER | DT_VCENTER);\n     }\n     if c.cover.is_none() && c.badge.is_none() {\n",
+   "errs": [],
+   "secs": 26
+  },
+  {
+   "id": "c230",
+   "pass": false,
+   "exact": false,
+   "overlap": 0.0,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "",
+   "errs": [
+    "Your reply had no SEARCH/REPLACE blocks."
+   ],
+   "secs": 4
+  },
+  {
+   "id": "c157",
+   "pass": true,
+   "exact": false,
+   "overlap": 0.32,
+   "calls": 1,
+   "attempt": 1,
+   "ctx": 32768,
+   "diff": "diff --git a/taskbar-media/src/main.rs b/taskbar-media/src/main.rs\nindex b2cf2b1..d7ded07 100644\n--- a/taskbar-media/src/main.rs\n+++ b/taskbar-media/src/main.rs\n@@ -802,15 +802,6 @@ extern \"system\" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR\n                 on_media(Box::from_raw(lp.0 as *mut Snapshot));\n                 LRESULT(0)\n             }\n-            logos::WM_LOGO => {\n-                // a logo finished loading: draw it\n-                with(|a| a.drawn = None);\n-                redraw_strip();\n-                if let Some(Some(p)) = with(|a| a.popup.hwnd) {\n-                    let _ = InvalidateRect(p, None, false);\n-                }\n-                LRESULT(0)\n-            }\n             WM_TIMER => {\n                 match wp.0 {\n                     TIMER_WATCH => watch(),\n@@ -843,10 +834,13 @@ extern \"system\" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR\n                 // Explorer restarted: the taskbar (and the strip with it) is new\n                 // (a floating strip survives it and attaches at the next watch)\n                 if with(|a| a.taskbar_created) == Some(msg) && msg != 0 {\n-                    if with(|a| a.floating) == Some(false) {\n-                        with(|a| a.strip = None);\n-                        create_strip();\n+                    let strip = with(|a| a.strip).flatten();\n+                    let current = strip.is_some_and(|h| IsWindow(h).as_bool() && GetParent(h).ok() == taskbar());\n+                    if with(|a| a.floating) == Some(false) && !current {\n+                        destroy_strip();\n                     }\n+                    with(|a| a.strip = None);\n+                    create_strip();\n                     return LRESULT(0);\n                 }\n                 DefWindowProcW(hwnd, msg, wp, lp)\n",
+   "errs": [],
+   "secs": 11
+  }
+ ]
+}

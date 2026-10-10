@@ -30,6 +30,8 @@ import pymupdf
 import tree_sitter
 import tree_sitter_rust
 
+import rust_analyzer as ra
+
 # qwen3.5:9b beat qwen2.5-coder:7b in tests (2026-10-10): it follows the SEARCH/REPLACE format;
 # the coder rewrote whole ranges or replied with diffs. The coder stays for >24k-token jobs.
 CODE_MODEL = os.environ.get("LOCAL_LLM_CODE_MODEL", "qwen3.5:9b")
@@ -567,6 +569,153 @@ def wt_diff(wt: Path) -> str:
     return git(["diff", "--", ".", ":(exclude)*Cargo.lock"], wt)
 
 
+def apply_reply(reply: str, wt: Path, specs: list[tuple[str, int, int]]) -> tuple[bool, list[str]]:
+    """Apply a model reply's edits to the worktree. Returns (any edit applied, problems)."""
+    blocks = parse_blocks(reply)
+    problems, edited = [], False
+    if not blocks and len(specs) == 1:
+        # the model rewrote the shown lines as one code block: take it as the new range
+        rel, a, b = specs[0]
+        f = wt / rel
+        fences = sorted(FENCE_RE.findall(reply), key=len)
+        raw = f.read_bytes().decode("utf-8", "replace") if f.exists() else ""
+        old = raw.replace("\r\n", "\n").split("\n")
+        lo, hi = (a - 1, min(b, len(old))) if a else (0, len(old))
+        cand = fences[-1] if fences else ""
+        looks_diff = re.search(r"^(@@ |diff --git|\+\+\+ |--- a/)", cand, re.M)
+        similar = cand and difflib.SequenceMatcher(
+            None, "\n".join(old[lo:hi]), cand, autojunk=False).quick_ratio() >= 0.85
+        if cand and not looks_diff and similar and cand.count("\n") + 1 >= 0.6 * (hi - lo):
+            text = "\n".join(old[:lo] + cand.split("\n") + old[hi:])
+            f.write_bytes((text.replace("\n", "\r\n") if "\r\n" in raw else text).encode("utf-8"))
+            return True, []
+        return False, ["Your reply had no SEARCH/REPLACE blocks."]
+    if not blocks:
+        return False, ["Your reply had no SEARCH/REPLACE blocks."]
+    for path, s, r in blocks:
+        rel = path.replace("\\", "/")
+        match = [x for x, _, _ in specs if x == rel or x.endswith("/" + rel) or rel.endswith("/" + x)] \
+            if rel else [x for x, _, _ in specs][:1] * (len(specs) == 1)
+        if len(match) != 1:
+            problems.append(f"FILE {path!r} is not one of the given files.")
+            continue
+        f = wt / match[0]
+        raw = f.read_bytes().decode("utf-8", "replace") if f.exists() else ""
+        try:
+            new = apply_block(raw.replace("\r\n", "\n"), s, r)
+        except ValueError as e:
+            problems.append(f"Edit for {match[0]} failed: {e}. SEARCH was:\n{s[:600]}")
+            continue
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes((new.replace("\n", "\r\n") if "\r\n" in raw else new).encode("utf-8"))
+        edited = True
+    return edited, problems
+
+
+def run_patch(chat, wt: Path, specs: list[tuple[str, int, int]], task: str, example: str,
+              check: str, crates: set, max_tries: int = 3, attempts: int = 3, model: str = "") -> dict:
+    """The local_patch loop on a prepared worktree (its HEAD = the starting state). Up to
+    `attempts` independent first tries (first that passes wins), then repair rounds on the try
+    with the fewest problems until max_tries model calls after it. Returns {ok, diff, errs,
+    rounds, attempt, baseline, model, ctx} or {error}."""
+    model = model or CODE_MODEL
+
+    def view() -> str:
+        parts = []
+        for rel, a, b in specs:
+            f = wt / rel
+            if not f.exists():
+                parts.append(f"FILE: {rel} (new file, does not exist yet)")
+                continue
+            text = f.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+            n = text.count("\n") + 1
+            rng = f" (lines {a}-{min(b, n)} of {n}; only edit inside these)" if a else ""
+            parts.append(f"FILE: {rel}{rng}\n```rust\n{numbered(text, a, b) if a else text}\n```")
+        return "\n\n".join(parts)
+
+    def reset():
+        git(["reset", "-q", "--hard"], wt)
+        git(["clean", "-fdq"], wt)
+
+    base = f"TASK:\n{task}\n\n" + (f"EXAMPLE of the pattern to follow:\n{example}\n\n" if example else "")
+    first = base + view()
+    # qwen3.5:9b: 16k runs fully on the GPU (~35 tok/s); 32k (8-bit KV cache) ~20 tok/s.
+    need = len(first) // 3 + 5000  # ~3 chars/token for code; 5k tokens left for the reply
+    ctx = CODE_CTX if "coder" in model else (16384 if need <= 16384 else 32768)
+    limit = (ctx - 5000) * 3
+    if len(first) > limit:
+        return {"error": f"Too much for the model (~{len(first) // 3000}k tokens, limit "
+                         f"~{limit // 3000}k): give line ranges (file:a-b) or fewer files."}
+    baseline: set | None = None
+    log = SCRATCH / "rounds.log"
+    log.write_text("", encoding="utf-8")
+    calls = 0
+
+    def round_(prompt: str, temp: float) -> list[str]:
+        nonlocal baseline, calls
+        calls += 1
+        reply = chat(prompt, PATCH_SYSTEM, model=model, ctx=ctx, temperature=temp)
+        with open(log, "a", encoding="utf-8") as lg:
+            lg.write(f"===== call {calls} (temp {temp}) PROMPT\n{prompt}\n===== REPLY\n{reply}\n")
+        edited, problems = apply_reply(reply, wt, specs)
+        errs = list(problems)
+        if git(["status", "--porcelain"], wt).strip():
+            for c in sorted(crates):
+                errs += cargo_errors(c, check, wt)
+        elif not problems:
+            errs.append("Your edits changed nothing.")
+        if errs and baseline is None and edited and not problems:
+            saved = SCRATCH / "round.patch"  # errors already there before the edit don't count
+            saved.write_text(wt_diff(wt), encoding="utf-8", newline="\n")
+            reset()
+            baseline = {e.split("\n")[0] for c in sorted(crates) for e in cargo_errors(c, check, wt)}
+            git(["apply", str(saved)], wt)
+        if baseline:
+            errs = [e for e in errs if e.split("\n")[0] not in baseline]
+        return errs
+
+    best = None  # (n_errs, diff, errs, attempt)
+    for k in range(1, max(1, attempts) + 1):
+        reset()
+        errs = round_(first, 0.1 if k == 1 else 0.6)
+        diff = wt_diff(wt)
+        if not errs and diff.strip():
+            return {"ok": True, "diff": diff, "errs": [], "rounds": calls, "attempt": k,
+                    "baseline": len(baseline or ()), "model": model, "ctx": ctx}
+        if diff.strip() and (best is None or len(errs) < best[0]):
+            best = (len(errs), diff, errs, k)
+    if best is None:
+        return {"ok": False, "diff": "", "errs": errs, "rounds": calls, "attempt": attempts,
+                "baseline": len(baseline or ()), "model": model, "ctx": ctx}
+    reset()
+    (SCRATCH / "round.patch").write_text(best[1], encoding="utf-8", newline="\n")
+    git(["apply", str(SCRATCH / "round.patch")], wt)
+    errs = best[2]
+    for _ in range(max_tries - 1):
+        diff = wt_diff(wt)
+        spots = []
+        for p, ln in error_spots(errs)[:6]:
+            f = wt / p
+            if f.is_file():
+                t = f.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+                spots.append(f"{p} lines {max(1, ln - 12)}-{ln + 12}:\n```rust\n"
+                             f"{numbered(t, max(1, ln - 12), ln + 12)}\n```")
+        tail = (f"\n\nYour edits so far are ALREADY APPLIED (diff below). They don't work "
+                f"yet:\n\n```diff\n{diff[:12000]}\n```\n\nPROBLEMS:\n" + "\n\n".join(errs)[:8000]
+                + ("\n\nCurrent code around the errors:\n" + "\n\n".join(spots) if spots else "")
+                + "\n\nReply with new SEARCH/REPLACE blocks against the CURRENT text "
+                  "to fix this (or to finish the task).")
+        files_now = view()
+        if len(base) + len(files_now) + len(tail) > limit:  # drop the full files, keep the spots
+            files_now = "(files omitted for space; edit using the diff and code shown below)"
+        errs = round_(base + "Current files:\n" + files_now + tail, 0.3)
+        if not errs and wt_diff(wt).strip():
+            break
+    diff = wt_diff(wt)
+    return {"ok": not errs and bool(diff.strip()), "diff": diff, "errs": errs, "rounds": calls,
+            "attempt": best[3], "baseline": len(baseline or ()), "model": model, "ctx": ctx}
+
+
 # ---------- widget screenshots ----------
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -785,8 +934,8 @@ def setup(mcp, chat, embed, index_dir: Path):
 
     @mcp.tool()
     def local_patch(task: str, project: str, files: str, example: str = "", check: str = "check",
-                    also_check: str = "", max_tries: int = 3, apply: bool = False,
-                    model: str = "") -> str:
+                    also_check: str = "", max_tries: int = 3, attempts: int = 3,
+                    apply: bool = False, model: str = "") -> str:
         """Let the local coding model make a SMALL, MECHANICAL code edit, compile-checked: e.g.
         mirror a change already made in one widget into the others, rename/add a field and
         update its uses, add a settings switch following an existing one, add a test like an
@@ -794,13 +943,15 @@ def setup(mcp, chat, embed, index_dir: Path):
         Runs in a scratch git worktree (D:\\lp\\wt) holding the current working tree, so the
         real files are untouched unless apply=True. Loop: the model writes SEARCH/REPLACE
         edits -> cargo check (all targets) of every crate touched (and of the widgets when
-        taskbar-dock changes) -> errors fed back -> up to max_tries rounds. Returns PASS/FAIL,
+        taskbar-dock changes) -> errors fed back -> up to max_tries rounds. attempts: up to N independent first
+        tries (stops at the first that passes; else the one with the fewest errors gets
+        repaired), cheap since the model is local. Returns PASS/FAIL,
         the diff and remaining errors; the diff is also saved to D:\\lp\\last.patch (apply it
         with `git apply`). Review the diff before applying.
         project: any folder inside the git repo (paths below are relative to it).
         files: comma-separated files the model sees and may edit; add :a-b for a line range
         when a file is big (e.g. "src/main.rs:120-260, ../taskbar-dock/src/menu_panel.rs").
-        Keep the total under ~25k tokens. example: text or a file path showing the pattern to
+        Keep the total under ~25k tokens (32k context). example: text or a file path showing the pattern to
         copy (e.g. a diff of the same change in another widget) - this helps a lot.
         task: precise instructions (what to change, where, names to use).
         check: "check" | "clippy" | "test" (builds and runs the tests). also_check:
@@ -827,31 +978,6 @@ def setup(mcp, chat, embed, index_dir: Path):
         with PATCH_LOCK:
             t0 = time.time()
             wt = make_worktree(root)
-
-            def view() -> str:
-                parts = []
-                for rel, a, b in specs:
-                    f = wt / rel
-                    if not f.exists():
-                        parts.append(f"FILE: {rel} (new file, does not exist yet)")
-                        continue
-                    text = f.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
-                    n = text.count("\n") + 1
-                    rng = f" (lines {a}-{min(b, n)} of {n}; only edit inside these)" if a else ""
-                    body = numbered(text, a, b) if a else text
-                    parts.append(f"FILE: {rel}{rng}\n```rust\n{body}\n```")
-                return "\n\n".join(parts)
-
-            base = f"TASK:\n{task}\n\n" + (f"EXAMPLE of the pattern to follow:\n{ex}\n\n" if ex else "")
-            prompt = base + view()
-            # qwen3.5:9b: 16k fits the GPU; 24k spills to RAM (~2x slower) but takes bigger jobs.
-            # A coder 7B fits 32k.
-            need = len(prompt) // 3 + 5000  # ~3 chars/token for code; 5k tokens left for the reply
-            ctx = CODE_CTX if "coder" in (model or CODE_MODEL) else (16384 if need <= 16384 else 24576)
-            limit = (ctx - 5000) * 3
-            if len(prompt) > limit:
-                return (f"Too much for the model (~{len(prompt) // 3000}k tokens, limit "
-                        f"~{limit // 3000}k): give line ranges (file:a-b) or fewer files.")
             crates = set()
             for rel, _, _ in specs:
                 c = crate_of(wt / rel, wt)
@@ -865,95 +991,16 @@ def setup(mcp, chat, embed, index_dir: Path):
                     crates.add(c)
             if not crates:
                 return "None of the files is inside a Cargo crate."
-            baseline: set[str] | None = None
-            errs, tries = [], 0
-            for tries in range(1, max_tries + 1):
-                reply = chat(prompt, PATCH_SYSTEM, model=model or CODE_MODEL, ctx=ctx,
-                             temperature=0.1 if tries == 1 else 0.3)
-                with open(SCRATCH / "rounds.log", "w" if tries == 1 else "a", encoding="utf-8") as lg:
-                    lg.write(f"===== round {tries} PROMPT\n{prompt}\n===== REPLY\n{reply}\n")
-                blocks = parse_blocks(reply)
-                problems = []
-                if not blocks and len(specs) == 1:
-                    # the model rewrote the shown lines as one code block: take it as the new range
-                    rel, a, b = specs[0]
-                    f = wt / rel
-                    fences = sorted(FENCE_RE.findall(reply), key=len)
-                    raw = f.read_bytes().decode("utf-8", "replace") if f.exists() else ""
-                    old = raw.replace("\r\n", "\n").split("\n")
-                    lo, hi = (a - 1, min(b, len(old))) if a else (0, len(old))
-                    cand = fences[-1] if fences else ""
-                    looks_diff = re.search(r"^(@@ |diff --git|\+\+\+ |--- a/)", cand, re.M)
-                    similar = cand and difflib.SequenceMatcher(
-                        None, "\n".join(old[lo:hi]), cand, autojunk=False).quick_ratio() >= 0.85
-                    if cand and not looks_diff and similar and cand.count("\n") + 1 >= 0.6 * (hi - lo):
-                        new = old[:lo] + fences[-1].split("\n") + old[hi:]
-                        text = "\n".join(new)
-                        f.write_bytes((text.replace("\n", "\r\n") if "\r\n" in raw else text).encode("utf-8"))
-                        blocks = [("", "", "")]  # counts as an edit
-                    else:
-                        problems.append("Your reply had no SEARCH/REPLACE blocks.")
-                elif not blocks:
-                    problems.append("Your reply had no SEARCH/REPLACE blocks.")
-                for path, s, r in blocks:
-                    if not (path or s or r):
-                        continue  # the whole-range rewrite above
-                    rel = path.replace("\\", "/")
-                    match = [x for x, _, _ in specs if x == rel or x.endswith("/" + rel)
-                             or rel.endswith("/" + x)] if rel else [x for x, _, _ in specs][:1] * (len(specs) == 1)
-                    if len(match) != 1:
-                        problems.append(f"FILE {path!r} is not one of the given files.")
-                        continue
-                    f = wt / match[0]
-                    raw = f.read_bytes().decode("utf-8", "replace") if f.exists() else ""
-                    crlf = "\r\n" in raw
-                    try:
-                        new = apply_block(raw.replace("\r\n", "\n"), s, r)
-                    except ValueError as e:
-                        problems.append(f"Edit for {match[0]} failed: {e}. SEARCH was:\n{s[:600]}")
-                        continue
-                    f.parent.mkdir(parents=True, exist_ok=True)
-                    f.write_bytes((new.replace("\n", "\r\n") if crlf else new).encode("utf-8"))
-                errs = list(problems)
-                if git(["status", "--porcelain"], wt).strip():
-                    for c in sorted(crates):
-                        errs += cargo_errors(c, check, wt)
-                if errs and baseline is None and not problems:
-                    # errors that were already there before the edit don't count
-                    saved = SCRATCH / "round.patch"
-                    saved.write_text(wt_diff(wt), encoding="utf-8", newline="\n")
-                    git(["reset", "-q", "--hard"], wt)
-                    git(["clean", "-fdq"], wt)
-                    baseline = {e.split("\n")[0] for c in sorted(crates) for e in cargo_errors(c, check, wt)}
-                    git(["apply", str(saved)], wt)
-                if baseline:
-                    errs = [e for e in errs if e.split("\n")[0] not in baseline]
-                if not errs and blocks:
-                    break
-                diff = wt_diff(wt)
-                spots = []
-                for p, ln in error_spots(errs)[:6]:
-                    f = wt / p
-                    if f.is_file():
-                        t = f.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
-                        spots.append(f"{p} lines {max(1, ln - 12)}-{ln + 12}:\n```rust\n"
-                                     f"{numbered(t, max(1, ln - 12), ln + 12)}\n```")
-                tail = (f"\n\nYour edits so far are ALREADY APPLIED (diff below). They don't work "
-                        f"yet:\n\n```diff\n{diff[:12000]}\n```\n\nPROBLEMS:\n" + "\n\n".join(errs)[:8000]
-                        + ("\n\nCurrent code around the errors:\n" + "\n\n".join(spots) if spots else "")
-                        + "\n\nReply with new SEARCH/REPLACE blocks against the CURRENT text "
-                          "to fix this (or to finish the task).")
-                files_now = view()
-                if len(base) + len(files_now) + len(tail) > limit:  # drop the full files, keep the spots
-                    files_now = "(files omitted for space; edit using the diff and code shown below)"
-                prompt = base + "Current files:\n" + files_now + tail
-            diff = wt_diff(wt)
+            res = run_patch(chat, wt, specs, task, ex, check, crates, max_tries, attempts, model)
+            if "error" in res:
+                return res["error"]
+            diff, errs, ok = res["diff"], res["errs"], res["ok"]
             (SCRATCH / "last.patch").write_text(diff, encoding="utf-8", newline="\n")
-            ok = not errs and bool(diff.strip())
             names = ", ".join(sorted(c.relative_to(wt).as_posix() for c in crates))
-            head = (f"{'PASS' if ok else 'FAIL'} after {tries} round(s), {time.time() - t0:.0f} s, "
-                    f"model {model or CODE_MODEL}; cargo {check} on: {names}"
-                    + (f" (errors that already existed ignored: {len(baseline)})" if baseline else ""))
+            head = (f"{'PASS' if ok else 'FAIL'} after {res['rounds']} model call(s) (attempt "
+                    f"{res['attempt']}), {time.time() - t0:.0f} s, model {res['model']} ctx {res['ctx']}; "
+                    f"cargo {check} on: {names}"
+                    + (f" (errors that already existed ignored: {res['baseline']})" if res["baseline"] else ""))
             applied = ""
             if apply and ok:
                 chk = sh(["git", "apply", "--check", str(SCRATCH / "last.patch")], cwd=root)
@@ -965,6 +1012,151 @@ def setup(mcp, chat, embed, index_dir: Path):
             elif ok:
                 applied = f"\nNot applied. To apply: git -C \"{root}\" apply \"{SCRATCH / 'last.patch'}\""
             rest = ("\n\nRemaining problems:\n" + "\n\n".join(errs)[:4000]) if errs else ""
+            return f"{head}{applied}\n\n```diff\n{diff[:20000]}\n```{rest}"
+
+    def ra_target(file: str, project: str):
+        """(repo root, absolute file, rust-analyzer) for a file given absolute or relative to project."""
+        f = Path(file) if Path(file).is_absolute() else Path(project or ".") / file
+        f = f.resolve()
+        if not f.is_file():
+            raise ValueError(f"No such file: {f}")
+        root = repo_root(f.parent)
+        if root is None:
+            raise ValueError(f"{f} is not inside a git repository")
+        manifests = [root / m for m in git(["ls-files", "--", "*Cargo.toml", "Cargo.toml"], root).split()]
+        r, warm = ra.server(root, manifests)
+        return root, f, r, warm
+
+    def all_refs(r, root: Path, f: Path, ln: int, col: int, symbol: str) -> list[tuple[Path, int, int]]:
+        """Every reference (file, 0-based line, UTF-16 col) to the symbol at f:ln:col.
+        rust-analyzer loads a shared crate (taskbar-dock) once per widget, since each widget
+        enables different features, and references only searches one copy. So: its own answer,
+        plus every same-named word elsewhere in the repo whose go-to-definition lands on the
+        same definition (exact, just slower)."""
+        pos = {"textDocument": {"uri": ra.uri_of(f)}, "position": {"line": ln, "character": col}}
+        defs = r.ask("textDocument/definition", pos) or []
+        defs = [defs] if isinstance(defs, dict) else defs
+        targets = {(str(ra.path_of(d.get("targetUri") or d["uri"]).resolve()).lower(),
+                    (d.get("targetSelectionRange") or d["range"])["start"]["line"]) for d in defs}
+        found = {}
+        for loc in r.ask("textDocument/references", {**pos, "context": {"includeDeclaration": True}}) or []:
+            s = loc["range"]["start"]
+            found[(str(ra.path_of(loc["uri"]).resolve()).lower(), s["line"], s["character"])] = \
+                (ra.path_of(loc["uri"]), s["line"], s["character"])
+        word = re.compile(rf"\b{re.escape(symbol)}\b")
+        for rel in git(["grep", "-l", "-w", "--untracked", "-e", symbol, "--", "*.rs"], root).split():
+            p = (root / rel).resolve()
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+            for i, text in enumerate(lines):
+                for m in word.finditer(text):
+                    key = (str(p).lower(), i, ra.u16(text, m.start()))
+                    if key in found:
+                        continue
+                    d = r.ask("textDocument/definition", {"textDocument": {"uri": ra.uri_of(p)},
+                              "position": {"line": i, "character": key[2]}}) or []
+                    d = [d] if isinstance(d, dict) else d
+                    if any((str(ra.path_of(x.get("targetUri") or x["uri"]).resolve()).lower(),
+                            (x.get("targetSelectionRange") or x["range"])["start"]["line"]) in targets for x in d):
+                        found[key] = (p, i, key[2])
+        return sorted(found.values(), key=lambda t: (str(t[0]).lower(), t[1], t[2]))
+
+    @mcp.tool()
+    def rust_refs(file: str, symbol: str, line: int = 0, project: str = "") -> str:
+        """Exact references of a Rust symbol (fn, struct, field, const, local variable, ...)
+        across ALL crates of the repo (widgets + taskbar-dock), via rust-analyzer: no false
+        hits from same-named things, unlike grep. file: where the symbol is defined or used
+        (absolute, or relative to project); line (1-based) picks the right one when the name
+        occurs several times. Returns each use as path:line with the code line. The first call
+        loads all crates (~1-2 min); later calls are quick (stays loaded 10 min after use)."""
+        try:
+            root, f, r, warm = ra_target(file, project)
+            ln, col = ra.locate(f, symbol, line)
+            res = all_refs(r, root, f, ln, col, symbol)
+        except (ValueError, RuntimeError, TimeoutError) as e:
+            return str(e)
+        by_file: dict[str, list[int]] = {}
+        for p, n, _ in res:
+            try:
+                rel = p.resolve().relative_to(root.resolve()).as_posix()
+            except ValueError:
+                rel = str(p)
+            by_file.setdefault(rel, []).append(n)
+        out = [f"{len(res)} references to {symbol!r} (from {f.name}:{ln + 1}) in {len(by_file)} files"
+               + ("" if warm else " (rust-analyzer started now)") + ":"]
+        for rel, lns in sorted(by_file.items()):
+            p = root / rel
+            text = p.read_text(encoding="utf-8", errors="replace").splitlines() if p.is_file() else []
+            out.append(rel)
+            for n in sorted(set(lns)):
+                code = " ".join(text[n].split())[:160] if n < len(text) else ""
+                out.append(f"  {n + 1}: {code}")
+        return "\n".join(out)
+
+    @mcp.tool()
+    def rust_rename(file: str, symbol: str, new_name: str, line: int = 0, project: str = "",
+                    apply: bool = False) -> str:
+        """Exact rename of a Rust symbol (fn, struct, field, method, const, variable, module)
+        and ALL its uses across the repo's crates, via rust-analyzer (no model involved, no
+        guessing). The edit is made in the scratch worktree (D:\\lp\\wt) and every touched
+        crate is cargo-checked; returns PASS/FAIL + diff (also D:\\lp\\last.patch). apply=True
+        also applies it to the working tree when it passes. file/line/project as in rust_refs."""
+        with PATCH_LOCK:
+            t0 = time.time()
+            try:
+                root, f, r, warm = ra_target(file, project)
+                ln, col = ra.locate(f, symbol, line)
+                we = r.ask("textDocument/rename", {
+                    "textDocument": {"uri": ra.uri_of(f)}, "position": {"line": ln, "character": col},
+                    "newName": new_name}) or {}
+            except (ValueError, RuntimeError, TimeoutError) as e:
+                return str(e)
+            edits: dict[Path, list] = {}
+            for uri, es in (we.get("changes") or {}).items():
+                edits.setdefault(ra.path_of(uri), []).extend(es)
+            for dc in we.get("documentChanges") or []:
+                if "edits" in dc:
+                    edits.setdefault(ra.path_of(dc["textDocument"]["uri"]), []).extend(dc["edits"])
+                else:
+                    return f"The rename also needs file operations ({dc.get('kind')}); do it by hand."
+            if not edits:
+                return f"rust-analyzer returned no edits for {symbol!r} at {f.name}:{ln + 1}."
+            # uses in the other widgets' copies of a shared crate (see all_refs)
+            have = {(str(p.resolve()).lower(), e["range"]["start"]["line"], e["range"]["start"]["character"])
+                    for p, es in edits.items() for e in es}
+            try:
+                extra = [t for t in all_refs(r, root, f, ln, col, symbol)
+                         if (str(t[0].resolve()).lower(), t[1], t[2]) not in have]
+            except (RuntimeError, TimeoutError) as e:
+                return f"Cross-crate reference search failed: {e}"
+            for p, n, c in extra:
+                key = next((k for k in edits if str(k.resolve()).lower() == str(p.resolve()).lower()), p)
+                edits.setdefault(key, []).append({"range": {"start": {"line": n, "character": c},
+                                                            "end": {"line": n, "character": c + len(symbol)}},
+                                                  "newText": new_name})
+            wt = make_worktree(root)
+            changed = ra.apply_edits(edits, wt, root)
+            crates = {c for rel in changed for c in [crate_of(wt / rel, wt)] if c}
+            for c in list(crates):
+                crates.update(dependents(c, wt))
+            errs = [e for c in sorted(crates) for e in cargo_errors(c, "check", wt)]
+            diff = wt_diff(wt)
+            (SCRATCH / "last.patch").write_text(diff, encoding="utf-8", newline="\n")
+            ok = not errs
+            n = sum(len(v) for v in edits.values())
+            head = (f"{'PASS' if ok else 'FAIL'}: {symbol} -> {new_name}, {n} edits in {len(changed)} "
+                    f"files, {time.time() - t0:.0f} s" + ("" if warm else " (rust-analyzer started now)")
+                    + f"; cargo check on: {', '.join(sorted(c.relative_to(wt).as_posix() for c in crates))}")
+            applied = ""
+            if apply and ok:
+                chk = sh(["git", "apply", "--check", str(SCRATCH / "last.patch")], cwd=root)
+                if chk.returncode:
+                    applied = f"\nNOT applied: {chk.stderr.strip()[:300]}"
+                else:
+                    git(["apply", str(SCRATCH / "last.patch")], root)
+                    applied = "\nApplied to the working tree."
+            elif ok:
+                applied = f"\nNot applied. To apply: git -C \"{root}\" apply \"{SCRATCH / 'last.patch'}\""
+            rest = ("\n\nErrors:\n" + "\n\n".join(errs)[:4000]) if errs else ""
             return f"{head}{applied}\n\n```diff\n{diff[:20000]}\n```{rest}"
 
     @mcp.tool()
