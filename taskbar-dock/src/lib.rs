@@ -23,11 +23,14 @@
 //! - [`startup`]: the list of widgets started at sign-in (by the `taskbar-dock-start` launcher).
 //! - [`icons`]: the taskbar's own buttons (UI Automation), so the stack never covers them.
 //! - [`theme`]: the design code: every colour, font, size and spacing (light / dark).
+//! - [`block`]: the strip window with all its behaviour; a widget supplies a `Spec` and a
+//!   `Content` (plan\PLAN.md, step 2; not used by a widget yet).
 //!
 //! See README.md for how to build a new widget with it.
 
 pub mod anim;
 pub mod badge;
+pub mod block;
 pub mod crash;
 pub mod dock;
 pub mod draw;

@@ -1,6 +1,6 @@
 # Plan: Block (bottom-up strip) + one design code
 
-Status: step 0 done (2026-10-10: `parity.md`, `tokens.md`). Nothing in `src/` has changed yet.
+Status: steps 0-2 done (2026-10-10). Step 2 added `src/block/` (unused by the widgets yet).
 Spec gaps found in step 0 (not yet in section 1; decide before step 2): weather's "Show on
 taskbar" switch + tray icon (strip off, widget keeps running); media floats too (attach
 failure / no taskbar for 10 s / `--float`, re-attach later), so `float_fallback` serves bus
@@ -132,7 +132,7 @@ restart via `dev.ps1`. One or two steps per session.
 |---|---|---|
 | 0 | **Done 2026-10-10.** Prep: parity checklist from the inventories (`parity.md`); measure today's panel spacing, widths, row heights; token table (`tokens.md`) | none |
 | 1 | **Done 2026-10-10** (hand check light/dark ok; weather emoji now in colour, `emoji.rs`). `theme` module + replace the four copied palettes/fonts; bus popup follows light theme; dev.ps1 lint | bus popup in light theme only |
-| 2 | `block` in the library: Spec, Content, Ctx, wndproc, timers, motion/dock/fit/hooks, Explorer restart, floating fallback, standard menu rows. Tests with a fake Content | none (unused yet) |
+| 2 | **Done 2026-10-10.** `block` in the library: Spec, Content, Ctx, wndproc, timers, motion/dock/fit/hooks, Explorer restart, floating fallback, standard menu rows. Tests with a fake Content (`block/core.rs`, `block/place.rs`). Changes from section 1: `visible`, `side`, timers are Content methods / `Ctx::every` (they change at runtime); interim `Spec::panel` hook until step 4; `Frame::fit_width` for stretchable strips | none (unused yet) |
 | 3 | Port **weather** (left/right side, data timer). Parity check | none |
 | 4 | Panel shell in Block; move weather's flyout onto it | none |
 | 5 | Port **discord** (visible by state, buttons, cover + feel, pulse frames) | none |
