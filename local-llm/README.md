@@ -8,9 +8,11 @@ model does the grunt work.
 
 - **Ollama** 0.40.2, starts at login (Startup folder). Models in `D:\ollama\models`
   (user env var `OLLAMA_MODELS`).
-- **Model:** `qwen3.5:9b` (q4_K_M, 6.6 GB). Unloads from VRAM after 5 min idle.
+- **Model:** `qwen3.5:9b` (q4_K_M, 6.6 GB). Unloads from VRAM after 5 min idle. Also
+  `qwen2.5-coder:7b` (4.7 GB, optional for local_patch) and `qwen3-embedding:0.6b` (search).
 - **Env:** conda `llm` (`C:\Users\thurs\conda-envs\llm.yml`): python 3.12, mcp 2.x, httpx,
-  ffmpeg, faster-whisper + CUDA 12 cuBLAS/cuDNN wheels (video tools, added 2026-10-10).
+  ffmpeg, faster-whisper + CUDA 12 cuBLAS/cuDNN wheels (video tools, added 2026-10-10),
+  tree-sitter + tree-sitter-rust (code tools, pip).
 - **Registered** for all projects (user scope, `~/.claude.json`):
   `conda.exe run --no-capture-output -n llm python C:\Users\thurs\tools\local-llm\server.py`
 
@@ -74,8 +76,14 @@ PDF input works in every tool that takes a path (text layer via PyMuPDF; scanned
 - `C:\Users\thurs\tools` is one git repo (widgets, taskbar-dock, local-llm, pdf2md), so the
   widgets' `../taskbar-dock` path dependencies also work in a worktree. `.gitignore` skips
   `target\`, `src_backup*`, `*.bak*`, exes, logs.
-- **local_patch** uses the coding model `qwen2.5-coder:7b` at 32k context (`LOCAL_LLM_CODE_MODEL`,
-  `LOCAL_LLM_CODE_CTX`). Scratch lives in `D:\lp` (`LOCAL_LLM_SCRATCH`): `wt\` (worktree of the
+- **local_patch** uses `qwen3.5:9b` (16k context, 24k when the files need it; `LOCAL_LLM_CODE_MODEL`).
+  Tested 2026-10-10 against `qwen2.5-coder:7b` (also installed, 32k context, `model=` to use it):
+  rename + calls in weather: both PASS (9B 37 s, coder 55 s); same change mirrored into discord
+  from an example diff: 9B PASS in 2 rounds (38 s), coder FAIL (replied with a diff instead of
+  edits); new unit test in taskbar-dock like an existing one, `check="test"`: 9B PASS (162 s,
+  tests of all 5 crates). Accepts loose formats small models produce (whole-range rewrite, if
+  it closely matches the original; `SEARCH:`/`REPLACE:`). Every round's prompt and reply is in
+  `D:\lp\rounds.log`. Scratch lives in `D:\lp` (`LOCAL_LLM_SCRATCH`): `wt\` (worktree of the
   current working tree, recreated each call at the same path so builds stay incremental),
   `target\` (shared cargo target dir), `sccache\`, `last.patch`. The real files change only
   with `apply=True` (after a clean `git apply --check`). Errors that already existed before
@@ -83,7 +91,11 @@ PDF input works in every tool that takes a path (text layer via PyMuPDF; scanned
 - **local_docs** reads crate sources via `cargo metadata`. From `windows` it keeps only COM
   interface methods when `windows-sys` is also used (the rest duplicates it); error-code
   constants (HRESULT / WIN32_ERROR / NTSTATUS) are skipped in the meaning search.
-- **local_code_search / local_docs** indexes live in `index\` (`code_*`, `docs_*`).
+- **local_code_search / local_docs** indexes live in `index\` (`code_*`, `docs_*` one per
+  dependency file so widgets share them, `names_*` for exact lookups). Measured: the whole repo
+  (72 .rs files, 1128 items) indexes in 34 s; dependency APIs (~25k items, embedding ~88 items/s)
+  ~6 min the first time; afterwards queries take ~1 s.
+- Cold `cargo check` of each crate in the scratch worktree: 14-23 s; later rounds are incremental.
 - **local_widget_check** finds strips as children of `Shell_TrayWnd` and panels as top-level
   windows; captures are screen copies at real pixels (per-monitor DPI). `hover`/`click`/`rightclick`
   move the real mouse (put back afterwards). Baselines in `shots\baseline\`.

@@ -6,11 +6,12 @@
     local_widget_check  screenshot a running widget's windows, compare with a baseline, ask about it
 
 Settings (environment variables, all optional):
-    LOCAL_LLM_CODE_MODEL  model for local_patch     (default: qwen2.5-coder:7b)
-    LOCAL_LLM_CODE_CTX    its context window        (default: 32768; a 7B fits that in 8 GB)
+    LOCAL_LLM_CODE_MODEL  model for local_patch     (default: qwen3.5:9b; 16k ctx, 24k for big jobs)
+    LOCAL_LLM_CODE_CTX    context for a "coder" model (default: 32768; a 7B fits that in 8 GB)
     LOCAL_LLM_SCRATCH     worktree, cargo target dir, sccache cache, last.patch (default: D:\\lp)
 """
 import ctypes
+import difflib
 import fnmatch
 import glob
 import hashlib
@@ -29,8 +30,10 @@ import pymupdf
 import tree_sitter
 import tree_sitter_rust
 
-CODE_MODEL = os.environ.get("LOCAL_LLM_CODE_MODEL", "qwen2.5-coder:7b")
-CODE_CTX = int(os.environ.get("LOCAL_LLM_CODE_CTX", "32768"))
+# qwen3.5:9b beat qwen2.5-coder:7b in tests (2026-10-10): it follows the SEARCH/REPLACE format;
+# the coder rewrote whole ranges or replied with diffs. The coder stays for >24k-token jobs.
+CODE_MODEL = os.environ.get("LOCAL_LLM_CODE_MODEL", "qwen3.5:9b")
+CODE_CTX = int(os.environ.get("LOCAL_LLM_CODE_CTX", "32768"))  # for a "coder" model only
 SCRATCH = Path(os.environ.get("LOCAL_LLM_SCRATCH", r"D:\lp"))
 SHOTS = Path(__file__).resolve().parent / "shots"
 CODE_INDEX_VERSION = 1  # bump when the chunkers change, so old code/docs indexes are rebuilt
@@ -407,14 +410,22 @@ unique. Several blocks per file are fine; list them in file order. To create a n
 empty SEARCH. Change only what the task asks; keep the surrounding code style."""
 
 
+LOOSE_RE = re.compile(r"SEARCH:?\s*\n(.*?)\n\s*REPLACE:?\s*\n(.*?)(?=\n\s*SEARCH:?\s*\n|\n```|\Z)", re.S)
+FENCE_RE = re.compile(r"```[\w+-]*\n(.*?)\n```", re.S)
+
+
 def parse_blocks(reply: str) -> list[tuple[str, str, str]]:
-    """(path, search, replace) for each edit block; the path is the last non-empty line before it."""
+    """(path, search, replace) for each edit block; the path is the last non-empty line before it.
+    Also accepts the loose "SEARCH:\\n...\\nREPLACE:\\n..." form small models sometimes use."""
     out, pos = [], 0
+    if not BLOCK_RE.search(reply):
+        return [("", m.group(1).strip("\n"), m.group(2).strip("\n")) for m in LOOSE_RE.finditer(reply)]
     for m in BLOCK_RE.finditer(reply):
         before = [ln.strip() for ln in reply[pos:m.start()].splitlines() if ln.strip()
                   and not ln.strip().startswith("```")]
         path = before[-1] if before else (out[-1][0] if out else "")
-        path = re.sub(r"^(FILE|File|file)\s*:\s*", "", path).strip("`*# ")
+        path = re.sub(r"^(FILE|File|file)\s*:\s*", "", path)
+        path = re.sub(r"\s+\((lines|new file).*$", "", path).strip("`*# ")  # header copied whole
         out.append((path, m.group(1), m.group(2)))
         pos = m.end()
     return out
@@ -833,7 +844,11 @@ def setup(mcp, chat, embed, index_dir: Path):
 
             base = f"TASK:\n{task}\n\n" + (f"EXAMPLE of the pattern to follow:\n{ex}\n\n" if ex else "")
             prompt = base + view()
-            limit = (CODE_CTX - 5000) * 3  # ~3 chars/token for code; 5k tokens left for the reply
+            # qwen3.5:9b: 16k fits the GPU; 24k spills to RAM (~2x slower) but takes bigger jobs.
+            # A coder 7B fits 32k.
+            need = len(prompt) // 3 + 5000  # ~3 chars/token for code; 5k tokens left for the reply
+            ctx = CODE_CTX if "coder" in (model or CODE_MODEL) else (16384 if need <= 16384 else 24576)
+            limit = (ctx - 5000) * 3
             if len(prompt) > limit:
                 return (f"Too much for the model (~{len(prompt) // 3000}k tokens, limit "
                         f"~{limit // 3000}k): give line ranges (file:a-b) or fewer files.")
@@ -853,18 +868,39 @@ def setup(mcp, chat, embed, index_dir: Path):
             baseline: set[str] | None = None
             errs, tries = [], 0
             for tries in range(1, max_tries + 1):
-                reply = chat(prompt, PATCH_SYSTEM, model=model or CODE_MODEL, ctx=CODE_CTX,
+                reply = chat(prompt, PATCH_SYSTEM, model=model or CODE_MODEL, ctx=ctx,
                              temperature=0.1 if tries == 1 else 0.3)
                 with open(SCRATCH / "rounds.log", "w" if tries == 1 else "a", encoding="utf-8") as lg:
                     lg.write(f"===== round {tries} PROMPT\n{prompt}\n===== REPLY\n{reply}\n")
                 blocks = parse_blocks(reply)
                 problems = []
-                if not blocks:
+                if not blocks and len(specs) == 1:
+                    # the model rewrote the shown lines as one code block: take it as the new range
+                    rel, a, b = specs[0]
+                    f = wt / rel
+                    fences = sorted(FENCE_RE.findall(reply), key=len)
+                    raw = f.read_bytes().decode("utf-8", "replace") if f.exists() else ""
+                    old = raw.replace("\r\n", "\n").split("\n")
+                    lo, hi = (a - 1, min(b, len(old))) if a else (0, len(old))
+                    cand = fences[-1] if fences else ""
+                    looks_diff = re.search(r"^(@@ |diff --git|\+\+\+ |--- a/)", cand, re.M)
+                    similar = cand and difflib.SequenceMatcher(
+                        None, "\n".join(old[lo:hi]), cand, autojunk=False).quick_ratio() >= 0.85
+                    if cand and not looks_diff and similar and cand.count("\n") + 1 >= 0.6 * (hi - lo):
+                        new = old[:lo] + fences[-1].split("\n") + old[hi:]
+                        text = "\n".join(new)
+                        f.write_bytes((text.replace("\n", "\r\n") if "\r\n" in raw else text).encode("utf-8"))
+                        blocks = [("", "", "")]  # counts as an edit
+                    else:
+                        problems.append("Your reply had no SEARCH/REPLACE blocks.")
+                elif not blocks:
                     problems.append("Your reply had no SEARCH/REPLACE blocks.")
                 for path, s, r in blocks:
+                    if not (path or s or r):
+                        continue  # the whole-range rewrite above
                     rel = path.replace("\\", "/")
                     match = [x for x, _, _ in specs if x == rel or x.endswith("/" + rel)
-                             or rel.endswith("/" + x)]
+                             or rel.endswith("/" + x)] if rel else [x for x, _, _ in specs][:1] * (len(specs) == 1)
                     if len(match) != 1:
                         problems.append(f"FILE {path!r} is not one of the given files.")
                         continue
@@ -914,7 +950,7 @@ def setup(mcp, chat, embed, index_dir: Path):
             diff = wt_diff(wt)
             (SCRATCH / "last.patch").write_text(diff, encoding="utf-8", newline="\n")
             ok = not errs and bool(diff.strip())
-            names = ", ".join(sorted(c.name for c in crates))
+            names = ", ".join(sorted(c.relative_to(wt).as_posix() for c in crates))
             head = (f"{'PASS' if ok else 'FAIL'} after {tries} round(s), {time.time() - t0:.0f} s, "
                     f"model {model or CODE_MODEL}; cargo {check} on: {names}"
                     + (f" (errors that already existed ignored: {len(baseline)})" if baseline else ""))
