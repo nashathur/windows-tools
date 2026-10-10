@@ -1,14 +1,14 @@
-//! The right-click panel's own rows (Block adds Compact mode, Start with Windows, Edit settings…
-//! and Quit) and following edits to the settings file.
+//! The right-click panel's own rows (Block adds Show on taskbar, Compact mode, Start with
+//! Windows, Edit settings… and Quit) and following edits to the settings file.
 
 use super::*;
 use taskbar_dock::menu_panel::{glyph, Row};
 
 const ID_REFRESH: usize = 100;
-const ID_LABEL: usize = 101;
 const ID_FAHRENHEIT: usize = 103;
 
-/// Header: the location and a one-line summary; then Refresh now, Show on taskbar, Fahrenheit.
+/// Header: the location and a one-line summary; then Refresh now, Fahrenheit (Block's switches
+/// join it).
 pub(crate) fn build(a: &App, m: &mut MenuBuilder) {
     let c = a.full_content();
     let title = a.weather.as_ref().map_or("Weather".to_string(), |w| w.location.clone());
@@ -17,20 +17,12 @@ pub(crate) fn build(a: &App, m: &mut MenuBuilder) {
         .subtitle(subtitle)
         .item(Row::action(ID_REFRESH, glyph::REFRESH, "Refresh now"))
         .sep()
-        .item(Row::switch(ID_LABEL, "Show on taskbar", a.cfg.taskbar_label))
         .item(Row::switch(ID_FAHRENHEIT, "Fahrenheit (°F)", a.cfg.fahrenheit()));
 }
 
 /// A switch flipped (the panel stays open): its new state.
-pub(crate) fn switch(a: &mut App, id: usize, ctx: &mut Ctx) -> bool {
+pub(crate) fn switch(a: &mut App, id: usize, _ctx: &mut Ctx) -> bool {
     match id {
-        ID_LABEL => {
-            a.cfg.taskbar_label = !a.cfg.taskbar_label;
-            a.cfg.save();
-            tray::update(a, ctx, false);
-            ctx.redraw(); // Block creates or removes the strip (Content::visible)
-            a.cfg.taskbar_label
-        }
         ID_FAHRENHEIT => {
             a.cfg.units = if a.cfg.fahrenheit() { "celsius" } else { "fahrenheit" }.into();
             a.cfg.save();
@@ -50,8 +42,8 @@ pub(crate) fn action(a: &mut App, id: usize, _ctx: &mut Ctx) {
 }
 
 /// Picks up edits to the shared settings file (Edit settings…, another widget's write). Act only
-/// on what changed: the weather data settings → fetch again; the label switch → tray icon and
-/// strip; the position → redraw (Block owns `compact`).
+/// on what changed: the weather data settings → fetch again; the position → redraw (Block owns
+/// `compact` and `show_on_taskbar`).
 pub(crate) fn settings_changed(a: &mut App, ctx: &mut Ctx) {
     let cfg = Config::load();
     let old = std::mem::replace(&mut a.cfg, cfg.clone());
@@ -59,14 +51,10 @@ pub(crate) fn settings_changed(a: &mut App, ctx: &mut Ctx) {
         (c.city.clone(), c.latitude, c.longitude, c.location_name.clone(), c.units.clone(),
          c.refresh_minutes, c.model.clone(), c.knmi_api_key.clone(), c.knmi_station.clone())
     };
-    if old.taskbar_label != cfg.taskbar_label {
-        tray::update(a, ctx, false);
-        ctx.redraw();
-    } else if old.label_position != cfg.label_position {
+    if old.label_position != cfg.label_position {
         ctx.redraw();
     }
     if data(&old) != data(&cfg) {
-        tray::update(a, ctx, false);
         fetch::start_fetch(a);
     }
 }

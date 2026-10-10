@@ -12,8 +12,10 @@ library's `block` (plan step 3); weather supplies the `Content`.
 - main.rs: `App` (the `block::Content`: label content, side, visible, hooks), the `Spec`, `main`.
 - fetch.rs: forecast + KNMI observation fetch on a worker thread, `on_data` (refresh timer).
 - flyout.rs: the flyout window for Block's interim `Spec::panel` hook (create, place, paint, close).
-- menu.rs: the right-click panel's own rows (Refresh now, Show on taskbar, Fahrenheit), switches,
-  and `settings_changed`.
-- tray.rs: tray icon (only while the label is off; clicks → `Ctx::toggle_panel` / `open_menu`).
+- menu.rs: the right-click panel's own rows (Refresh now, Fahrenheit; Block adds Show on taskbar,
+  Compact mode, Start with Windows), switches, and `settings_changed`.
+- tray.rs: the tray icon's tooltip (`Content::tray_tip`). Block owns the icon itself (shown while
+  the strip is off, clicks, Explorer restart, theme, Quit).
 - weather.rs (forecast API), knmi.rs (observations), render.rs (label `measure_label`/`draw_label`,
-  flyout, tray icon drawing), config.rs (`save` merges: Block owns `compact`).
+  flyout, `tray_logo`: the cloud glyph for `Content::tray_icon`), config.rs (`save` merges: Block
+  owns `compact` and `show_on_taskbar`; `migrate_label` renames the old `taskbar_label` once).

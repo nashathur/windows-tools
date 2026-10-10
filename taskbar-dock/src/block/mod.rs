@@ -9,8 +9,10 @@
 //! - Explorer restarts, and the floating fallback when the taskbar can't be joined
 //! - hover highlight, button highlight boxes, the cover's hover / press feel
 //! - when the panel opens and closes ([`crate::panel::PanelBehaviour`]), one panel across widgets
-//! - the right-click panel with the standard rows (Compact mode, Start with Windows,
-//!   Edit settings…, Quit)
+//! - the right-click panel with the standard rows (Show on taskbar, Compact mode, Start with
+//!   Windows, Edit settings…, Quit)
+//! - the tray icon, shown whenever the strip isn't (switched off, or nothing to show), so the
+//!   panels stay reachable ([`Content::tray_icon`])
 //! - following Windows' settings and the settings file live
 //!
 //! Ownership ("requests, applied afterwards"): Block keeps its state, the Content included, in
@@ -25,6 +27,7 @@
 
 mod core;
 mod place;
+mod tray;
 mod win;
 
 use crate::menu_panel::{self, Item, Menu, Row};
@@ -385,8 +388,9 @@ pub trait Content: AsAny + 'static {
         None
     }
 
-    /// Show the strip? False: it's destroyed (its panels closed) until this is true again.
-    /// Checked on every redraw and every second.
+    /// Anything to show (state, e.g. discord in a call)? False: the strip is destroyed (its panels
+    /// closed) until this is true again. The user's Show on taskbar switch is Block's: the strip
+    /// shows when both are on. Checked on every redraw and every second.
     fn visible(&self) -> bool {
         true
     }
@@ -438,8 +442,20 @@ pub trait Content: AsAny + 'static {
         None
     }
 
-    /// The program is ending: clean up (tray icon, worker threads).
+    /// The program is ending: clean up (worker threads).
     fn closing(&mut self) {}
+
+    /// Draws the tray icon (a static logo, not data) into `cv` (the small-icon size, square),
+    /// colours from `look`/theme. False: the widget has no tray icon; then it has no Show on
+    /// taskbar switch either (nothing could switch the strip back on).
+    fn tray_icon(&mut self, _cv: &mut Canvas, _look: &Look) -> bool {
+        false
+    }
+
+    /// The tray icon's tooltip (read again on every redraw; ~127 characters at most).
+    fn tray_tip(&self) -> String {
+        String::new()
+    }
 }
 
 /// Ids of the standard rows (the widget's own ids must stay below these).
@@ -448,24 +464,28 @@ pub mod std_ids {
     pub const STARTUP: usize = 0xF001;
     pub const SETTINGS: usize = 0xF002;
     pub const QUIT: usize = 0xF003;
+    pub const SHOW: usize = 0xF004;
 }
 
 /// The right-click panel as the widget wants it: a header, its own rows, and where the standard
-/// switches go. [`MenuBuilder::compact`] / [`MenuBuilder::startup`] put them at that point;
-/// switches not placed go after the widget's rows (with its switches when it ended on one,
-/// else after a separator). Edit settings… and Quit always end it.
+/// switches go. [`MenuBuilder::show`] / [`MenuBuilder::compact`] / [`MenuBuilder::startup`] put
+/// them at that point; switches not placed go after the widget's rows, in that order (with its
+/// switches when it ended on one, else after a separator). Edit settings… and Quit always end it.
 #[derive(Default, Debug)]
 pub struct MenuBuilder {
     menu: Menu,
+    /// The Show on taskbar switch (None: the widget has no tray icon, so no switch).
+    show_on: Option<bool>,
     compact_on: bool,
     startup_on: bool,
+    placed_show: bool,
     placed_compact: bool,
     placed_startup: bool,
 }
 
 impl MenuBuilder {
-    pub(crate) fn new(compact_on: bool, startup_on: bool) -> MenuBuilder {
-        MenuBuilder { compact_on, startup_on, ..Default::default() }
+    pub(crate) fn new(show_on: Option<bool>, compact_on: bool, startup_on: bool) -> MenuBuilder {
+        MenuBuilder { show_on, compact_on, startup_on, ..Default::default() }
     }
 
     pub fn title(&mut self, t: impl Into<String>) -> &mut Self {
@@ -492,6 +512,15 @@ impl MenuBuilder {
         self
     }
 
+    /// The Show on taskbar switch here (nothing for a widget without a tray icon).
+    pub fn show(&mut self) -> &mut Self {
+        self.placed_show = true;
+        if let Some(on) = self.show_on {
+            self.menu.items.push(Row::switch(std_ids::SHOW, "Show on taskbar", on));
+        }
+        self
+    }
+
     /// The Compact mode switch here.
     pub fn compact(&mut self) -> &mut Self {
         self.placed_compact = true;
@@ -508,10 +537,14 @@ impl MenuBuilder {
 
     /// The finished panel: standard switches not placed yet, then Edit settings… / Quit.
     pub(crate) fn finish(mut self) -> Menu {
-        if !self.placed_compact || !self.placed_startup {
+        let show = self.show_on.is_some() && !self.placed_show;
+        if show || !self.placed_compact || !self.placed_startup {
             // after the widget's rows: with its switches, or in a group of their own
             if !matches!(self.menu.items.last(), Some(Item::Row(r)) if r.switch.is_some()) {
                 self.sep();
+            }
+            if show {
+                self.show();
             }
             if !self.placed_compact {
                 self.compact();

@@ -3,7 +3,7 @@
 use crate::weather::{deg, describe, Weather};
 use taskbar_dock::{block, draw, emoji};
 use taskbar_dock::style::Look;
-use taskbar_dock::theme::{self, font_override, size, space, Rgb, Theme};
+use taskbar_dock::theme::{self, size, space, Rgb, Theme};
 use std::ffi::c_void;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -109,43 +109,23 @@ fn draw_text(dc: HDC, font: &Font, s: &str, color: COLORREF, x: i32, y: i32, w: 
     }
 }
 
-/// Tray icon showing the temperature as text, e.g. "31°".
-pub fn tray_icon(text: &str, size: i32, light: bool) -> Option<HICON> {
-    let mut cv = Canvas::new(size, size)?;
-    // Largest font whose text fits the icon; drop the degree sign if it gets too small.
-    let mut chosen = None;
-    for candidate in [text.to_string(), text.trim_end_matches('°').to_string()] {
-        for px in (size / 2..=size).rev() {
-            let f = Font::new(px, 600, font_override::WEATHER_TRAY, ANTIALIASED_QUALITY);
-            let (w, _) = text_size(cv.dc, &f, &candidate);
-            if w <= size {
-                if px >= size * 7 / 10 || chosen.is_none() {
-                    chosen = Some((candidate.clone(), f, px));
-                }
-                break;
-            }
-        }
-        if matches!(chosen, Some((_, _, px)) if px >= size * 7 / 10) {
-            break;
-        }
-    }
-    let (s, font, _) = chosen?;
-    draw_text(cv.dc, &font, &s, rgb(255, 255, 255), -2, 0, size + 4, size, DT_CENTER | DT_VCENTER);
-    let fg = if light { (0, 0, 0) } else { (255, 255, 255) };
-    // Icons take straight (non-premultiplied) alpha.
-    for p in cv.pixels().iter_mut() {
-        let a = ((*p >> 16) & 0xFF).max((*p >> 8) & 0xFF).max(*p & 0xFF);
-        *p = a << 24 | (fg.0 as u32) << 16 | (fg.1 as u32) << 8 | fg.2 as u32;
-    }
-    unsafe {
-        let mask_bits = vec![0u8; ((size + 15) / 16 * 2 * size) as usize];
-        let mask = CreateBitmap(size, size, 1, 1, Some(mask_bits.as_ptr() as *const c_void));
-        let info = ICONINFO { fIcon: TRUE, xHotspot: 0, yHotspot: 0, hbmMask: mask, hbmColor: cv.bmp };
-        let icon = CreateIconIndirect(&info).ok();
-        let _ = DeleteObject(mask);
-        icon
-    }
+/// The tray icon's logo, a cloud (icon font), in the taskbar's text colour, filling Block's
+/// tray-size canvas (premultiplied, as the strip).
+pub fn tray_logo(cv: &mut block::Canvas, look: &Look) -> bool {
+    let Some(mut big) = Canvas::new(96, 96) else { return false };
+    let font = Font::new(theme::GLYPH_RASTER_PX, 400, Theme::new(look).font.icon, ANTIALIASED_QUALITY);
+    draw_text(big.dc, &font, GLYPH_CLOUD, rgb(255, 255, 255), 0, 0, 96, 96, DT_CENTER | DT_VCENTER);
+    unsafe { let _ = GdiFlush(); }
+    let src = big.pixels().to_vec();
+    let (w, h) = (cv.w, cv.h);
+    draw::fit_icon(cv.pixels(), w, 0, 0, w.min(h), &src, 96, 96);
+    let (fg, _) = look.text_rgb();
+    draw::text_to_color(cv.pixels(), w, h, |_| fg);
+    true
 }
+
+/// Segoe Fluent Icons' cloud.
+const GLYPH_CLOUD: &str = "\u{E753}";
 
 pub struct LabelContent {
     pub glyph: String,

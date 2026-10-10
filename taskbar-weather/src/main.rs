@@ -18,16 +18,15 @@ use taskbar_dock::dock;
 use taskbar_dock::style::Look;
 use weather::{deg, describe, Location, Weather};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::{HICON, WM_APP, WM_LBUTTONUP, WM_RBUTTONUP};
+use windows::Win32::UI::WindowsAndMessaging::WM_APP;
 
-pub(crate) const WM_TRAY: u32 = WM_APP + 1;
 pub(crate) const WM_DATA: u32 = WM_APP + 2;
 /// Content timer: the next fetch.
 pub(crate) const TIMER_REFRESH: usize = 1;
 
 /// The weather widget's state: Block's Content (the strip, the tray icon, the flyout's data).
 pub(crate) struct App {
-    /// Block's hidden main window: fetch results and tray clicks arrive there.
+    /// Block's hidden main window: fetch results arrive there.
     main: isize,
     cfg: Config,
     loc: Option<(String, Location)>,
@@ -35,8 +34,7 @@ pub(crate) struct App {
     weather: Option<Weather>,
     error: Option<String>,
     fetching: bool,
-    icon: Option<HICON>,
-    /// Shared style + Windows settings, for the flyout and the tray icon (the strip gets Block's).
+    /// Shared style + Windows settings, for the flyout (the strip and tray icon get Block's).
     look: Look,
 }
 
@@ -100,18 +98,12 @@ impl Content for App {
         render::draw_label(cv, &self.content(f.compact), f.height, f.scale, f.look);
     }
 
-    /// The "Show on taskbar" switch; off: only the tray icon.
-    fn visible(&self) -> bool {
-        self.cfg.taskbar_label
-    }
-
     fn side(&self) -> Side {
         if on_right(&self.cfg) { Side::Right } else { Side::Left }
     }
 
     fn start(&mut self, ctx: &mut Ctx) {
         self.main = ctx.main_window();
-        tray::update(self, ctx, true);
         fetch::start_fetch(self);
     }
 
@@ -124,11 +116,6 @@ impl Content for App {
     fn on_message(&mut self, msg: u32, _wp: usize, lp: isize, ctx: &mut Ctx) -> Option<isize> {
         match msg {
             WM_DATA => fetch::on_data(self, unsafe { Box::from_raw(lp as *mut Fetched) }, ctx),
-            WM_TRAY => match (lp as u32) & 0xFFFF {
-                WM_LBUTTONUP => ctx.toggle_panel(),
-                WM_RBUTTONUP => ctx.open_menu(),
-                _ => {}
-            },
             _ => return None,
         }
         Some(0)
@@ -150,18 +137,16 @@ impl Content for App {
         menu::settings_changed(self, ctx);
     }
 
-    fn look_changed(&mut self, ctx: &mut Ctx) {
+    fn look_changed(&mut self, _ctx: &mut Ctx) {
         self.look = Look::current();
-        tray::update(self, ctx, false);
     }
 
-    /// Explorer restarted: the tray icon is gone (Block re-creates the strip).
-    fn taskbar_restarted(&mut self, ctx: &mut Ctx) {
-        tray::update(self, ctx, true);
+    fn tray_icon(&mut self, cv: &mut Canvas, look: &Look) -> bool {
+        render::tray_logo(cv, look)
     }
 
-    fn closing(&mut self) {
-        tray::remove(self);
+    fn tray_tip(&self) -> String {
+        tray::tip(self)
     }
 }
 
@@ -179,7 +164,6 @@ fn main() {
         weather: None,
         error: None,
         fetching: false,
-        icon: None,
         look: Look::current(),
     };
     block::run(spec, app);

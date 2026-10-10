@@ -264,8 +264,6 @@ pub const BRANDS: &[(&str, u32, u32)] = &[
 
 /// Named font overrides (see [`BRANDS`]): text that keeps "Segoe UI" instead of `look.font`.
 pub mod font_override {
-    /// The temperature in the tray icon (shown while the strip is off).
-    pub const WEATHER_TRAY: &str = "Segoe UI";
     /// The bus "Change stop…" picker (a Win32 dialog until step 9).
     pub const BUS_PICKER: &str = "Segoe UI";
 }

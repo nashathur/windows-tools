@@ -23,6 +23,8 @@ pub(crate) struct Core {
     pub pressed_on: Option<Hit>,
     /// The user's Compact mode setting.
     pub compact: bool,
+    /// The user's Show on taskbar setting.
+    pub show: bool,
     /// The mode as last drawn: a switch animates the width.
     pub drawn_compact: Option<bool>,
 }
@@ -108,6 +110,7 @@ pub(crate) fn size(chosen: i32, compact: i32, spec: &Spec) -> dock::Size {
 /// Where a right-click row goes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Route {
+    Show,
     Compact,
     Startup,
     Settings,
@@ -117,6 +120,7 @@ pub(crate) enum Route {
 
 pub(crate) fn route(id: usize) -> Route {
     match id {
+        std_ids::SHOW => Route::Show,
         std_ids::COMPACT => Route::Compact,
         std_ids::STARTUP => Route::Startup,
         std_ids::SETTINGS => Route::Settings,
@@ -125,11 +129,23 @@ pub(crate) fn route(id: usize) -> Route {
     }
 }
 
-/// The right-click panel for `content`.
-pub(crate) fn menu(content: &mut dyn Content, compact_on: bool, startup_on: bool) -> Menu {
-    let mut m = MenuBuilder::new(compact_on, startup_on);
+/// The right-click panel for `content` (`show_on` None: no tray icon, no Show on taskbar row).
+pub(crate) fn menu(content: &mut dyn Content, show_on: Option<bool>, compact_on: bool, startup_on: bool) -> Menu {
+    let mut m = MenuBuilder::new(show_on, compact_on, startup_on);
     content.menu(&mut m);
     m.finish()
+}
+
+/// The strip shows: switched on and something to show. A widget without a tray icon ignores the
+/// switch (it has no row for it, and nothing else would bring the strip back).
+pub(crate) fn shown(switch: bool, visible: bool, has_tray: bool) -> bool {
+    (switch || !has_tray) && visible
+}
+
+/// The tray icon shows whenever the strip doesn't (switched off, or nothing to show right now),
+/// so the panels and the switch are always reachable.
+pub(crate) fn tray_shown(switch: bool, visible: bool, has_tray: bool) -> bool {
+    has_tray && !shown(switch, visible, has_tray)
 }
 
 /// The highlight box under the strip: a hovered button's box, else the whole strip (inset), or
@@ -330,7 +346,7 @@ mod tests {
     #[test]
     fn menu_gets_the_standard_rows() {
         let mut f = Fake { switch_on: true, ..Default::default() };
-        let m = menu(&mut f, true, false);
+        let m = menu(&mut f, None, true, false);
         assert_eq!(m.title, "Fake");
         let ids: Vec<String> = m.items.iter().map(|i| match i {
             Item::Row(r) => format!("{}{}", r.id, r.switch.map_or("", |on| if on { "+" } else { "-" })),
@@ -345,6 +361,52 @@ mod tests {
         assert_eq!(route(2), Route::Content(2));
     }
 
+    fn ids(m: &Menu) -> Vec<String> {
+        m.items.iter().map(|i| match i {
+            Item::Row(r) => format!("{}{}", r.id, r.switch.map_or("", |on| if on { "+" } else { "-" })),
+            Item::Pair(a, b) => format!("{}|{}", a.id, b.id),
+            Item::Sep => "sep".into(),
+        }).collect()
+    }
+
+    #[test]
+    fn with_a_tray_icon_show_on_taskbar_leads_the_standard_switches() {
+        let (sh, c, s, e, q) = (std_ids::SHOW, std_ids::COMPACT, std_ids::STARTUP, std_ids::SETTINGS, std_ids::QUIT);
+        let mut f = Fake { switch_on: true, ..Default::default() };
+        let m = menu(&mut f, Some(false), true, false);
+        assert_eq!(ids(&m), ["1", "sep", "2+", &format!("{sh}-"), &format!("{c}+"), &format!("{s}-"), "sep", &format!("{e}|{q}")]);
+        assert_eq!(route(sh), Route::Show);
+        // placed by the widget: stays there, not added twice
+        struct Placed;
+        impl Content for Placed {
+            fn measure(&mut self, _: &Frame, _: bool) -> i32 { 1 }
+            fn draw(&mut self, _: &mut Canvas, _: &Frame) {}
+            fn menu(&mut self, m: &mut MenuBuilder) {
+                m.item(Row::action(1, menu_panel::glyph::REFRESH, "Refresh")).sep().show().item(Row::switch(2, "Mine", false));
+            }
+        }
+        let m = menu(&mut Placed, Some(true), false, false);
+        assert_eq!(ids(&m), ["1", "sep", &format!("{sh}+"), "2-", &format!("{c}-"), &format!("{s}-"), "sep", &format!("{e}|{q}")]);
+        // no tray icon: show() places nothing
+        assert!(!ids(&menu(&mut Placed, None, false, false)).iter().any(|i| i.starts_with(&sh.to_string())));
+    }
+
+    #[test]
+    fn the_strip_shows_when_switched_on_and_there_is_something_to_show() {
+        // (switch, visible, has_tray) -> (strip, tray icon)
+        let cases = [
+            ((true, true, true), (true, false)),
+            ((false, true, true), (false, true)),  // switched off: tray icon
+            ((true, false, true), (false, true)),  // idle (no call): tray icon stays
+            ((false, false, true), (false, true)),
+            ((false, true, false), (true, false)), // no tray icon: the switch can't hide it
+            ((true, false, false), (false, false)),
+        ];
+        for ((sw, vis, tray), want) in cases {
+            assert_eq!((shown(sw, vis, tray), tray_shown(sw, vis, tray)), want, "switch {sw}, visible {vis}, tray {tray}");
+        }
+    }
+
     #[test]
     fn menu_rows_placed_by_the_widget_stay_put() {
         struct Placed;
@@ -355,7 +417,7 @@ mod tests {
                 m.compact().item(Row::switch(5, "Show when idle", false)).startup().sep().item(Row::action(6, menu_panel::glyph::OPEN, "Sign in"));
             }
         }
-        let m = menu(&mut Placed, false, true);
+        let m = menu(&mut Placed, None, false, true);
         assert!(matches!(&m.items[0], Item::Row(r) if r.id == std_ids::COMPACT));
         assert!(matches!(&m.items[2], Item::Row(r) if r.id == std_ids::STARTUP && r.switch == Some(true)));
         assert_eq!(m.items.iter().filter(|i| matches!(i, Item::Row(r) if r.id == std_ids::COMPACT)).count(), 1);
@@ -369,7 +431,7 @@ mod tests {
                 m.item(Row::action(1, menu_panel::glyph::REFRESH, "Refresh"));
             }
         }
-        let m = menu(&mut Actions, false, false);
+        let m = menu(&mut Actions, None, false, false);
         assert_eq!(m.items[1], Item::Sep);
         // nothing of its own: no leading separator
         struct Empty;
@@ -377,7 +439,7 @@ mod tests {
             fn measure(&mut self, _: &Frame, _: bool) -> i32 { 1 }
             fn draw(&mut self, _: &mut Canvas, _: &Frame) {}
         }
-        assert!(matches!(&menu(&mut Empty, false, false).items[0], Item::Row(r) if r.id == std_ids::COMPACT));
+        assert!(matches!(&menu(&mut Empty, None, false, false).items[0], Item::Row(r) if r.id == std_ids::COMPACT));
     }
 
     #[test]

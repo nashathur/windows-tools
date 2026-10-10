@@ -4,9 +4,9 @@ A small native Windows 11 app written in Rust (Win32 + GDI, no web view). It is 
 
 - **Taskbar label**: an icon, the temperature over the humidity (dimmer), with the conditions beside them, embedded in the taskbar, similar to the built-in Widgets weather. With left-aligned taskbar icons it sits on the right, next to the tray. It moves aside for other widgets docked into the taskbar.
 - **Dock stack**: with the label on the right, it forms a stack against the tray boundary with other widgets that support it (the bus widget in `C:\Users\thurs\tools\buswidget`). Drag a widget to reorder: while you drag, the others close up; on release it snaps into the stack on the side where you let go of the mouse. The order is saved in `%APPDATA%\TaskbarDock\order.txt` (window class names, tray side first) and shared by both apps. Members mark their taskbar window with the window properties `TaskbarDock.Member` and, while dragged, `TaskbarDock.Dragging`.
-- **Tray icon**: shown only when the taskbar label is turned off. It shows the temperature as the icon, and its tooltip shows the details.
+- **Tray icon**: shown only when the taskbar label is turned off. A cloud logo in the taskbar's text colour; its tooltip shows the current weather.
 - **Flyout**: left-click the label or the tray icon. It shows current conditions, the next 6 hours and the next 5 days with temperature ranges and rain chance.
-- **Right-click panel** (on the label, the tray icon or the flyout): Refresh now; switches for Show on taskbar, Fahrenheit, Compact mode and Start with Windows (they flip and the panel stays open); Edit settings… and Quit.
+- **Right-click panel** (on the label, the tray icon or the flyout): Refresh now; switches for Fahrenheit, Show on taskbar, Compact mode and Start with Windows (they flip and the panel stays open); Edit settings… and Quit.
 - **Compact mode**: the label shows the symbol with the temperature over the humidity.
 
 The app follows the Windows light/dark theme and per-monitor DPI. It restores itself when Explorer restarts.
@@ -54,7 +54,7 @@ Keys in the `weather` section:
 | `model` | `"best_match"` | Open-Meteo model, e.g. `"knmi_seamless"`, `"dmi_seamless"`, `"ecmwf_ifs025"`, `"icon_seamless"`. |
 | `knmi_api_key` | `""` | KNMI EDR API key. When set, measured current values are shown (see above). |
 | `knmi_station` | `""` | KNMI station, e.g. `"06260"` (De Bilt) or `"06240"` (Schiphol). Empty means the nearest station. |
-| `taskbar_label` | `true` | Show the label in the taskbar. If off, only the tray icon is shown. |
+| `show_on_taskbar` | `true` | Show the label in the taskbar. If off, only the tray icon is shown. Also in the right-click menu. (Was `taskbar_label`, renamed once on start.) |
 | `label_position` | `"auto"` | `"auto"`, `"left"` or `"right"`. |
 | `compact` | `false` | Compact label: symbol, temperature and humidity. Also in the right-click menu. |
 

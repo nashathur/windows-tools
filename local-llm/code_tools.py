@@ -835,6 +835,86 @@ def mouse(x: int, y: int, action: str):
         user32.mouse_event(up, 0, 0, 0, 0)
 
 
+# the dock widgets (taskbar-dock library) and the window classes of their panels and menus
+DOCK_EXES = ("taskbar-weather", "buswidget", "taskbar-discord", "taskbar-media")
+PANEL_CLASS = re.compile(r"Popup|Panel|Picker|Menu|^#32768$")
+user32.GetLayeredWindowAttributes.argtypes = [wintypes.HWND, ctypes.c_void_p, ctypes.c_void_p,
+                                              ctypes.c_void_p]
+user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+user32.WindowFromPoint.argtypes = [wintypes.POINT]
+user32.WindowFromPoint.restype = wintypes.HWND
+user32.IsWindowVisible.argtypes = [wintypes.HWND]
+user32.GetClassNameW.argtypes = [wintypes.HWND, ctypes.c_wchar_p, ctypes.c_int]
+
+
+def layered_alpha(hwnd) -> int | None:
+    """Alpha set by SetLayeredWindowAttributes, None if the window doesn't use it."""
+    a, flags = ctypes.c_ubyte(), wintypes.DWORD()
+    if user32.GetLayeredWindowAttributes(hwnd, None, ctypes.byref(a), ctypes.byref(flags)) \
+            and flags.value & 2:  # LWA_ALPHA
+        return a.value
+    return None
+
+
+def open_panels() -> list[dict]:
+    """Panels and menus of every dock widget that are on screen (visible, not faded to 0)."""
+    out = []
+    for name in DOCK_EXES:
+        for w in widget_windows(name):
+            if not w["docked"] and PANEL_CLASS.search(w["class"]) and layered_alpha(w["hwnd"]) != 0:
+                out.append(w)
+    return out
+
+
+def describe(w: dict) -> str:
+    x, y, cw, ch = w["rect"]
+    return f"{w['class']} of {w['exe']} at ({x},{y}) {cw}x{ch}"
+
+
+def settle(before: set, cap: float) -> tuple[list[dict], float, bool]:
+    """Wait for a new panel to open and its fade to finish: layered alpha 255, or (for windows
+    drawn with UpdateLayeredWindow) two equal captures in a row. Returns (new panels, seconds,
+    settled); settled is False when cap ran out first."""
+    t0, prev, new = time.monotonic(), {}, []
+    while time.monotonic() - t0 < cap:
+        time.sleep(0.06)
+        new = [w for w in open_panels() if w["hwnd"] not in before]
+        if not new:
+            continue
+        done = True
+        for w in new:
+            a = layered_alpha(w["hwnd"])
+            if a is not None:
+                done &= a == 255
+            else:
+                img = grab(w["rect"])
+                p = prev.get(w["hwnd"])
+                prev[w["hwnd"]] = img
+                done &= p is not None and p.shape == img.shape and np.array_equal(p, img)
+        if done:
+            return new, time.monotonic() - t0, True
+    return new, time.monotonic() - t0, not new
+
+
+def gone(hwnds: set, cap: float) -> bool:
+    """Wait until none of these windows is on screen any more (hidden, destroyed or alpha 0)."""
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < cap:
+        if not any(user32.IsWindowVisible(h) and layered_alpha(h) != 0 for h in hwnds):
+            return True
+        time.sleep(0.06)
+    return False
+
+
+def window_at(x: int, y: int) -> str:
+    h = user32.WindowFromPoint(wintypes.POINT(x, y))
+    if not h:
+        return "nothing"
+    cls = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(h, cls, 256)
+    return f"{cls.value} of {Path(exe_of(h)).name or '?'}"
+
+
 def setup(mcp, chat, embed, index_dir: Path):
     """Register the code tools on the server (chat/embed are server.py's model helpers)."""
 
@@ -1161,14 +1241,25 @@ def setup(mcp, chat, embed, index_dir: Path):
 
     @mcp.tool()
     def local_widget_check(widget: str, question: str = "", action: str = "",
-                           wait: float = 1.2, baseline: str = "compare") -> str:
+                           wait: float = 2.5, baseline: str = "compare", x: int = -1, y: int = -1,
+                           keep: bool = False, force: bool = False) -> str:
         """Screenshot a running widget (any app) and optionally compare/ask about it, to check
         UI changes without spending Claude image tokens. widget: part of the exe name, e.g.
         "taskbar-weather", "buswidget", "media". Captures every visible window of the process
         (strip, open panels) exactly as on screen -> PNGs in local-llm\\shots\\ (view them
-        yourself when exact pixels matter). action: "" (as is), "hover" (mouse to the strip,
-        wait, capture: hover panel), "click" (left-click panel; it stays open), "rightclick"
-        (right-click panel; stays open). These MOVE THE USER'S MOUSE (put back afterwards).
+        yourself when exact pixels matter). action: "" (as is), "hover" (mouse to the strip:
+        hover panel), "click" (left-click panel), "rightclick" (right-click panel). These MOVE
+        THE USER'S MOUSE (put back afterwards). x, y: point inside the strip (px from its
+        top-left) instead of the centre. With an action, for the dock widgets (weather, bus,
+        discord, media):
+        - refuses if a panel or menu of any of them is already open (force=True acts anyway);
+        - waits for the new panel's fade to finish (alpha 255 or the picture stopped changing),
+          at most `wait` s, and reports what really opened (class + process): "no panel opened",
+          or a WARNING when a panel of another widget opened (those are captured too);
+        - reports the point used and which window was under it;
+        - closes what it opened afterwards (left click: clicks the strip again; right click:
+          Esc to the menu; hover: mouse put back) and says whether it closed. keep=True leaves
+          it open.
         baseline: "compare" (default: pixel diff against the saved baseline of the same
         window + state: changed %, changed box, and a _diff.png with changes in red; live
         values like time/temperature always differ), "save" (store this capture as the new
@@ -1182,14 +1273,41 @@ def setup(mcp, chat, embed, index_dir: Path):
             wins = widget_windows(widget)
             if not wins:
                 return f"No visible window of a process matching {widget!r} (is it running?)"
+            report = []
             if action:
+                already = open_panels()
+                if already and not force:
+                    return ("Refused: a panel or menu is already open, so a click could land in it "
+                            "or be taken for its own:\n" + "\n".join("- " + describe(w) for w in already)
+                            + "\nClose it first, or pass force=True.")
+                sx, sy, sw, sh = wins[0]["rect"]
+                px, py = (sw // 2 if x < 0 else x), (sh // 2 if y < 0 else y)
+                if not (0 <= px < sw and 0 <= py < sh):
+                    return f"x, y = ({px},{py}) is outside the strip ({sw}x{sh})"
+                px, py = sx + px, sy + py
+                under = window_at(px, py)
+                report.append(f"{action} at ({px},{py}) = strip {describe(wins[0])} + "
+                              f"({px - sx},{py - sy}); window under the point: {under}")
+                if wins[0]["class"] not in under or Path(wins[0]["exe"]).name not in under:
+                    report.append("WARNING: the window under the point is not the strip")
                 pt = wintypes.POINT()
                 user32.GetCursorPos(ctypes.byref(pt))
-                x, y, w, h = wins[0]["rect"]
-                mouse(x + w // 2, y + h // 2, action)
-                time.sleep(wait)
+                before = {w["hwnd"] for w in already}
+                mouse(px, py, action)
+                new, secs, settled = settle(before, wait)
+                me = widget.lower()
+                if not new:
+                    report.append(f"no panel opened (waited {secs:.1f} s)")
+                for w in new:
+                    report.append(f"opened: {describe(w)}, "
+                                  + (f"settled after {secs:.2f} s" if settled
+                                     else f"still changing after {secs:.1f} s"))
+                    if me not in Path(w["exe"]).stem.lower():
+                        report.append(f"WARNING: THIS PANEL BELONGS TO ANOTHER WIDGET ({w['exe']}), "
+                                      f"not {widget}")
                 wins = widget_windows(widget)
-                user32.SetCursorPos(pt.x, pt.y)
+                mine = {w["hwnd"] for w in wins}
+                wins += [w for w in new if w["hwnd"] not in mine]
             SHOTS.mkdir(exist_ok=True)
             (SHOTS / "baseline").mkdir(exist_ok=True)
             stamp = time.strftime("%H%M%S") + f"{int(time.time() * 1000) % 1000:03d}"
@@ -1238,8 +1356,28 @@ def setup(mcp, chat, embed, index_dir: Path):
                                images=[str(tmp)])
                     info.append("  answer: " + " ".join(ans.split()))
                 lines += info
-            note = {"click": "\nThe left-click panel stays open (click the strip again to close).",
-                    "rightclick": "\nThe right-click panel stays open."}.get(action, "")
-            return f"{len(wins)} window(s) of {wins[0]['exe']}, state {state}:\n" + "\n".join(lines) + note
+            if action:
+                hw = {w["hwnd"] for w in new}
+                if keep:
+                    report.append("kept open (keep=True)" if new else "")
+                    user32.SetCursorPos(pt.x, pt.y)
+                elif new:
+                    if action == "click":
+                        mouse(px, py, "click")
+                        how = "clicked the strip again"
+                    elif action == "rightclick":
+                        for h in hw:
+                            user32.PostMessageW(h, 0x0100, 0x1B, 0)  # WM_KEYDOWN VK_ESCAPE
+                        how = "posted Esc to the menu"
+                    else:
+                        how = "moved the mouse away"
+                    user32.SetCursorPos(pt.x, pt.y)
+                    report.append(f"closed ({how})" if gone(hw, 2.0) else
+                                  f"NOT CLOSED after {how}: " + ", ".join(
+                                      describe(w) for w in new if user32.IsWindowVisible(w["hwnd"])))
+                else:
+                    user32.SetCursorPos(pt.x, pt.y)
+            head = f"{len(wins)} window(s) captured for {widget}, state {state}:\n"
+            return head + "\n".join([r for r in report if r] + lines)
         finally:
             user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(old_ctx))

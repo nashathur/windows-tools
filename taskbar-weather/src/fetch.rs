@@ -96,6 +96,5 @@ pub(crate) fn on_data(a: &mut App, f: Box<Fetched>, ctx: &mut Ctx) {
     let ms = if a.error.is_some() { 2 * 60_000 } else { a.cfg.refresh_minutes.max(5) * 60_000 };
     ctx.every(TIMER_REFRESH, ms);
     ctx.after(flyout::invalidate);
-    tray::update(a, ctx, false);
     ctx.redraw();
 }

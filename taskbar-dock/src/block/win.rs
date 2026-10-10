@@ -65,7 +65,18 @@ struct State {
     quitting: bool,
     /// A widget's switch in the right-click panel is being carried out ([`flip`]).
     flipping: bool,
+    /// The Content draws a tray icon ([`Content::tray_icon`]): it has the Show on taskbar switch.
+    has_tray: bool,
+    /// The tray icon is added; its icon (0: none made yet), size and tooltip.
+    tray_on: bool,
+    tray_icon: HICON,
+    tray_size: i32,
+    tray_tip: String,
 }
+
+/// Block's keys in the widget's settings section.
+const COMPACT_KEY: &str = "compact";
+const SHOW_KEY: &str = "show_on_taskbar";
 
 thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
@@ -114,11 +125,12 @@ pub fn run<C: Content>(spec: Spec, content: C) {
             (spec.log)("creating the main window failed");
             return;
         }
-        let compact = read_compact(spec.section);
+        let compact = read_bool(spec.section, COMPACT_KEY, false);
+        let show = read_bool(spec.section, SHOW_KEY, true);
         STATE.with(|s| {
             *s.borrow_mut() = Some(State {
                 content: Box::new(content),
-                core: Core { compact, ..Default::default() },
+                core: Core { compact, show, ..Default::default() },
                 look: Look::current(),
                 main,
                 strip: 0,
@@ -134,11 +146,24 @@ pub fn run<C: Content>(spec: Spec, content: C) {
                 attach_failed: None,
                 quitting: false,
                 flipping: false,
+                has_tray: false,
+                tray_on: false,
+                tray_icon: 0,
+                tray_size: 0,
+                tray_tip: String::new(),
                 spec,
             })
         });
+        // whether it draws a tray icon decides whether it has the switch (and so what shows)
+        st(|s| {
+            let size = tray::size();
+            let icon = tray::draw(s.content.as_mut(), &s.look, size);
+            s.has_tray = icon.is_some();
+            (s.tray_icon, s.tray_size) = (icon.unwrap_or(0), size);
+        });
         call(|c, ctx| c.start(ctx));
         redraw(); // creates the strip
+        tray_sync(false, false);
         update_hooks();
         SetTimer(main, T_WATCH, WATCH_MS, None);
 
@@ -237,6 +262,7 @@ fn apply(reqs: Vec<Request>) {
     }
     if redraw_after {
         redraw();
+        tray_sync(false, false); // the tooltip may follow the data, the icon the state
     }
 }
 
@@ -273,6 +299,14 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             // Explorer restarted: the taskbar window is new
             if msg != 0 && st(|s| s.taskbar_created) == Some(msg) {
                 taskbar_restarted();
+                return 0;
+            }
+            if msg == tray::WM_TRAY {
+                match (lp as u32) & 0xFFFF {
+                    WM_LBUTTONUP => apply(vec![Request::TogglePanel]), // main panel at the pointer
+                    WM_RBUTTONUP => right_click(false),                 // right-click panel at the pointer
+                    _ => {}
+                }
                 return 0;
             }
             if msg >= WM_USER {
@@ -654,7 +688,8 @@ fn right_click(on_panel: bool) {
     let Some((a, strip, main, look, menu, section)) = st(|s| {
         // a right-click isn't a hover: cancels a pending hover-open, closes a hover-opened panel
         let a = s.core.panel.right_click(on_panel);
-        let menu = core::menu(s.content.as_mut(), s.core.compact, startup::is_on(s.spec.section));
+        let show = s.has_tray.then_some(s.core.show);
+        let menu = core::menu(s.content.as_mut(), show, s.core.compact, startup::is_on(s.spec.section));
         (a, s.strip, s.main, s.look.clone(), menu, s.spec.section)
     }) else { return };
     panel_do(a);
@@ -691,9 +726,24 @@ fn right_click(on_panel: bool) {
 /// A switch in the right-click panel flipped: its new state (the panel stays open).
 fn flip(id: usize, section: &str) -> bool {
     match core::route(id) {
+        Route::Show => {
+            let on = !st(|s| s.core.show).unwrap_or(true);
+            if let Err(e) = save_bool(section, SHOW_KEY, on) {
+                log(&format!("saving Show on taskbar failed: {e}"));
+            }
+            st(|s| {
+                s.core.show = on;
+                s.settings_mtime = settings::mtime();
+                s.flipping = true; // the strip goes, this panel stays open
+            });
+            redraw();
+            st(|s| s.flipping = false);
+            tray_sync(false, false);
+            on
+        }
         Route::Compact => {
             let on = !st(|s| s.core.compact).unwrap_or(false);
-            if let Err(e) = save_compact(section, on) {
+            if let Err(e) = save_bool(section, COMPACT_KEY, on) {
                 log(&format!("saving compact mode failed: {e}"));
             }
             st(|s| {
@@ -719,11 +769,11 @@ fn flip(id: usize, section: &str) -> bool {
     }
 }
 
-fn read_compact(section: &str) -> bool {
-    settings::section(section).and_then(|v| v.get("compact")?.as_bool()).unwrap_or(false)
+fn read_bool(section: &str, key: &str, default: bool) -> bool {
+    settings::section(section).and_then(|v| v.get(key)?.as_bool()).unwrap_or(default)
 }
 
-fn save_compact(section: &str, on: bool) -> std::io::Result<()> {
+fn save_bool(section: &str, key: &str, on: bool) -> std::io::Result<()> {
     use serde_json::{Map, Value};
     settings::update(|root| {
         if !root.is_object() {
@@ -734,7 +784,7 @@ fn save_compact(section: &str, on: bool) -> std::io::Result<()> {
             if !sec.is_object() {
                 *sec = Value::Object(Map::new());
             }
-            sec["compact"] = Value::Bool(on);
+            sec[key] = Value::Bool(on);
         }
     })
 }
@@ -746,8 +796,71 @@ fn quit() {
     }
     close_panels();
     destroy_strip();
+    tray_sync(false, false); // quitting: removes the tray icon
     st(|s| s.content.closing());
     unsafe { DestroyWindow(main) }; // WM_DESTROY ends the message loop
+}
+
+/// What [`tray_sync`] does after the borrow.
+enum TrayDo {
+    Remove(HWND, HICON),
+    Set { main: HWND, icon: HICON, tip: String, add: bool, old: HICON },
+}
+
+/// Adds, updates or removes the tray icon: shown whenever the strip isn't (`core::tray_shown`),
+/// never while quitting. `redo`: draw the logo again (theme, scaling); `re_add`: Explorer
+/// restarted (the tray lost it). The tooltip is compared and changed only when it changed.
+fn tray_sync(redo: bool, re_add: bool) {
+    let size = tray::size();
+    let todo = st(|s| {
+        let want = !s.quitting && core::tray_shown(s.core.show, s.content.visible(), s.has_tray);
+        if !want {
+            if !s.tray_on {
+                return None;
+            }
+            s.tray_on = false;
+            s.tray_tip.clear();
+            return Some(TrayDo::Remove(s.main, std::mem::replace(&mut s.tray_icon, 0)));
+        }
+        let add = re_add || !s.tray_on;
+        let mut changed = add;
+        let mut old = 0;
+        if redo || s.tray_icon == 0 || s.tray_size != size {
+            if let Some(icon) = tray::draw(s.content.as_mut(), &s.look, size) {
+                old = std::mem::replace(&mut s.tray_icon, icon);
+                s.tray_size = size;
+                changed = true;
+            }
+        }
+        let mut tip = s.content.tray_tip();
+        if tip.is_empty() {
+            tip = s.spec.title.to_string();
+        }
+        if tip != s.tray_tip {
+            s.tray_tip = tip.clone();
+            changed = true;
+        }
+        s.tray_on = true;
+        changed.then_some(TrayDo::Set { main: s.main, icon: s.tray_icon, tip, add, old })
+    })
+    .flatten();
+    unsafe {
+        match todo {
+            Some(TrayDo::Remove(main, icon)) => {
+                tray::remove(main);
+                tray::destroy(icon);
+                log("tray icon removed");
+            }
+            Some(TrayDo::Set { main, icon, tip, add, old }) => {
+                tray::set(main, icon, &tip, add);
+                tray::destroy(old);
+                if add {
+                    log("tray icon added");
+                }
+            }
+            None => {}
+        }
+    }
 }
 
 // ---------------------------------------------------------------- the strip window
@@ -772,7 +885,7 @@ fn attach(tb: HWND) -> Option<HWND> {
 /// [`FLOAT_AFTER`], or `force_float`) a floating topmost window, if the Spec allows.
 fn create_strip() {
     let Some((ok, float, force, failed)) =
-        st(|s| (s.strip == 0 && !s.quitting && s.content.visible(), s.spec.float, s.spec.force_float, s.attach_failed))
+        st(|s| (s.strip == 0 && !s.quitting && core::shown(s.core.show, s.content.visible(), s.has_tray), s.spec.float, s.spec.force_float, s.attach_failed))
     else { return };
     if !ok {
         return;
@@ -859,6 +972,7 @@ fn remove_strip() {
 /// it. (Forgetting a live strip left an untracked duplicate on the taskbar, 2026-10-10.)
 fn taskbar_restarted() {
     call(|c, ctx| c.taskbar_restarted(ctx));
+    tray_sync(false, true); // the new tray doesn't have it
     let Some((strip, floating)) = st(|s| {
         s.attach_failed = None;
         s.no_taskbar_since = None;
@@ -902,10 +1016,11 @@ fn watch() {
     refresh_look();
     let m = settings::mtime();
     if let Some(Some(section)) = st(|s| (s.settings_mtime != m).then_some(s.spec.section)) {
-        let compact = read_compact(section);
+        let (compact, show) = (read_bool(section, COMPACT_KEY, false), read_bool(section, SHOW_KEY, true));
         st(|s| {
             s.settings_mtime = m;
             s.core.compact = compact;
+            s.core.show = show;
         });
         call(|c, ctx| c.settings_changed(ctx));
     }
@@ -916,6 +1031,7 @@ fn watch() {
     }
     float_watch();
     redraw(); // also creates the strip when it's missing and wanted
+    tray_sync(false, false); // the switch or the state may have changed
     update_hooks();
 }
 
@@ -929,6 +1045,7 @@ fn refresh_look() {
     }) else { return };
     if changed {
         call(|c, ctx| c.look_changed(ctx));
+        tray_sync(true, false); // the logo follows the theme
         if panel != 0 {
             unsafe { InvalidateRect(panel, std::ptr::null(), 0) };
         }
@@ -978,7 +1095,7 @@ fn frame<'a>(look: &'a Look, core: &Core, floating: bool, height: i32, dpi: f32,
 /// when [`Content::visible`] says no.
 fn redraw() {
     let Some((strip, visible, quitting, floating, fs_hidden, flipping)) =
-        st(|s| (s.strip, s.content.visible(), s.quitting, s.floating, s.fs_hidden, s.flipping))
+        st(|s| (s.strip, core::shown(s.core.show, s.content.visible(), s.has_tray), s.quitting, s.floating, s.fs_hidden, s.flipping))
     else { return };
     if quitting {
         return;
@@ -986,14 +1103,14 @@ fn redraw() {
     if !visible {
         if strip != 0 {
             if flipping {
-                // a switch in the open right-click panel did this (weather's Show on taskbar):
-                // that panel stays open, as switches do
+                // a switch in the open right-click panel did this (Show on taskbar): that panel
+                // stays open, as switches do
                 panel_closed(false);
                 remove_strip();
             } else {
                 destroy_strip(); // hidden by state (discord, media): every panel closes
             }
-            log("nothing to show: strip removed");
+            log("switched off or nothing to show: strip removed");
         }
         return;
     }

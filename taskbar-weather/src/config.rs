@@ -28,13 +28,11 @@ pub struct Config {
     pub knmi_api_key: String,
     /// KNMI station id, e.g. "06260" (De Bilt). Empty = nearest station within 50 km.
     pub knmi_station: String,
-    /// Show the label embedded in the taskbar (in addition to the tray icon).
-    pub taskbar_label: bool,
     /// Where the taskbar label goes: "auto" (right side when taskbar icons are
     /// left-aligned, else left side), "left" or "right".
     pub label_position: String,
-    // `compact` (temperature over humidity) is in the same section but Block's
-    // (taskbar_dock::block): `save` leaves it alone.
+    // `compact` (temperature over humidity) and `show_on_taskbar` are in the same section but
+    // Block's (taskbar_dock::block): `save` leaves them alone.
 }
 
 impl Default for Config {
@@ -49,7 +47,6 @@ impl Default for Config {
             model: "best_match".into(),
             knmi_api_key: String::new(),
             knmi_station: String::new(),
-            taskbar_label: true,
             label_position: "auto".into(),
         }
     }
@@ -82,6 +79,7 @@ impl Config {
         // write the section back in full: adds settings introduced by newer versions (no write
         // if nothing changed)
         cfg.save();
+        migrate_label();
         cfg
     }
 
@@ -111,4 +109,19 @@ impl Config {
     pub fn location_key(&self) -> String {
         format!("{}|{:?}|{:?}", self.city.trim(), self.latitude, self.longitude)
     }
+}
+
+/// Once: the old `taskbar_label` switch becomes Block's standard `show_on_taskbar` (kept if that
+/// is already set) and the old key goes. No write when there is no old key.
+fn migrate_label() {
+    let has_old = settings::section("weather").is_some_and(|w| w.get("taskbar_label").is_some());
+    if !has_old {
+        return;
+    }
+    let _ = settings::update(|root| {
+        let Some(sec) = root.get_mut("weather").and_then(Value::as_object_mut) else { return };
+        if let Some(old) = sec.remove("taskbar_label") {
+            sec.entry("show_on_taskbar").or_insert(old);
+        }
+    });
 }

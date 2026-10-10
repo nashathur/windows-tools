@@ -101,6 +101,15 @@ PDF input works in every tool that takes a path (text layer via PyMuPDF; scanned
 - **local_widget_check** finds strips as children of `Shell_TrayWnd` and panels as top-level
   windows; captures are screen copies at real pixels (per-monitor DPI). `hover`/`click`/`rightclick`
   move the real mouse (put back afterwards). Baselines in `shots\baseline\`.
+  With an action on the dock widgets (weather, bus, discord, media) it checks what really happened,
+  since a click once opened bus's menu while the old tool reported weather's: it refuses while any
+  of their panels/menus is open (`force=True` overrides), clicks the strip's centre or `x`, `y`
+  (px inside the strip) and reports the point and the window under it, waits for the new panel's
+  fade (layered alpha 255, or two equal captures; `wait` is the cap, 2.5 s), reports each panel
+  that opened (class + process; "no panel opened"; a WARNING if it is another widget's), and
+  closes it afterwards (click: strip again; rightclick: Esc posted to the menu; hover: mouse put
+  back), reporting whether it closed. `keep=True` leaves it open. Panel classes:
+  `DOCK_EXES` / `PANEL_CLASS` in code_tools.py (Popup|Panel|Picker|Menu, `#32768`).
 - **rust_refs / rust_rename** (`rust_analyzer.py`): one rust-analyzer process per repo with all
   crates (`linkedProjects`), kept running, stopped after 10 idle minutes (~1-2 GB RAM while up);
   first call ~15-50 s, then <1 s. rust-analyzer loads taskbar-dock once per widget (each enables

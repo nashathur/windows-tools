@@ -18,8 +18,11 @@ widget gives a `Spec` and a `Content` and calls `block::run`. `mod.rs` API (Spec
 applied after the borrow incl. `toggle_panel`/`open_menu` for a tray icon (no strip needed: the panel
 hook gets `strip: 0`, place at the pointer), Frame, Canvas, Hit, MenuBuilder with the standard rows,
 `with` for the widget's own windows/worker posts, `panel_closed`/`right_click_on_panel` for the interim
-`Spec::panel` hook). Block owns the section's `compact` key: a widget saving its section must merge,
-not replace it (weather `Config::save`),
+`Spec::panel` hook). Block owns the section's `compact` and `show_on_taskbar` keys: a widget saving its section must merge,
+not replace it (weather `Config::save`). Show on taskbar + tray icon (step 3b): the strip shows when
+the switch is on and `Content::visible()`; the tray icon (`tray.rs`, logo from `Content::tray_icon`,
+tooltip `tray_tip`) shows whenever the strip doesn't; a widget without `tray_icon` gets neither the
+switch nor the icon,
 `core.rs` (pure decisions, tested with a fake Content), `place.rs` (left side, floating), `win.rs`
 (windows, timers, dock/fit/hooks, Explorer restart, floating fallback, menu).
 Shared front end: all three widgets use `strip` (glide, drag, zoom) and `panel` (when the panel
@@ -37,8 +40,8 @@ the icons-as-obstacles fit (section 6; test aid `TASKBAR_DOCK_TEST_ICONS_RIGHT`)
    leaves (`panel::PanelBehaviour`). It may be the left-click panel shown unpinned.
 4. **Left-click panel**: the main panel, pinned (stays until clicked away or clicked again).
 5. **Right-click panel**: a panel in the same look as the others (not a Windows menu): the
-   widget's actions, Compact mode and Start with Windows as on/off switches, Edit settings…,
-   Quit. Right click while the left-click panel is open switches to it, and back.
+   widget's actions, then Show on taskbar (widgets on Block with a tray icon; the others from
+   their ports), Compact mode and Start with Windows as on/off switches, Edit settings…, Quit. Right click while the left-click panel is open switches to it, and back.
 A new widget isn't done until it has all five; a change to one widget's part should be
 mirrored in the others. Status 2026-10-09: all four widgets have all five. Bus, weather and discord use the shared
 `menu_panel` for the right-click panel; media has its own (panel_view.rs, same look).

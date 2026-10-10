@@ -71,7 +71,7 @@ Explorer restart
 ## Weather
 
 - [ ] Side option: `label_position` left or right of the taskbar buttons; right = in the tray stack. Verify: settings edit + strips.
-- [ ] **Show on taskbar** switch (`taskbar_label`): off destroys the strip, the tray icon stays; on creates it. Not in the plan's Spec yet → needs a Spec field (e.g. `visible: UserSwitch`). **(new)** Verify: menu switch + strips.
+- [x] **Show on taskbar** switch (Block's `show_on_taskbar` since 3b, was `taskbar_label`): off removes the strip and adds the tray icon, the menu stays open; on brings the strip back and removes the icon. Verified 2026-10-10 (menu switch, file edit, log).
 - [ ] Tray icon (`tray.rs`): shows the temperature, left click toggles the flyout, right click opens the right-click panel (placed above the pointer when the strip is off); re-added after Explorer restart (`TaskbarCreated`). **(new)** Verify: hand.
 - [ ] Right-click panel header: location name + one-line summary (line1 · line2 · desc). Rows: Refresh now, Show on taskbar, Fahrenheit (°F), Compact mode, Start with Windows, Edit settings…, Quit. **(new)** Verify: menu.
 - [ ] Data timer: fetch every `refresh_minutes`; new data redraws strip, tray icon and open flyout; settings changes to city/units/model/KNMI refetch at once. **(new)** Verify: log (fetch lines).
