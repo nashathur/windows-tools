@@ -131,6 +131,8 @@ pub const TITLE_SMALL: TextStyle = TextStyle { px: 14.0, weight: 600 };
 pub const TITLE: TextStyle = TextStyle { px: 15.0, weight: 600 };
 pub const DISPLAY: TextStyle = TextStyle { px: 46.0, weight: 300 };
 pub const FOOTNOTE: TextStyle = TextStyle { px: 11.0, weight: 400 };
+/// A badge's text in a panel header (the bus line number), bold.
+pub const BADGE: TextStyle = TextStyle { px: 18.0, weight: 700 };
 /// Panel glyphs (icon font) and media's transport buttons.
 pub const ICON: TextStyle = TextStyle { px: 16.0, weight: 400 };
 pub const ICON_LARGE: TextStyle = TextStyle { px: 20.0, weight: 400 };
@@ -400,7 +402,7 @@ mod tests {
         let sizes = [
             (CAPTION, 12.0, 400), (CAPTION_STRONG, 12.0, 600), (ROW, 13.0, 400), (BODY, 14.0, 400),
             (BODY_LARGE, 15.0, 400), (TITLE_SMALL, 14.0, 600), (TITLE, 15.0, 600), (DISPLAY, 46.0, 300),
-            (FOOTNOTE, 11.0, 400), (ICON, 16.0, 400), (ICON_LARGE, 20.0, 400), (EMOJI, 20.0, 400), (EMOJI_LARGE, 42.0, 400),
+            (FOOTNOTE, 11.0, 400), (BADGE, 18.0, 700), (ICON, 16.0, 400), (ICON_LARGE, 20.0, 400), (EMOJI, 20.0, 400), (EMOJI_LARGE, 42.0, 400),
         ];
         for (s, px, w) in sizes {
             assert_eq!((s.px, s.weight), (px, w));

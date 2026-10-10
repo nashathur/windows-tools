@@ -157,8 +157,10 @@ pub struct LabelContent {
     /// Temperature, with the humidity (dimmer) under it at the same x.
     pub line1: String,
     pub line2: String,
-    /// The conditions, beside the two lines, vertically centred (empty in compact mode).
+    /// The conditions beside the two lines (empty in compact mode): over `desc2` (dimmer, "Feels
+    /// 31°") on the same baselines, or vertically centred without it.
     pub desc: String,
+    pub desc2: String,
 }
 
 /// Draws the taskbar label into a layered window with per-pixel alpha. Returns its size.
@@ -182,6 +184,9 @@ pub fn update_label(hwnd: HWND, content: &LabelContent, height: i32, scale: f32,
     let one_line = content.line2.is_empty();
     let (w2, h2) = if one_line { (0, 0) } else { text_size(measure, &f2, &content.line2) };
     let (w3, h3) = if content.desc.is_empty() { (0, 0) } else { text_size(measure, &f1, &content.desc) };
+    // the feels-like line under the conditions (only with them, and only when there are two lines)
+    let two_desc = w3 > 0 && !one_line && !content.desc2.is_empty();
+    let (w4, h4) = if two_desc { text_size(measure, &f2, &content.desc2) } else { (0, 0) };
     let (a1, a2) = (ascent(measure, &f1), ascent(measure, &f2));
     unsafe { let _ = DeleteDC(measure); }
 
@@ -190,7 +195,8 @@ pub fn update_label(hwnd: HWND, content: &LabelContent, height: i32, scale: f32,
     let (icon_top, gw) = draw::icon_box(height, scale);
     let col = w1.max(w2);
     let desc_gap = if w3 > 0 { s(10.0) } else { 0 };
-    let natural = pad + gw + gap + col + desc_gap + w3 + pad;
+    let desc_w = w3.max(w4);
+    let natural = pad + gw + gap + col + desc_gap + desc_w + pad;
     if measure_only {
         return SIZE { cx: natural, cy: height };
     }
@@ -213,7 +219,11 @@ pub fn update_label(hwnd: HWND, content: &LabelContent, height: i32, scale: f32,
         draw_text(cv.dc, &f2, &content.line2, white, tx, top2, col, h2, DT_LEFT | DT_TOP);
     }
     let dx = tx + col + desc_gap;
-    if w3 > 0 {
+    if two_desc {
+        // conditions over feels-like, on the same baselines as temperature over humidity
+        draw_text(cv.dc, &f1, &content.desc, white, dx, top1, w3, h3, DT_LEFT | DT_TOP);
+        draw_text(cv.dc, &f2, &content.desc2, white, dx, top2, w4, h4, DT_LEFT | DT_TOP);
+    } else if w3 > 0 {
         draw_text(cv.dc, &f1, &content.desc, white, dx, (height - h3 + 1) / 2, w3, h3, DT_LEFT | DT_TOP);
     }
     if width < natural {
@@ -222,12 +232,14 @@ pub fn update_label(hwnd: HWND, content: &LabelContent, height: i32, scale: f32,
         taskbar_dock::marquee::fade_edges(cv.pixels(), width, (tx, 0, width, height), s(12.0), false, true, 0);
     }
 
-    // coverage into colour: the humidity dimmer
+    // coverage into colour: the humidity and feels-like line dimmer
     let (fg, dim) = look.text_rgb();
     let hum = if one_line { (0, 0, 0, 0) } else { (tx, top2, dx, top2 + h2) };
+    let feels = if two_desc { (dx, top2, dx + w4, top2 + h4) } else { (0, 0, 0, 0) };
+    let inside = |r: (i32, i32, i32, i32), x: i32, y: i32| x >= r.0 && x < r.2 && y >= r.1 && y < r.3;
     for (i, p) in cv.pixels().iter_mut().enumerate() {
         let (x, y) = (i as i32 % width, i as i32 / width);
-        let c = if x >= hum.0 && x < hum.2 && y >= hum.1 && y < hum.3 { dim } else { fg };
+        let c = if inside(hum, x, y) || inside(feels, x, y) { dim } else { fg };
         let a = ((*p >> 16) & 0xff).max((*p >> 8) & 0xff).max(*p & 0xff);
         *p = a << 24 | (c.0 * a / 255) << 16 | (c.1 * a / 255) << 8 | (c.2 * a / 255);
     }
@@ -258,6 +270,15 @@ fn palette(t: &Theme) -> Palette {
     let cr = |c: Rgb| COLORREF(c.colorref());
     Palette { bg: cr(t.color.bg), fg: cr(t.color.fg), dim: cr(t.color.dim), line: cr(t.color.line),
               rain: cr(t.brand("weather.rain")), track: cr(t.color.track), bar: cr(t.brand("weather.temp_bar")) }
+}
+
+/// Rain chance (%) shown from this on, and in the rain colour from `RAIN_LIKELY` (below: dim).
+const RAIN_SHOWN: f64 = 10.0;
+const RAIN_LIKELY: f64 = 50.0;
+
+/// The colour for a rain chance of `p` %.
+fn rain_color(pal: &Palette, p: f64) -> COLORREF {
+    if p >= RAIN_LIKELY { pal.rain } else { pal.dim }
 }
 
 pub const POPUP_W: i32 = size::PANEL_WIDE as i32;
@@ -363,8 +384,8 @@ pub fn paint_popup(hwnd: HWND, weather: Option<&Weather>, status: Option<&str>, 
                     draw_text(dc, &small, &hour_label(look, &hr.time), pal.dim, x, s(174.0), col, s(18.0), c);
                     draw_text(dc, &emoji, describe(hr.code, true).0, pal.fg, x, s(193.0), col, s(28.0), c);
                     draw_text(dc, &small_b, &deg(hr.temp), pal.fg, x, s(222.0), col, s(18.0), c);
-                    if let Some(p) = hr.precip.filter(|p| *p >= 10.0) {
-                        draw_text(dc, &small, &format!("{p:.0}%"), pal.rain, x, s(240.0), col, s(16.0), c);
+                    if let Some(p) = hr.precip.filter(|p| *p >= RAIN_SHOWN) {
+                        draw_text(dc, &small, &format!("{p:.0}%"), rain_color(&pal, p), x, s(240.0), col, s(16.0), c);
                     }
                 }
                 fill(dc, pad, s(264.0), inner, s(1.0).max(1), pal.line);
@@ -378,8 +399,8 @@ pub fn paint_popup(hwnd: HWND, weather: Option<&Weather>, status: Option<&str>, 
                     let rh = s(31.0);
                     draw_text(dc, &body, &d.label, pal.fg, pad, y, s(70.0), rh, l);
                     draw_text(dc, &emoji, describe(d.code, true).0, pal.fg, pad + s(70.0), y, s(32.0), rh, c);
-                    if let Some(p) = d.precip.filter(|p| *p >= 10.0) {
-                        draw_text(dc, &small, &format!("{p:.0}%"), pal.rain, pad + s(104.0), y, s(40.0), rh, l);
+                    if let Some(p) = d.precip.filter(|p| *p >= RAIN_SHOWN) {
+                        draw_text(dc, &small, &format!("{p:.0}%"), rain_color(&pal, p), pad + s(104.0), y, s(40.0), rh, l);
                     }
                     let bar_x = pad + s(186.0);
                     let bar_w = s(86.0);

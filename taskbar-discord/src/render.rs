@@ -669,6 +669,28 @@ fn panel_avatar(dc: HDC, x: i32, y: i32, d: i32, img: Option<&Image>, speaking: 
     unsafe { let _ = BitBlt(dc, x, y, d, d, cv.dc, 0, 0, SRCCOPY); }
 }
 
+/// The server logo in the panel's header, px at 100%.
+const LOGO_D: f32 = 36.0;
+
+/// Draws the server's logo (a blurple disc with a headset without one) into an opaque DC at
+/// (x, y), `d` px, as the strip does.
+fn panel_logo(dc: HDC, x: i32, y: i32, d: i32, img: Option<&Image>, icons: &Font, bg: COLORREF, theme: &Theme) {
+    let Some(mut cv) = Canvas::new(d, d) else { return };
+    let buf = cv.pixels();
+    avatars::draw_circle(buf, d, 0.0, 0.0, d as f32, img, brand24("discord.blurple"), 255);
+    // onto the panel's background (premultiplied → opaque)
+    let (br, bgc, bb) = (bg.0 & 0xff, (bg.0 >> 8) & 0xff, (bg.0 >> 16) & 0xff);
+    for p in buf.iter_mut() {
+        let inv = 255 - (*p >> 24);
+        let ch = |s: u32, b: u32| (((*p >> s) & 0xff) + b * inv / 255).min(255) << s;
+        *p = ch(16, br) | ch(8, bgc) | ch(0, bb);
+    }
+    unsafe { let _ = BitBlt(dc, x, y, d, d, cv.dc, 0, 0, SRCCOPY); }
+    if img.is_none() {
+        draw_text(dc, icons, GLYPH_HEADSET, COLORREF(theme.color.on_fill.colorref()), x, y, d, d, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+}
+
 const SETUP: &str = "Discord only shares voice chat with an app you register yourself (free, one time):\n\
 1. Open discord.com/developers/applications → New Application.\n\
 2. OAuth2: copy the Client ID; Reset Secret and copy the Client Secret.\n\
@@ -676,9 +698,9 @@ const SETUP: &str = "Discord only shares voice chat with an app you register you
 4. Right-click this widget → Edit settings… and paste both into \"discord\": client_id, client_secret.\n\
 5. Discord then asks once: click Authorize.";
 
-/// Paints the panel. `avatar` gives a member's image if it's ready; `hover` is the button under
-/// the mouse. `scale` = DPI / 96.
-pub fn paint_panel(hwnd: HWND, v: &Voice, avatar: &dyn Fn(&Member) -> Option<Arc<Image>>, hover: Option<Button>, scale: f32, look: &Look) {
+/// Paints the panel. `avatar` gives a member's image if it's ready, `logo` the server's;
+/// `hover` is the button under the mouse. `scale` = DPI / 96.
+pub fn paint_panel(hwnd: HWND, v: &Voice, avatar: &dyn Fn(&Member) -> Option<Arc<Image>>, logo: Option<&Image>, hover: Option<Button>, scale: f32, look: &Look) {
     let s = |x: f32| (x * scale).round() as i32;
     let theme = Theme::new(look);
     let pal = palette(&theme);
@@ -709,10 +731,15 @@ pub fn paint_panel(hwnd: HWND, v: &Voice, avatar: &dyn Fn(&Member) -> Option<Arc
 
         match &v.channel {
             Some(c) => {
+                // the server's logo at the top left (as on the strip), the channel over the server beside it
+                let ld = s(LOGO_D);
+                panel_logo(dc, pad, s(12.0) + (s(40.0) - ld) / 2, ld, logo, &icons, pal.bg, &theme);
+                let tx = pad + ld + s(space::M);
+                let tw = w - pad - tx - s(70.0);
                 let name = if c.name.is_empty() { "Voice" } else { &c.name };
-                draw_text(dc, &title, name, pal.fg, pad, s(12.0), inner - s(70.0), s(22.0), DT_LEFT | one);
+                draw_text(dc, &title, name, pal.fg, tx, s(12.0), tw, s(22.0), DT_LEFT | one);
                 let place = c.guild.clone().unwrap_or_else(|| if c.guild_id.is_some() { String::new() } else { "Private call".into() });
-                draw_text(dc, &small, &place, pal.dim, pad, s(34.0), inner - s(70.0), s(18.0), DT_LEFT | one);
+                draw_text(dc, &small, &place, pal.dim, tx, s(34.0), tw, s(18.0), DT_LEFT | one);
                 let count = format!("{} in call", c.members.len());
                 draw_text(dc, &small, &count, pal.dim, pad, s(12.0), inner, s(22.0), DT_RIGHT | one);
                 fill(dc, RECT { left: pad, top: s(HEAD_H), right: w - pad, bottom: s(HEAD_H) + s(1.0).max(1) }, pal.line);

@@ -313,7 +313,8 @@ extern "system" fn popup_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> L
                 let painted = with(|a| {
                     let main = a.main.0 as usize;
                     let avatar = move |m: &voice::Member| avatars::get(m, move || notify_avatar(main));
-                    render::paint_panel(hwnd, &a.voice, &avatar, a.panel_hover, scale, &a.look);
+                    let logo = guild_logo(&a.voice, main);
+                    render::paint_panel(hwnd, &a.voice, &avatar, logo.as_deref(), a.panel_hover, scale, &a.look);
                 });
                 if painted.is_none() {
                     return DefWindowProcW(hwnd, msg, wp, lp);

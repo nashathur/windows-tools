@@ -82,6 +82,7 @@ Families today: weather and discord panels hard-code **"Segoe UI"** (render.rs:3
 | `title_large` | 18 / 600 | media click only | candidate to drop in favour of `title` (visible) |
 | `display` | 46 / 300 | weather temperature | – |
 | `footnote` | 11 / 400 | bus popup footer | – |
+| `badge` | 18 / 700 | bus popup header: line number in the badge (added 2026-10-10) | strip badges keep `badge::font` (font_size + 1 / 700) |
 | `icon` | 16 | discord, media, menu_panel panel glyphs | – |
 | `icon_large` | 20 | media transport buttons | – |
 | `emoji` / `emoji_large` | 20 / 42 | weather | – |
@@ -139,3 +140,6 @@ Named overrides kept in `theme.rs` (not asked, would change visibly): `weather.r
 default accent blue; the live accent here is green), `discord.attention` F0A030 (strip dot),
 `font_override::WEATHER_TRAY` and `BUS_PICKER` ("Segoe UI"). Media's artist line (78% coverage)
 and floating backdrop (EE/20) stay as they are (coverage/backdrop, not tokens yet).
+
+2026-10-10 (UI changes): weather rain chance is shown from 10% and coloured by threshold: ≥50%
+`weather.rain`, below `dim` (`RAIN_LIKELY` in taskbar-weather render.rs). No token values changed.

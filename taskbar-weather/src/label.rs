@@ -214,18 +214,21 @@ pub(crate) fn content_for(a: &App, compact: bool) -> LabelContent {
     let mut c = full_content(a);
     if compact {
         c.desc.clear(); // temperature over humidity only
+        c.desc2.clear();
     }
     c
 }
 
 pub(crate) fn full_content(a: &App) -> LabelContent {
-    let text = |line1: &str, line2: String, desc: &str| LabelContent { glyph: "☁".into(), line1: line1.into(), line2, desc: desc.into() };
+    let text = |line1: &str, line2: String, desc: &str| LabelContent { glyph: "☁".into(), line1: line1.into(), line2, desc: desc.into(), desc2: String::new() };
     match &a.weather {
         Some(wx) => {
             // temperature over humidity, the conditions beside them
             let (glyph, desc) = describe(wx.code, wx.is_day);
             let line2 = if wx.humidity.is_finite() { format!("{:.0}%", wx.humidity) } else { String::new() };
-            LabelContent { glyph: glyph.into(), line1: format!("{}{}", deg(wx.temp), &wx.unit()[2..]), line2, desc: desc.into() }
+            // the conditions over what it feels like
+            let desc2 = if wx.feels.is_finite() { format!("Feels {}", deg(wx.feels)) } else { String::new() };
+            LabelContent { glyph: glyph.into(), line1: format!("{}{}", deg(wx.temp), &wx.unit()[2..]), line2, desc: desc.into(), desc2 }
         }
         None if a.error.is_some() => text("--", String::new(), "Offline"),
         None => text("…", String::new(), "Weather"),

@@ -369,6 +369,16 @@ fn apply_fit(hwnd: HWND, fit: dock::Fit, redraw: bool) -> dock::FitChange {
     change
 }
 
+/// The server's logo if it has one and it's loaded (else starts the download; `main` gets
+/// WM_AVATAR when it's ready). The strip and the panel both show it.
+pub(crate) fn guild_logo(voice: &Voice, main: usize) -> Option<std::sync::Arc<avatars::Image>> {
+    voice.channel.as_ref().and_then(|c| {
+        let (id, url) = (c.guild_id.as_ref()?, c.guild_icon.clone()?);
+        let stem: String = url.rsplit('/').next().unwrap_or("").chars().take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_').collect();
+        avatars::get_url(format!("guild_{id}_{stem}"), url, move || notify_avatar(main))
+    })
+}
+
 pub(crate) fn redraw_label() {
     let Some(Some((hwnd, voice, hover, hot, cfg, zoom, main, grow))) =
         with(|a| a.label.map(|h| (h, a.voice.clone(), a.hover, a.hot, a.cfg.clone(), a.motion.zoom(), a.main.0 as usize, a.feel.value())))
@@ -390,11 +400,7 @@ pub(crate) fn redraw_label() {
         with(|a| a.ring_since = None);
     }
     set_beating(pulsing);
-    let logo = voice.channel.as_ref().and_then(|c| {
-        let (id, url) = (c.guild_id.as_ref()?, c.guild_icon.clone()?);
-        let stem: String = url.rsplit('/').next().unwrap_or("").chars().take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_').collect();
-        avatars::get_url(format!("guild_{id}_{stem}"), url, move || notify_avatar(main))
-    });
+    let logo = guild_logo(&voice, main);
     let avatars: Vec<_> = voice
         .channel
         .iter()

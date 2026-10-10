@@ -102,9 +102,13 @@ const MY_CLASS: &str = "BusWidgetBar";
 // ---- UI state (UI thread only; Cells so re-entrant window messages are safe) ----
 
 // popup fonts (the strip makes its own, at the current zoom)
-const F_POP: usize = 0;
-const F_POPT: usize = 1;
-const F_FOOT: usize = 2;
+const F_POP: usize = 0; // departure rows: destination
+const F_POPT: usize = 1; // title
+const F_FOOT: usize = 2; // footer
+const F_CAP: usize = 3; // clock time, status, subtitle
+const F_MIN: usize = 4; // minutes to go
+const F_BADGE: usize = 5; // line number in the header badge
+const F_COUNT: usize = 6;
 
 struct Ui {
     hinst: Cell<HMODULE>,
@@ -121,7 +125,7 @@ struct Ui {
     quitting: Cell<bool>,
     popup: Cell<HWND>,
     scale: Cell<f32>,                       // display scale of the taskbar's monitor, kept current
-    fonts: Cell<[HFONT; 3]>,                // popup fonts, remade when scale or font changes
+    fonts: Cell<[HFONT; F_COUNT]>,          // popup fonts, remade when scale or font changes
     fonts_for: RefCell<(f32, String, f32)>, // (scale, family, size) the popup fonts were made for
     ticks: Cell<u32>,
     hidden: Cell<bool>,
@@ -145,7 +149,7 @@ thread_local!(static UI: Ui = Ui {
     quitting: Cell::new(false),
     popup: Cell::new(0),
     scale: Cell::new(1.0),
-    fonts: Cell::new([0; 3]),
+    fonts: Cell::new([0; F_COUNT]),
     fonts_for: RefCell::new((0.0, String::new(), 0.0)),
     ticks: Cell::new(0),
     hidden: Cell::new(false),
@@ -375,7 +379,7 @@ unsafe fn ensure_popup_fonts() {
         CreateFontW(-t.px_at(scale), 0, 0, 0, t.weight, 0, 0, 0, 1, 0, 0, 5, 0, face.as_ptr())
     };
     // popup (opaque, so ClearType)
-    let fonts = [font(theme::ROW), font(theme::BODY), font(theme::FOOTNOTE)];
+    let fonts = [font(theme::BODY), font(theme::TITLE), font(theme::FOOTNOTE), font(theme::CAPTION), font(theme::TITLE_SMALL), font(theme::BADGE)];
     let old = ui(|u| {
         *u.fonts_for.borrow_mut() = key;
         u.fonts.replace(fonts)
