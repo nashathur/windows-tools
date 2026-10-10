@@ -11,7 +11,9 @@ windows):
 - **watch**: `watch_strips.ps1 -Seconds N` (prints rect / visibility / icons-edge changes).
 - **z**: `watch_z.ps1 -Seconds 30` (restacks; 0 at rest).
 - **drag**: `drag_probe.ps1 <Class> [Dx]` (width/x every ~10 ms through a drag); `sticky_probe.ps1 -Class <A> -Other <B>` (slot while dragging, order unchanged on a same-slot drop).
-- **fit**: `fit_test.ps1 -Edge <x>` (restarts bus with `TASKBAR_DOCK_TEST_ICONS_RIGHT`, samples strips).
+- **fit**: `fit_test.ps1 -Edge <x> [-Widget taskbar-weather]` (restarts the leader, the first strip in order.txt, with `TASKBAR_DOCK_TEST_ICONS_RIGHT`, samples strips; dev.ps1 passes the variable into its scheduled task).
+- **real**: `real.ps1 '<command>'` runs a command outside the Claude app's container (real `%APPDATA%`): read the widget's log, `real.ps1 -Compact <section> [-Key <bool key>]` flips a setting in the real settings.json. Widgets started by dev.ps1 use the real files, so session-side edits (`strips.ps1 -Toggle`) don't reach them.
+- **rclick**: `rclick.ps1 [-Class <strip>] [-NoClick]` right-clicks a strip and says which widget's menu is open (check before clicking rows with `clickpanel.ps1`: they hit whatever menu is open). `FindWindow` from a session missed open menus; `wins.ps1 <pid>` sees them.
 - **hover**: `hover_probe.ps1 <Class> <name>` (crops at rest / hovered).
 - **menu**: `menuprobe.ps1 -strip <Class>` (right-click panel screenshot).
 - **log**: the widget's log, new lines are printed by `dev.ps1`. Weather/discord: `settings::dir()\taskbar-<name>.log`; media: `taskbar-media.log` next to the exe; bus: `buswidget.log` in its data dir. (From a Claude session `settings::dir()` is the private MSIX copy, see CLAUDE.md.)
@@ -35,14 +37,14 @@ Drag and drop
 - [ ] Drop: reorder, order file written, glide into the slot (`glide_ms` 150), zoom back. Verify: drag + order.txt mtime/content.
 - [ ] Raised above neighbours while dragged; 0 restacks at rest. Verify: z.
 - [ ] Capture lost mid-drag (Esc, another window takes the mouse) ends it like a drop. Verify: hand (press Esc while dragging). **(new)**
-- [ ] Starting a drag closes this widget's open/hover panel (and the right-click panel). Verify: hand / log.
+- [ ] Starting a drag closes this widget's hover-opened panel (a pinned one stays, `PanelBehaviour::drag_started`; checked 2026-10-10 in step 3) and the right-click panel. Verify: hand / log.
 
 Layout and fit
 - [ ] Neighbour moves or resizes → instant reflow via WinEvent hooks (no wait for the 1 s watch timer). Verify: watch while toggling compact on another widget.
 - [ ] Watch timer as backup: missed events still correct within ~1 s; also re-applies `raise_flag` when the taskbar's content is above. Verify: watch, z. **(new detail)**
 - [ ] Compact on/off (right-click switch or settings.json edit) animates the width and keeps the right edge. Verify: `strips.ps1 -Toggle <section> -Ms 600` (right edge constant, width monotone).
 - [ ] Crowded: narrow → compact → hide, and back in reverse as room returns. Verify: fit (`-Edge` values stepping in, then `-Edge 0`).
-- [ ] Hidden for lack of room logs it (weather: "no room next to the taskbar's buttons"). Verify: log.
+- [ ] Hidden for lack of room logs it (Block: "no room next to the taskbar's buttons: strip hidden"; weather said "label hidden" before step 3). Verify: log.
 - [ ] Strip vertically centred on the taskbar. Verify: strips (top/bottom symmetric to taskbar). **(new for weather/discord)**
 
 Panels

@@ -142,6 +142,11 @@ pub(crate) fn highlight(hover: bool, dragging: bool, hot: Hit, width: i32, heigh
     }
 }
 
+/// Where the right-click panel goes: above the strip, or above the pointer `pt` without one.
+pub(crate) fn menu_anchor(strip: Option<Box4>, pt: (i32, i32)) -> Box4 {
+    strip.unwrap_or((pt.0, pt.1, pt.0 + 1, pt.1 + 1))
+}
+
 /// The left `width` px of a `w`×`h` pixel buffer (cut off during a compact resize, or narrowed
 /// for room), with the last `fade` px fading out.
 pub(crate) fn cut(px: &[u32], w: i32, h: i32, width: i32, fade: i32) -> Vec<u32> {
@@ -413,10 +418,27 @@ mod tests {
         ctx.every(1, 1000);
         ctx.stop(1);
         ctx.open_panel();
+        ctx.toggle_panel();
         ctx.close_panel();
+        ctx.open_menu();
         ctx.quit();
         assert_eq!(ctx.main_window(), 42);
         let s: Vec<String> = ctx.reqs.iter().map(|r| format!("{r:?}")).collect();
-        assert_eq!(s, ["Redraw", "Every(1, 1000)", "Stop(1)", "OpenPanel", "ClosePanel", "Quit"]);
+        assert_eq!(s, ["Redraw", "Every(1, 1000)", "Stop(1)", "OpenPanel", "TogglePanel", "ClosePanel", "Menu", "Quit"]);
+    }
+
+    #[test]
+    fn the_menu_goes_above_the_strip_or_else_the_pointer() {
+        assert_eq!(menu_anchor(Some((10, 20, 70, 68)), (500, 900)), (10, 20, 70, 68));
+        assert_eq!(menu_anchor(None, (500, 900)), (500, 900, 501, 901), "no strip (tray icon): the pointer");
+    }
+
+    #[test]
+    fn a_tray_click_toggles_the_panel_like_a_strip_click() {
+        // what Request::TogglePanel does: the strip-click decision, with or without a strip
+        let mut core = Core::default();
+        let now = Instant::now();
+        assert_eq!(core.panel.click(now), Action::OpenByClick);
+        assert_eq!(core.panel.click(now), Action::Close);
     }
 }

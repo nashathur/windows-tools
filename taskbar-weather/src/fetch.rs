@@ -1,17 +1,23 @@
 //! Fetching the forecast and KNMI observations on a worker thread, and applying the result.
 
 use super::*;
+use std::time::SystemTime;
+use windows::Win32::Foundation::{LPARAM, WPARAM};
+use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
-pub(crate) fn start_fetch() {
-    let job = with(|a| {
-        if a.fetching {
-            return None;
-        }
-        a.fetching = true;
-        Some((a.main.0 as usize, a.cfg.clone(), a.loc.clone(), a.station.clone()))
-    })
-    .flatten();
-    let Some((main, cfg, cached, cached_station)) = job else { return };
+pub(crate) struct Fetched {
+    key: String,
+    loc: Option<Location>,
+    station: Option<(String, knmi::Station)>,
+    result: Result<Weather, String>,
+}
+
+pub(crate) fn start_fetch(a: &mut App) {
+    if a.fetching {
+        return;
+    }
+    a.fetching = true;
+    let (main, cfg, cached, cached_station) = (a.main as usize, a.cfg.clone(), a.loc.clone(), a.station.clone());
     std::thread::spawn(move || {
         let key = cfg.location_key();
         let loc = match cached {
@@ -25,7 +31,7 @@ pub(crate) fn start_fetch() {
         }
         let msg = Box::into_raw(Box::new(Fetched { key, loc: loc.ok(), station, result }));
         unsafe {
-            if PostMessageW(HWND(main as *mut c_void), WM_DATA, WPARAM(0), LPARAM(msg as isize)).is_err() {
+            if PostMessageW(hwnd(main as isize), WM_DATA, WPARAM(0), LPARAM(msg as isize)).is_err() {
                 drop(Box::from_raw(msg));
             }
         }
@@ -69,34 +75,27 @@ pub(crate) fn add_observation(w: &mut Weather, loc: &Location, cfg: &Config, cac
     Some((station_key, station))
 }
 
-pub(crate) fn on_data(f: Box<Fetched>) {
+/// A fetch finished: new data (or the error) for the strip, the tray icon and an open flyout.
+pub(crate) fn on_data(a: &mut App, f: Box<Fetched>, ctx: &mut Ctx) {
     let Fetched { key, loc, station, result } = *f;
-    let state = with(|a| {
-        a.fetching = false;
-        if let Some(l) = loc {
-            a.loc = Some((key, l));
-        }
-        if station.is_some() {
-            a.station = station;
-        }
-        match result {
-            Ok(w) => {
-                a.weather = Some(w);
-                a.error = None;
-            }
-            Err(e) => a.error = Some(e),
-        }
-        (a.main, a.popup, a.error.is_some(), a.cfg.refresh_minutes.max(5))
-    });
-    let Some((main, popup, failed, minutes)) = state else { return };
-    unsafe {
-        // Retry sooner after an error.
-        let ms = if failed { 2 * 60_000 } else { minutes * 60_000 };
-        SetTimer(main, TIMER_REFRESH, ms, None);
-        if let Some(p) = popup {
-            let _ = InvalidateRect(p, None, false);
-        }
+    a.fetching = false;
+    if let Some(l) = loc {
+        a.loc = Some((key, l));
     }
-    update_tray(false);
-    redraw_label();
+    if station.is_some() {
+        a.station = station;
+    }
+    match result {
+        Ok(w) => {
+            a.weather = Some(w);
+            a.error = None;
+        }
+        Err(e) => a.error = Some(e),
+    }
+    // retry sooner after an error
+    let ms = if a.error.is_some() { 2 * 60_000 } else { a.cfg.refresh_minutes.max(5) * 60_000 };
+    ctx.every(TIMER_REFRESH, ms);
+    ctx.after(flyout::invalidate);
+    tray::update(a, ctx, false);
+    ctx.redraw();
 }

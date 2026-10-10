@@ -63,6 +63,8 @@ struct State {
     no_taskbar_since: Option<Instant>,
     attach_failed: Option<Instant>,
     quitting: bool,
+    /// A widget's switch in the right-click panel is being carried out ([`flip`]).
+    flipping: bool,
 }
 
 thread_local! {
@@ -131,6 +133,7 @@ pub fn run<C: Content>(spec: Spec, content: C) {
                 no_taskbar_since: None,
                 attach_failed: None,
                 quitting: false,
+                flipping: false,
                 spec,
             })
         });
@@ -221,7 +224,13 @@ fn apply(reqs: Vec<Request>) {
                     panel_do(a);
                 }
             }
+            Request::TogglePanel => {
+                if let Some(a) = st(|s| s.core.panel.click(Instant::now())) {
+                    panel_do(a);
+                }
+            }
             Request::ClosePanel => close_panels(),
+            Request::Menu => right_click(false),
             Request::Quit => quit(),
             Request::After(f) => f(),
         }
@@ -566,18 +575,21 @@ fn hover_timer_sync() {
 }
 
 /// Opens the widget's panel, fading in. `activate`: opened by a click (takes focus; a click
-/// elsewhere closes it); opened by hovering it doesn't take focus.
+/// elsewhere closes it); opened by hovering it doesn't take focus. Without a strip (from a tray
+/// icon) the widget places it above the pointer.
 fn open_panel(activate: bool) {
     let Some((hook, strip)) = st(|s| (s.spec.panel, s.strip)) else { return };
     let undo = || st(|s| s.core.panel.closed(Instant::now(), false));
-    let Some(hook) = hook.filter(|_| strip != 0) else {
+    let Some(hook) = hook else {
         undo();
         return;
     };
     unsafe {
         // only one panel at a time: clicking a widget doesn't activate anything, so the other
         // widgets' panels wouldn't notice the click by themselves
-        dock::close_other_panels(dock::taskbar(), strip);
+        if strip != 0 {
+            dock::close_other_panels(dock::taskbar(), strip);
+        }
         let p = hook(PanelCmd::Open { strip });
         if p == 0 {
             undo();
@@ -650,12 +662,10 @@ fn right_click(on_panel: bool) {
     panel_closed(false);
     let open = crate::menu_panel::is_open();
     unsafe {
-        let anchor = if strip != 0 {
-            dock::rect(strip)
-        } else {
-            let pt = dock::cursor();
-            RECT { left: pt.x, top: pt.y, right: pt.x + 1, bottom: pt.y + 1 }
-        };
+        let r = dock::rect(strip);
+        let pt = dock::cursor();
+        let (left, top, right, bottom) = core::menu_anchor((strip != 0).then_some((r.left, r.top, r.right, r.bottom)), (pt.x, pt.y));
+        let anchor = RECT { left, top, right, bottom };
         if !open && strip != 0 {
             dock::close_other_panels(dock::taskbar(), strip); // one panel at a time across widgets
         }
@@ -699,7 +709,12 @@ fn flip(id: usize, section: &str) -> bool {
             }
             startup::is_on(section)
         }
-        Route::Content(id) => call(|c, ctx| c.menu_switch(id, ctx)).unwrap_or(false),
+        Route::Content(id) => {
+            st(|s| s.flipping = true);
+            let on = call(|c, ctx| c.menu_switch(id, ctx)).unwrap_or(false);
+            st(|s| s.flipping = false);
+            on
+        }
         _ => false,
     }
 }
@@ -821,6 +836,11 @@ fn adopt(h: HWND, floating: bool) {
 /// Closes the panels and destroys the strip (it leaves the dock stack).
 fn destroy_strip() {
     close_panels();
+    remove_strip();
+}
+
+/// Destroys the strip (it leaves the dock stack); the panels are the caller's business.
+fn remove_strip() {
     let Some(h) = st(|s| std::mem::replace(&mut s.strip, 0)).filter(|h| *h != 0) else { return };
     for t in [T_GLIDE, T_ZOOM, T_RESIZE, T_FEEL] {
         timer(t, false);
@@ -957,15 +977,22 @@ fn frame<'a>(look: &'a Look, core: &Core, floating: bool, height: i32, dpi: f32,
 /// Measures, draws and places the strip; creates it when it's missing and wanted, destroys it
 /// when [`Content::visible`] says no.
 fn redraw() {
-    let Some((strip, visible, quitting, floating, fs_hidden)) =
-        st(|s| (s.strip, s.content.visible(), s.quitting, s.floating, s.fs_hidden))
+    let Some((strip, visible, quitting, floating, fs_hidden, flipping)) =
+        st(|s| (s.strip, s.content.visible(), s.quitting, s.floating, s.fs_hidden, s.flipping))
     else { return };
     if quitting {
         return;
     }
     if !visible {
         if strip != 0 {
-            destroy_strip();
+            if flipping {
+                // a switch in the open right-click panel did this (weather's Show on taskbar):
+                // that panel stays open, as switches do
+                panel_closed(false);
+                remove_strip();
+            } else {
+                destroy_strip(); // hidden by state (discord, media): every panel closes
+            }
             log("nothing to show: strip removed");
         }
         return;

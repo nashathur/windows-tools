@@ -13,10 +13,13 @@ read by the leader only) · panel (`PanelBehaviour` hover/click/pin, `Fade`, `pl
 rows, switches, `run` like TrackPopupMenu) · strip (`Motion`: glide, drag,
 zoom, compact resize animation; `Limits`; `keep_right_edge`; `move_strip`; `client_pos`) · draw (corners: `shape_cover`, `round_rect`, `fill_round`, `card_radius`, `concentric`; `background_in`, `background_rect`, `button_box`, `centered_box`, `contains`, `grow_box`, `grow_pixels`, `tint_box`, `progress_ring`) · emoji (colour emoji via Direct2D + DirectWrite: `render`, `fit_over` into a strip's icon box, `flatten` for a GDI panel; GDI draws emoji in one colour) · badge · anim
 (`pulse`, easing, `Feel`: cover hover/press size) · marquee (scrolling text) · window (`raise`, `find`, `exe_path`: bring an app's window to the front).
-block (step 2 of plan\PLAN.md, not used by a widget yet): the strip window and all its behaviour; a
+block (plan\PLAN.md; used by weather since step 3): the strip window and all its behaviour; a
 widget gives a `Spec` and a `Content` and calls `block::run`. `mod.rs` API (Spec, Content, Ctx requests
-applied after the borrow, Frame, Canvas, Hit, MenuBuilder with the standard rows, `with` for the widget's
-own windows/worker posts, `panel_closed`/`right_click_on_panel` for the interim `Spec::panel` hook),
+applied after the borrow incl. `toggle_panel`/`open_menu` for a tray icon (no strip needed: the panel
+hook gets `strip: 0`, place at the pointer), Frame, Canvas, Hit, MenuBuilder with the standard rows,
+`with` for the widget's own windows/worker posts, `panel_closed`/`right_click_on_panel` for the interim
+`Spec::panel` hook). Block owns the section's `compact` key: a widget saving its section must merge,
+not replace it (weather `Config::save`),
 `core.rs` (pure decisions, tested with a fake Content), `place.rs` (left side, floating), `win.rs`
 (windows, timers, dock/fit/hooks, Explorer restart, floating fallback, menu).
 Shared front end: all three widgets use `strip` (glide, drag, zoom) and `panel` (when the panel

@@ -1,18 +1,13 @@
-//! GDI drawing: the tray icon, the taskbar label (per-pixel alpha) and the forecast flyout.
+//! GDI drawing: the tray icon, the taskbar label (drawn into Block's strip canvas) and the forecast flyout.
 
 use crate::weather::{deg, describe, Weather};
-use taskbar_dock::{draw, emoji};
+use taskbar_dock::{block, draw, emoji};
 use taskbar_dock::style::Look;
 use taskbar_dock::theme::{self, font_override, size, space, Rgb, Theme};
 use std::ffi::c_void;
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
-
-pub fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
 
 pub const fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
     COLORREF(r as u32 | (g as u32) << 8 | (b as u32) << 16)
@@ -163,82 +158,103 @@ pub struct LabelContent {
     pub desc2: String,
 }
 
-/// Draws the taskbar label into a layered window with per-pixel alpha. Returns its size.
-/// `scale` is the DPI scale times the drag zoom (the label grows a little while dragged);
-/// `height` stays the taskbar's. Font, colours and shapes come from the shared look.
-/// `clip`: cut the label off at this width (collapse/expand animation; the text fades out at
-/// the cut). `measure_only`: only return the size, draw nothing.
-#[allow(clippy::too_many_arguments)]
-pub fn update_label(hwnd: HWND, content: &LabelContent, height: i32, scale: f32, look: &Look, hover: bool, clip: Option<i32>, measure_only: bool) -> SIZE {
-    let s = |v: f32| (v * scale).round() as i32;
-    // the weather symbol, drawn large and then fitted into the tray-icon box (shared rule), so
-    // it has the same size and height as the tray's icons whatever the glyph's own spacing
-    let glyph_font = Font::new(theme::GLYPH_RASTER_PX, 400, Theme::new(look).font.emoji, ANTIALIASED_QUALITY);
-    // the shared style: the taskbar clock's font and size, regular weight
-    let f1 = Font::new(s(look.font_size), 400, &look.font, ANTIALIASED_QUALITY);
-    let f2 = Font::new(s(look.font_size), 400, &look.font, ANTIALIASED_QUALITY);
+/// The strip's content laid out at `scale` (the DPI scale times the drag zoom: it grows a little
+/// while dragged); `height` stays the taskbar's. Font and sizes come from the shared look.
+struct LabelLayout {
+    f1: Font,
+    f2: Font,
+    one_line: bool,
+    two_desc: bool,
+    h1: i32,
+    h2: i32,
+    w3: i32,
+    h3: i32,
+    w4: i32,
+    h4: i32,
+    a1: i32,
+    a2: i32,
+    pad: i32,
+    gap: i32,
+    icon_top: i32,
+    gw: i32,
+    col: i32,
+    desc_gap: i32,
+    natural: i32,
+}
 
-    let measure = unsafe { CreateCompatibleDC(None) };
-    let (w1, h1) = text_size(measure, &f1, &content.line1);
-    // compact: no second line (never measure or draw empty text)
-    let one_line = content.line2.is_empty();
-    let (w2, h2) = if one_line { (0, 0) } else { text_size(measure, &f2, &content.line2) };
-    let (w3, h3) = if content.desc.is_empty() { (0, 0) } else { text_size(measure, &f1, &content.desc) };
-    // the feels-like line under the conditions (only with them, and only when there are two lines)
-    let two_desc = w3 > 0 && !one_line && !content.desc2.is_empty();
-    let (w4, h4) = if two_desc { text_size(measure, &f2, &content.desc2) } else { (0, 0) };
-    let (a1, a2) = (ascent(measure, &f1), ascent(measure, &f2));
-    unsafe { let _ = DeleteDC(measure); }
+impl LabelLayout {
+    fn new(content: &LabelContent, height: i32, scale: f32, look: &Look) -> LabelLayout {
+        let s = |v: f32| (v * scale).round() as i32;
+        // the shared style: the taskbar clock's font and size, regular weight
+        let f1 = Font::new(s(look.font_size), 400, &look.font, ANTIALIASED_QUALITY);
+        let f2 = Font::new(s(look.font_size), 400, &look.font, ANTIALIASED_QUALITY);
+        let measure = unsafe { CreateCompatibleDC(None) };
+        let (w1, h1) = text_size(measure, &f1, &content.line1);
+        // compact: no second line (never measure or draw empty text)
+        let one_line = content.line2.is_empty();
+        let (w2, h2) = if one_line { (0, 0) } else { text_size(measure, &f2, &content.line2) };
+        let (w3, h3) = if content.desc.is_empty() { (0, 0) } else { text_size(measure, &f1, &content.desc) };
+        // the feels-like line under the conditions (only with them, and only when there are two lines)
+        let two_desc = w3 > 0 && !one_line && !content.desc2.is_empty();
+        let (w4, h4) = if two_desc { text_size(measure, &f2, &content.desc2) } else { (0, 0) };
+        let (a1, a2) = (ascent(measure, &f1), ascent(measure, &f2));
+        unsafe { let _ = DeleteDC(measure); }
 
-    let pad = s(8.0);
-    let gap = s(6.0);
-    let (icon_top, gw) = draw::icon_box(height, scale);
-    let col = w1.max(w2);
-    let desc_gap = if w3 > 0 { s(10.0) } else { 0 };
-    let desc_w = w3.max(w4);
-    let natural = pad + gw + gap + col + desc_gap + desc_w + pad;
-    if measure_only {
-        return SIZE { cx: natural, cy: height };
+        let pad = s(8.0);
+        let gap = s(6.0);
+        let (icon_top, gw) = draw::icon_box(height, scale);
+        let col = w1.max(w2);
+        let desc_gap = if w3 > 0 { s(10.0) } else { 0 };
+        let natural = pad + gw + gap + col + desc_gap + w3.max(w4) + pad;
+        LabelLayout { f1, f2, one_line, two_desc, h1, h2, w3, h3, w4, h4, a1, a2, pad, gap, icon_top, gw, col, desc_gap, natural }
     }
-    let width = clip.map_or(natural, |c| c.clamp(1, natural));
-    let Some(mut cv) = Canvas::new(width, height) else { return SIZE::default() };
+}
+
+/// The taskbar label's natural width, px.
+pub fn measure_label(content: &LabelContent, height: i32, scale: f32, look: &Look) -> i32 {
+    LabelLayout::new(content, height, scale, look).natural
+}
+
+/// Draws the taskbar label's foreground (symbol and text, premultiplied) into the strip's canvas,
+/// `cv.w` wide; Block puts the background and hover highlight under it and cuts it off when
+/// narrower.
+pub fn draw_label(cv: &mut block::Canvas, content: &LabelContent, height: i32, scale: f32, look: &Look) {
+    let l = LabelLayout::new(content, height, scale, look);
+    let (dc, width) = (HDC(cv.dc as *mut c_void), cv.w);
     let white = rgb(255, 255, 255);
+    // the weather symbol, drawn large and then fitted into the tray-icon box (shared rule), so
+    // it has the same size and height as the tray's icons whatever the glyph's own spacing;
     // in colour (drawn over the text's colours below); one-colour GDI only without Direct2D
     let colour_glyph = emoji::render(&content.glyph, theme::GLYPH_RASTER_PX as f32, 96, 96);
     let mono = if colour_glyph.is_none() { Canvas::new(96, 96) } else { None };
     if let Some(mut big) = mono {
+        let glyph_font = Font::new(theme::GLYPH_RASTER_PX, 400, Theme::new(look).font.emoji, ANTIALIASED_QUALITY);
         draw_text(big.dc, &glyph_font, &content.glyph, white, 0, 0, 96, 96, DT_CENTER | DT_VCENTER);
         unsafe { let _ = GdiFlush(); }
         let src = big.pixels().to_vec();
-        unsafe { let _ = GdiFlush(); }
-        draw::fit_icon(cv.pixels(), width, pad, icon_top, gw, &src, 96, 96);
+        draw::fit_icon(cv.pixels(), width, l.pad, l.icon_top, l.gw, &src, 96, 96);
     }
-    let tx = pad + gw + gap;
+    let tx = l.pad + l.gw + l.gap;
     // on the clock's baselines
-    let (top1, top2) = if one_line { ((height - h1 + 1) / 2, 0) } else { draw::two_line_tops(height, scale, a1, a2) };
+    let (top1, top2) = if l.one_line { ((height - l.h1 + 1) / 2, 0) } else { draw::two_line_tops(height, scale, l.a1, l.a2) };
     // temperature over humidity at the same x; the conditions beside them, centred
-    draw_text(cv.dc, &f1, &content.line1, white, tx, top1, col, h1, DT_LEFT | DT_TOP);
-    if !one_line {
-        draw_text(cv.dc, &f2, &content.line2, white, tx, top2, col, h2, DT_LEFT | DT_TOP);
+    draw_text(dc, &l.f1, &content.line1, white, tx, top1, l.col, l.h1, DT_LEFT | DT_TOP);
+    if !l.one_line {
+        draw_text(dc, &l.f2, &content.line2, white, tx, top2, l.col, l.h2, DT_LEFT | DT_TOP);
     }
-    let dx = tx + col + desc_gap;
-    if two_desc {
+    let dx = tx + l.col + l.desc_gap;
+    if l.two_desc {
         // conditions over feels-like, on the same baselines as temperature over humidity
-        draw_text(cv.dc, &f1, &content.desc, white, dx, top1, w3, h3, DT_LEFT | DT_TOP);
-        draw_text(cv.dc, &f2, &content.desc2, white, dx, top2, w4, h4, DT_LEFT | DT_TOP);
-    } else if w3 > 0 {
-        draw_text(cv.dc, &f1, &content.desc, white, dx, (height - h3 + 1) / 2, w3, h3, DT_LEFT | DT_TOP);
-    }
-    if width < natural {
-        // cut off while collapsing or expanding: the text fades out at the right end
-        unsafe { let _ = GdiFlush(); }
-        taskbar_dock::marquee::fade_edges(cv.pixels(), width, (tx, 0, width, height), s(12.0), false, true, 0);
+        draw_text(dc, &l.f1, &content.desc, white, dx, top1, l.w3, l.h3, DT_LEFT | DT_TOP);
+        draw_text(dc, &l.f2, &content.desc2, white, dx, top2, l.w4, l.h4, DT_LEFT | DT_TOP);
+    } else if l.w3 > 0 {
+        draw_text(dc, &l.f1, &content.desc, white, dx, (height - l.h3 + 1) / 2, l.w3, l.h3, DT_LEFT | DT_TOP);
     }
 
     // coverage into colour: the humidity and feels-like line dimmer
     let (fg, dim) = look.text_rgb();
-    let hum = if one_line { (0, 0, 0, 0) } else { (tx, top2, dx, top2 + h2) };
-    let feels = if two_desc { (dx, top2, dx + w4, top2 + h4) } else { (0, 0, 0, 0) };
+    let hum = if l.one_line { (0, 0, 0, 0) } else { (tx, top2, dx, top2 + l.h2) };
+    let feels = if l.two_desc { (dx, top2, dx + l.w4, top2 + l.h4) } else { (0, 0, 0, 0) };
     let inside = |r: (i32, i32, i32, i32), x: i32, y: i32| x >= r.0 && x < r.2 && y >= r.1 && y < r.3;
     for (i, p) in cv.pixels().iter_mut().enumerate() {
         let (x, y) = (i as i32 % width, i as i32 / width);
@@ -247,19 +263,8 @@ pub fn update_label(hwnd: HWND, content: &LabelContent, height: i32, scale: f32,
         *p = a << 24 | (c.0 * a / 255) << 16 | (c.1 * a / 255) << 8 | (c.2 * a / 255);
     }
     if let Some(img) = &colour_glyph {
-        emoji::fit_over(cv.pixels(), width, pad, icon_top, gw, img);
+        emoji::fit_over(cv.pixels(), width, l.pad, l.icon_top, l.gw, img);
     }
-    // background with the hover highlight, like the taskbar's buttons (shared look)
-    let (radius, inset) = draw::highlight_shape(look, scale);
-    draw::background(cv.pixels(), width, height, hover, look.light, radius, inset);
-
-    let size = SIZE { cx: width, cy: height };
-    let src = POINT::default();
-    let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };
-    unsafe {
-        let _ = UpdateLayeredWindow(hwnd, None, None, Some(&size), cv.dc, Some(&src), COLORREF(0), Some(&blend), ULW_ALPHA);
-    }
-    size
 }
 struct Palette {
     bg: COLORREF,
@@ -456,10 +461,6 @@ pub fn paint_popup(hwnd: HWND, weather: Option<&Weather>, status: Option<&str>, 
         let _ = DeleteDC(dc);
         let _ = EndPaint(hwnd, &ps);
     }
-}
-
-pub fn pcwstr(v: &[u16]) -> PCWSTR {
-    PCWSTR(v.as_ptr())
 }
 
 /// An hourly forecast label ("HH:00" from Open-Meteo), compact: "9 PM" or "21:00".

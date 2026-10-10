@@ -133,7 +133,8 @@ impl Spec {
 /// For [`Spec::panel`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PanelCmd {
-    /// Create the panel for the strip window `strip` (place it with [`crate::panel::place`]).
+    /// Create the panel for the strip window `strip` (place it with [`crate::panel::place`]);
+    /// `strip` 0: there's none (opened from a tray icon), place it above the pointer.
     Open { strip: isize },
     /// Destroy it.
     Close,
@@ -266,7 +267,9 @@ pub(crate) enum Request {
     Every(usize, u32),
     Stop(usize),
     OpenPanel,
+    TogglePanel,
     ClosePanel,
+    Menu,
     Quit,
     After(Box<dyn FnOnce()>),
 }
@@ -278,7 +281,9 @@ impl std::fmt::Debug for Request {
             Request::Every(id, ms) => write!(f, "Every({id}, {ms})"),
             Request::Stop(id) => write!(f, "Stop({id})"),
             Request::OpenPanel => write!(f, "OpenPanel"),
+            Request::TogglePanel => write!(f, "TogglePanel"),
             Request::ClosePanel => write!(f, "ClosePanel"),
+            Request::Menu => write!(f, "Menu"),
             Request::Quit => write!(f, "Quit"),
             Request::After(_) => write!(f, "After(..)"),
         }
@@ -312,8 +317,20 @@ impl Ctx {
         self.reqs.push(Request::OpenPanel);
     }
 
+    /// Open, pin or close the panel as a click on the strip does (e.g. a tray icon's left click).
+    /// Works without a strip: the panel hook gets `strip: 0` and places it at the pointer.
+    pub fn toggle_panel(&mut self) {
+        self.reqs.push(Request::TogglePanel);
+    }
+
     pub fn close_panel(&mut self) {
         self.reqs.push(Request::ClosePanel);
+    }
+
+    /// Open the right-click panel as a right click on the strip does: above the strip, or above
+    /// the pointer while there's none (e.g. a tray icon's right click).
+    pub fn open_menu(&mut self) {
+        self.reqs.push(Request::Menu);
     }
 
     /// End the program (as the Quit row does).

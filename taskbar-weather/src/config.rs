@@ -33,8 +33,8 @@ pub struct Config {
     /// Where the taskbar label goes: "auto" (right side when taskbar icons are
     /// left-aligned, else left side), "left" or "right".
     pub label_position: String,
-    /// Compact label: the symbol and the temperature on one line, no conditions text.
-    pub compact: bool,
+    // `compact` (temperature over humidity) is in the same section but Block's
+    // (taskbar_dock::block): `save` leaves it alone.
 }
 
 impl Default for Config {
@@ -51,7 +51,6 @@ impl Default for Config {
             knmi_station: String::new(),
             taskbar_label: true,
             label_position: "auto".into(),
-            compact: false,
         }
     }
 }
@@ -63,11 +62,6 @@ fn old_path() -> PathBuf {
 }
 
 impl Config {
-    /// The settings file shared with the other widgets.
-    pub fn path() -> PathBuf {
-        settings::path()
-    }
-
     /// Loads the weather section. On first run it moves the old
     /// %APPDATA%\TaskbarWeather\config.json in (kept as config.json.migrated) or writes defaults.
     pub fn load() -> Config {
@@ -91,10 +85,22 @@ impl Config {
         cfg
     }
 
-    /// Saves the weather section only; the other sections are left as they are.
+    /// Saves these settings into the weather section; other keys there (Block's `compact`) and
+    /// the other sections are left as they are. No write if nothing changed.
     pub fn save(&self) {
-        let value = serde_json::to_value(self).unwrap_or_else(|_| json!({}));
-        let _ = settings::save_section("weather", value);
+        let Ok(Value::Object(mine)) = serde_json::to_value(self) else { return };
+        let _ = settings::update(|root| {
+            if !root.is_object() {
+                *root = json!({});
+            }
+            let sec = &mut root["weather"];
+            if !sec.is_object() {
+                *sec = json!({});
+            }
+            for (k, v) in mine {
+                sec[k.as_str()] = v;
+            }
+        });
     }
 
     pub fn fahrenheit(&self) -> bool {

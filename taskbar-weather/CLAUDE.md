@@ -7,11 +7,13 @@ Rust, `windows` crate. README.md has features and settings. Runs straight from
 `weather` in the shared settings.json; start with Windows via the shared `startup` list.
 
 ## Files (src/)
-- main.rs: `App` state, constants, start-with-Windows, window procedures (main, label, popup), `main`.
-- fetch.rs: forecast + KNMI observation fetch on a worker thread, `on_data`.
-- label.rs: the taskbar label: content, drawing, dock position, WinEvent hooks, and the wiring of
-  the shared `taskbar_dock::strip::Motion` (glide, drag, zoom; taskbar client x).
-- flyout.rs: the flyout panel (open, pin, hover-open, fade, close).
-- menu.rs: right-click panel (shared `menu_panel`) and settings-file watcher.
-- tray.rs: tray icon (only while the label is off).
-- weather.rs (forecast API), knmi.rs (observations), render.rs (drawing), config.rs.
+The strip window, dock, drag, panels' open/close, right-click panel and settings watch are the
+library's `block` (plan step 3); weather supplies the `Content`.
+- main.rs: `App` (the `block::Content`: label content, side, visible, hooks), the `Spec`, `main`.
+- fetch.rs: forecast + KNMI observation fetch on a worker thread, `on_data` (refresh timer).
+- flyout.rs: the flyout window for Block's interim `Spec::panel` hook (create, place, paint, close).
+- menu.rs: the right-click panel's own rows (Refresh now, Show on taskbar, Fahrenheit), switches,
+  and `settings_changed`.
+- tray.rs: tray icon (only while the label is off; clicks → `Ctx::toggle_panel` / `open_menu`).
+- weather.rs (forecast API), knmi.rs (observations), render.rs (label `measure_label`/`draw_label`,
+  flyout, tray icon drawing), config.rs (`save` merges: Block owns `compact`).
