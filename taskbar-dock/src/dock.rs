@@ -712,8 +712,11 @@ impl Hooks {
                 }
             }
         }
+        // a widget whose strip is gone for now (switched off, discord not in a call) keeps its
+        // hook while its process runs: its strip coming back must reach us at once, not on the
+        // next update (they overlapped for ~0.5 s, 2026-10-10)
         self.0.retain(|pid, hook| {
-            let keep = pids.contains(pid);
+            let keep = pids.contains(pid) || alive(*pid);
             if !keep {
                 UnhookWinEvent(*hook);
             }
@@ -729,6 +732,20 @@ impl Hooks {
             }
         }
     }
+}
+
+/// The process is still running.
+unsafe fn alive(pid: u32) -> bool {
+    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    const STILL_ACTIVE: u32 = 259;
+    let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+    if h == 0 {
+        return false;
+    }
+    let mut code = 0u32;
+    let ok = GetExitCodeProcess(h, &mut code) != 0;
+    windows_sys::Win32::Foundation::CloseHandle(h);
+    ok && code == STILL_ACTIVE
 }
 
 /// For a WinEvent callback: is this event about one of the taskbar's own child windows
