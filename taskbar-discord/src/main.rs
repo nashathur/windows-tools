@@ -76,6 +76,8 @@ struct App {
     cfg_mtime: Option<SystemTime>,
     /// The call as last reported by the RPC worker.
     voice: Voice,
+    /// Who has the strip's avatar places.
+    slots: voice::Slots,
     rpc: Sender<rpc::Cmd>,
     /// Shared style + Windows settings, kept current.
     look: Look,
@@ -162,6 +164,7 @@ fn on_voice(v: Voice) {
         if a.voice.status != v.status {
             log(&format!("status: {}", v.status.text()));
         }
+        a.slots.update(v.channel.as_ref().map_or(&[], |c| &c.members), a.cfg.max_avatars);
         a.voice = v;
         r
     }) else { return };
@@ -409,6 +412,7 @@ fn main() {
                 cfg_mtime: config_mtime(),
                 cfg,
                 voice: Voice { status, ..Default::default() },
+                slots: voice::Slots::default(),
                 rpc,
                 look: Look::current(),
                 hover: false,

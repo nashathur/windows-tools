@@ -401,14 +401,10 @@ pub(crate) fn redraw_label() {
     }
     set_beating(pulsing);
     let logo = guild_logo(&voice, main);
-    let avatars: Vec<_> = voice
-        .channel
-        .iter()
-        .flat_map(|c| c.members.iter().take(cfg.max_avatars.max(1)))
-        .map(|m| avatars::get(m, move || notify_avatar(main)))
-        .collect();
+    let people = with(|a| a.slots.people(voice.channel.as_ref().map_or(&[], |c| &c.members))).unwrap_or_default();
+    let avatars: Vec<_> = people.iter().map(|m| avatars::get(m, move || notify_avatar(main))).collect();
     let text_w = with(|a| a.media_w).unwrap_or(136.0);
-    let content = render::StripContent { voice: &voice, avatars, max_avatars: cfg.max_avatars, logo, ring, text_w };
+    let content = render::StripContent { voice: &voice, people, avatars, max_avatars: cfg.max_avatars, logo, ring, text_w };
     unsafe {
         let Ok(tb) = GetParent(hwnd) else { return };
         let mut rc = RECT::default();

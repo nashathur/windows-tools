@@ -137,9 +137,11 @@ fn draw_text(dc: HDC, font: &Font, s: &str, color: COLORREF, x: i32, y: i32, w: 
 
 // ---------------------------------------------------------------- the strip
 
-/// What the strip shows; `avatars` holds the images ready so far (same order as the members).
+/// What the strip shows: `people` are the ones in the avatar places (`voice::Slots`), `avatars`
+/// their images ready so far (same order).
 pub struct StripContent<'a> {
     pub voice: &'a Voice,
+    pub people: Vec<Member>,
     pub avatars: Vec<Option<Arc<Image>>>,
     pub max_avatars: usize,
     /// The server's logo, if it has one and it's loaded.
@@ -407,7 +409,8 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc
         // hovered / pressed: the logo and its ring grow / dip about their centre
         draw::grow_pixels(buf, width, draw::centered_box(ring_x, ring_d, height), grow);
 
-        // the people, stacked, the first on top; more than fit (or max_avatars): "+N"
+        // the people in the places, stacked, the first on top; everyone else (muted, deafened,
+        // quiet longest, or more than fit): "+N"
         if !compact && !members.is_empty() {
             let ad = ring_d as f32;
             let pill_h = (ad * 0.8).round() as i32;
@@ -419,7 +422,7 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc
                 unsafe { let _ = DeleteDC(dc); }
                 w.max(pill_h)
             };
-            let mut shown = members.len().min(c.max_avatars.max(1));
+            let mut shown = c.people.len().min(c.max_avatars.max(1));
             let extra_of = |n: usize| members.len() - n;
             // the avatars overlap as much as it takes for all of them and the pill to fit the
             // column; only when that would hide too much of each one does one drop out
@@ -429,11 +432,11 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc
                 shown -= 1;
             }
             let step = step_for(shown);
-            let stack = |n: usize| ad + step * (n.saturating_sub(1)) as f32;
+            let stack = |n: usize| if n == 0 { -s(4.0) as f32 } else { ad + step * (n - 1) as f32 };
             let y = (height as f32 - ad) / 2.0;
             let gap = (1.5 * scale).max(1.0);
             for i in (0..shown).rev() {
-                let m = &members[i];
+                let m = &c.people[i];
                 let x = text_x as f32 + step * i as f32;
                 if i + 1 < shown {
                     avatars::cut_circle(buf, width, x - gap, y - gap, ad + 2.0 * gap);
@@ -441,13 +444,9 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc
                 let (ring, d) = (2.0 * scale, ad);
                 let inner = d - 2.0 * (ring + 1.0 * scale);
                 let img = c.avatars.get(i).cloned().flatten();
-                avatars::draw_circle(buf, width, x + ring + scale, y + ring + scale, inner, img.as_deref(), brand24("discord.blurple"), if m.deafened { 150 } else { 255 });
+                avatars::draw_circle(buf, width, x + ring + scale, y + ring + scale, inner, img.as_deref(), brand24("discord.blurple"), 255);
                 if m.speaking {
                     avatars::draw_ring(buf, width, x, y, d, ring, brand24("discord.green"));
-                }
-                if m.muted || m.deafened {
-                    let dot = 8.0 * scale;
-                    avatars::draw_circle(buf, width, x + d - dot, y + d - dot, dot, None, brand24("discord.red"), 255);
                 }
             }
             let extra = extra_of(shown);

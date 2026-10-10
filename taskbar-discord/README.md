@@ -3,8 +3,9 @@
 Your Discord voice call on the Windows 11 taskbar, docked with the bus, weather and media widgets
 (`taskbar-dock`). It appears when you join a voice channel and goes away when you leave.
 
-- **Strip**: avatars of the people in the call (green ring = speaking, red dot = muted or
-  deafened, "+N" past `max_avatars`), with the channel name and "N in call · Muted".
+- **Strip**: up to `max_avatars` avatars (green ring = speaking), "+N" for everyone else. The
+  places are competed for: muted and deafened people never get one; whoever speaks takes the
+  place of the one quiet longest, and the places keep their order (no reshuffling).
 - **Compact**: a headset (green while anyone speaks, red dot while you're muted) and the count.
 - **Hover / left click**: the panel lists everyone with their mute/deafen state, and has
   Mute, Deafen and Leave buttons.
@@ -37,7 +38,7 @@ which is all this needs.
 | `redirect_uri` | `http://localhost` | Must be one of the app's OAuth2 redirects. |
 | `compact` | false | Compact strip. |
 | `show_when_idle` | false | Keep the strip when you're not in a call. |
-| `max_avatars` | 5 | Avatars on the strip before "+N". |
+| `max_avatars` | 5 | Avatar places on the strip (see Strip above); the rest is "+N". |
 
 ## Building
 

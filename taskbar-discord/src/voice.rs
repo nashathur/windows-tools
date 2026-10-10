@@ -223,6 +223,58 @@ fn sort(members: &mut [Member]) {
     members.sort_by_key(|m| m.name.to_lowercase());
 }
 
+/// Who gets the strip's few avatar places. People who can talk (not muted or deafened) compete
+/// for them: whoever speaks takes an empty place, else the place of the one quiet longest. The
+/// places keep their order, so the avatars don't reshuffle each time someone speaks; places
+/// nobody has won yet go to the others who can talk, in the call's order.
+#[derive(Clone, Debug, Default)]
+pub struct Slots {
+    /// (member id, the update they last spoke in; 0: not yet)
+    held: Vec<(String, u64)>,
+    tick: u64,
+}
+
+impl Slots {
+    /// Called with each new state of the call.
+    pub fn update(&mut self, members: &[Member], max: usize) {
+        let max = max.max(1);
+        self.tick += 1;
+        let tick = self.tick;
+        let can_talk = |m: &Member| !m.muted && !m.deafened;
+        let find = |id: &str| members.iter().find(|m| m.id == id);
+        self.held.retain(|(id, _)| find(id).is_some_and(can_talk));
+        self.held.truncate(max);
+        for (id, last) in &mut self.held {
+            if find(id).is_some_and(|m| m.speaking) {
+                *last = tick;
+            }
+        }
+        for m in members.iter().filter(|m| can_talk(m) && m.speaking) {
+            if self.held.iter().any(|(id, _)| *id == m.id) {
+                continue;
+            }
+            if self.held.len() < max {
+                self.held.push((m.id.clone(), tick));
+            } else if let Some(i) = (0..self.held.len()).filter(|&i| self.held[i].1 < tick).min_by_key(|&i| self.held[i].1) {
+                self.held[i] = (m.id.clone(), tick);
+            }
+        }
+        for m in members.iter().filter(|m| can_talk(m)) {
+            if self.held.len() >= max {
+                break;
+            }
+            if !self.held.iter().any(|(id, _)| *id == m.id) {
+                self.held.push((m.id.clone(), 0));
+            }
+        }
+    }
+
+    /// The people in the places, in place order.
+    pub fn people(&self, members: &[Member]) -> Vec<Member> {
+        self.held.iter().filter_map(|(id, _)| members.iter().find(|m| m.id == *id).cloned()).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,5 +382,45 @@ mod tests {
     fn guild_icon_becomes_a_small_png() {
         assert_eq!(guild_icon_png("https://cdn.discordapp.com/icons/1/abc.jpg"), "https://cdn.discordapp.com/icons/1/abc.png?size=64");
         assert_eq!(guild_icon_png("https://cdn.discordapp.com/icons/1/a_abc.gif?size=128"), "https://cdn.discordapp.com/icons/1/a_abc.png?size=64");
+    }
+
+    fn people(n: usize) -> Vec<Member> {
+        (0..n).map(|i| Member { id: i.to_string(), ..Default::default() }).collect()
+    }
+
+    fn ids(s: &Slots, ms: &[Member]) -> Vec<String> {
+        s.people(ms).into_iter().map(|m| m.id).collect()
+    }
+
+    #[test]
+    fn slots_skip_the_muted_and_go_to_speakers() {
+        let mut ms = people(7);
+        ms[1].muted = true;
+        ms[3].deafened = true;
+        let mut s = Slots::default();
+        s.update(&ms, 3);
+        assert_eq!(ids(&s, &ms), ["0", "2", "4"]);
+        // 6 speaks: takes the place of the one quiet longest (0, the first never to have spoken)
+        ms[6].speaking = true;
+        s.update(&ms, 3);
+        assert_eq!(ids(&s, &ms), ["6", "2", "4"]);
+        // 5 speaks while 6 still does: 2 goes, 6 stays
+        ms[5].speaking = true;
+        s.update(&ms, 3);
+        assert_eq!(ids(&s, &ms), ["6", "5", "4"]);
+        // a muted speaker never gets in; someone muting leaves their place
+        ms[6].speaking = false;
+        ms[5].speaking = false;
+        ms[1].speaking = true;
+        ms[4].muted = true;
+        s.update(&ms, 3);
+        assert_eq!(ids(&s, &ms), ["6", "5", "0"]);
+        // all speaking and the places full: nobody is pushed out
+        for m in ms.iter_mut() {
+            m.speaking = true;
+        }
+        ms[1].muted = false;
+        s.update(&ms, 3);
+        assert_eq!(ids(&s, &ms), ["6", "5", "0"]);
     }
 }
