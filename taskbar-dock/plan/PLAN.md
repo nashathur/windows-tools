@@ -131,7 +131,7 @@ restart via `dev.ps1`. One or two steps per session.
 | # | Step | Behaviour change |
 |---|---|---|
 | 0 | **Done 2026-10-10.** Prep: parity checklist from the inventories (`parity.md`); measure today's panel spacing, widths, row heights; token table (`tokens.md`) | none |
-| 1 | `theme` module + replace the four copied palettes/fonts; bus popup follows light theme; dev.ps1 lint | bus popup in light theme only |
+| 1 | **Done 2026-10-10** (hand check light/dark ok; weather emoji now in colour, `emoji.rs`). `theme` module + replace the four copied palettes/fonts; bus popup follows light theme; dev.ps1 lint | bus popup in light theme only |
 | 2 | `block` in the library: Spec, Content, Ctx, wndproc, timers, motion/dock/fit/hooks, Explorer restart, floating fallback, standard menu rows. Tests with a fake Content | none (unused yet) |
 | 3 | Port **weather** (left/right side, data timer). Parity check | none |
 | 4 | Panel shell in Block; move weather's flyout onto it | none |

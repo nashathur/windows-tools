@@ -31,6 +31,7 @@ pub mod badge;
 pub mod crash;
 pub mod dock;
 pub mod draw;
+pub mod emoji;
 pub mod icons;
 pub mod marquee;
 pub mod menu_panel;

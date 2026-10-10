@@ -23,10 +23,17 @@ windows-sys = { version = "0.52", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
-# UI Automation (COM) for the taskbar's app buttons (icons.rs); windows-sys can't call COM.
+# UI Automation (COM) for the taskbar's app buttons (icons.rs), and Direct2D/DirectWrite for colour
+# emoji (emoji.rs); windows-sys can't call COM.
 # Same version as taskbar-weather and taskbar-media, so they share one build of it.
 windows = { version = "0.58", features = [
+    "Foundation_Numerics",
     "Win32_Foundation",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Imaging",
     "Win32_System_Com",
     "Win32_System_Variant",
     "Win32_UI_Accessibility",

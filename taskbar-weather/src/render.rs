@@ -1,7 +1,7 @@
 //! GDI drawing: the tray icon, the taskbar label (per-pixel alpha) and the forecast flyout.
 
 use crate::weather::{deg, describe, Weather};
-use taskbar_dock::draw;
+use taskbar_dock::{draw, emoji};
 use taskbar_dock::style::Look;
 use taskbar_dock::theme::{self, font_override, size, space, Rgb, Theme};
 use std::ffi::c_void;
@@ -203,7 +203,10 @@ pub fn update_label(hwnd: HWND, content: &LabelContent, height: i32, scale: f32,
     let width = clip.map_or(natural, |c| c.clamp(1, natural));
     let Some(mut cv) = Canvas::new(width, height) else { return SIZE::default() };
     let white = rgb(255, 255, 255);
-    if let Some(mut big) = Canvas::new(96, 96) {
+    // in colour (drawn over the text's colours below); one-colour GDI only without Direct2D
+    let colour_glyph = emoji::render(&content.glyph, theme::GLYPH_RASTER_PX as f32, 96, 96);
+    let mono = if colour_glyph.is_none() { Canvas::new(96, 96) } else { None };
+    if let Some(mut big) = mono {
         draw_text(big.dc, &glyph_font, &content.glyph, white, 0, 0, 96, 96, DT_CENTER | DT_VCENTER);
         unsafe { let _ = GdiFlush(); }
         let src = big.pixels().to_vec();
@@ -242,6 +245,9 @@ pub fn update_label(hwnd: HWND, content: &LabelContent, height: i32, scale: f32,
         let c = if inside(hum, x, y) || inside(feels, x, y) { dim } else { fg };
         let a = ((*p >> 16) & 0xff).max((*p >> 8) & 0xff).max(*p & 0xff);
         *p = a << 24 | (c.0 * a / 255) << 16 | (c.1 * a / 255) << 8 | (c.2 * a / 255);
+    }
+    if let Some(img) = &colour_glyph {
+        emoji::fit_over(cv.pixels(), width, pad, icon_top, gw, img);
     }
     // background with the hover highlight, like the taskbar's buttons (shared look)
     let (radius, inset) = draw::highlight_shape(look, scale);
@@ -306,6 +312,21 @@ fn round_fill(dc: HDC, x: i32, y: i32, w: i32, h: i32, c: COLORREF) {
     }
 }
 
+/// An emoji in colour in the panel: `text` at `px` in the box (x, y, w, h), centred, or with
+/// its visible left edge at x for DT_LEFT `flags`, on the panel's background `bg`. Without
+/// Direct2D: GDI in `font`, one colour (`fg`).
+#[allow(clippy::too_many_arguments)]
+fn draw_emoji(dc: HDC, font: &Font, text: &str, px: i32, fg: COLORREF, bg: Rgb, x: i32, y: i32, w: i32, h: i32, flags: DRAW_TEXT_FORMAT) {
+    let Some(img) = emoji::render(text, px as f32, w, h) else {
+        return draw_text(dc, font, text, fg, x, y, w, h, flags);
+    };
+    let left = (flags & (DT_CENTER | DT_RIGHT)).0 == 0;
+    let shift = if left { emoji::ink(&img).map_or(0, |b| b.0) } else { 0 };
+    let Some(mut cv) = Canvas::new(w, h) else { return };
+    cv.pixels().copy_from_slice(&emoji::flatten(&img, bg));
+    unsafe { let _ = BitBlt(dc, x - shift, y, w, h, cv.dc, 0, 0, SRCCOPY); }
+}
+
 /// Paints the forecast flyout. `scale` = DPI / 96.
 pub fn paint_popup(hwnd: HWND, weather: Option<&Weather>, status: Option<&str>, scale: f32, look: &Look) {
     let s = |v: f32| (v * scale).round() as i32;
@@ -358,7 +379,7 @@ pub fn paint_popup(hwnd: HWND, weather: Option<&Weather>, status: Option<&str>, 
 
                 // Current conditions.
                 let y = s(42.0);
-                draw_text(dc, &emoji_big, glyph, pal.fg, pad, y, s(60.0), s(64.0), l);
+                draw_emoji(dc, &emoji_big, glyph, s(theme::EMOJI_LARGE.px), pal.fg, theme.color.bg, pad, y, s(60.0), s(64.0), l);
                 let t = deg(wx.temp);
                 draw_text(dc, &big, &t, pal.fg, pad + s(64.0), y, s(130.0), s(64.0), l);
                 let (tw, _) = text_size(dc, &big, &t);
@@ -382,7 +403,7 @@ pub fn paint_popup(hwnd: HWND, weather: Option<&Weather>, status: Option<&str>, 
                 for (i, hr) in wx.hourly.iter().enumerate() {
                     let x = pad + col * i as i32;
                     draw_text(dc, &small, &hour_label(look, &hr.time), pal.dim, x, s(174.0), col, s(18.0), c);
-                    draw_text(dc, &emoji, describe(hr.code, true).0, pal.fg, x, s(193.0), col, s(28.0), c);
+                    draw_emoji(dc, &emoji, describe(hr.code, true).0, s(theme::EMOJI.px), pal.fg, theme.color.bg, x, s(193.0), col, s(28.0), c);
                     draw_text(dc, &small_b, &deg(hr.temp), pal.fg, x, s(222.0), col, s(18.0), c);
                     if let Some(p) = hr.precip.filter(|p| *p >= RAIN_SHOWN) {
                         draw_text(dc, &small, &format!("{p:.0}%"), rain_color(&pal, p), x, s(240.0), col, s(16.0), c);
@@ -398,7 +419,7 @@ pub fn paint_popup(hwnd: HWND, weather: Option<&Weather>, status: Option<&str>, 
                     let y = s(296.0) + s(31.0) * i as i32;
                     let rh = s(31.0);
                     draw_text(dc, &body, &d.label, pal.fg, pad, y, s(70.0), rh, l);
-                    draw_text(dc, &emoji, describe(d.code, true).0, pal.fg, pad + s(70.0), y, s(32.0), rh, c);
+                    draw_emoji(dc, &emoji, describe(d.code, true).0, s(theme::EMOJI.px), pal.fg, theme.color.bg, pad + s(70.0), y, s(32.0), rh, c);
                     if let Some(p) = d.precip.filter(|p| *p >= RAIN_SHOWN) {
                         draw_text(dc, &small, &format!("{p:.0}%"), rain_color(&pal, p), pad + s(104.0), y, s(40.0), rh, l);
                     }
