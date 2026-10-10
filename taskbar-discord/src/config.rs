@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::path::PathBuf;
 use taskbar_dock::settings;
 
 /// The "discord" section of the settings file shared with the other taskbar widgets,
 /// %APPDATA%\TaskbarDock\settings.json. The shared look is its "dock" section (taskbar_dock::style).
+/// Block owns the section's `compact` and `show_on_taskbar` keys (its switches): not here.
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(default)]
 pub struct Config {
@@ -14,10 +14,6 @@ pub struct Config {
     pub client_secret: String,
     /// Must be one of the app's OAuth2 redirects (Discord checks it when the code is exchanged).
     pub redirect_uri: String,
-    /// Compact strip: one icon and the number of people in the call.
-    pub compact: bool,
-    /// Keep the strip on the taskbar outside a call (otherwise it appears when you join one).
-    pub show_when_idle: bool,
     /// Avatars on the strip (the rest is "+N").
     pub max_avatars: usize,
 }
@@ -28,19 +24,17 @@ impl Default for Config {
             client_id: String::new(),
             client_secret: String::new(),
             redirect_uri: "http://localhost".into(),
-            compact: false,
-            show_when_idle: false,
             max_avatars: 5,
         }
     }
 }
 
-impl Config {
-    pub fn path() -> PathBuf {
-        settings::path()
-    }
+/// Keys of older versions, removed from the file once: `show_when_idle` ("Show when not in a
+/// call") went with Block's Show on taskbar switch (plan step 5).
+const GONE: [&str; 1] = ["show_when_idle"];
 
-    /// Loads the section and writes it back in full, so new settings show up in the file.
+impl Config {
+    /// Loads the section and writes it back, so new settings show up in the file.
     pub fn load() -> Config {
         // keep a broken file as-is so the user can fix their edit
         let Some(root) = settings::read() else { return Config::default() };
@@ -49,10 +43,27 @@ impl Config {
         cfg
     }
 
-    /// Saves this section only.
+    /// Saves these settings into the discord section; other keys there (Block's `compact` and
+    /// `show_on_taskbar`) and the other sections are left as they are.
     pub fn save(&self) {
-        let value: Value = serde_json::to_value(self).unwrap_or_else(|_| json!({}));
-        let _ = settings::save_section("discord", value);
+        let Ok(Value::Object(mine)) = serde_json::to_value(self) else { return };
+        let _ = settings::update(|root| {
+            if !root.is_object() {
+                *root = json!({});
+            }
+            let sec = &mut root["discord"];
+            if !sec.is_object() {
+                *sec = json!({});
+            }
+            for (k, v) in mine {
+                sec[k.as_str()] = v;
+            }
+            if let Some(sec) = sec.as_object_mut() {
+                for k in GONE {
+                    sec.remove(k);
+                }
+            }
+        });
     }
 
     pub fn configured(&self) -> bool {

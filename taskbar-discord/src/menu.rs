@@ -1,129 +1,74 @@
-//! The right-click panel and the settings-file watcher.
+//! The right-click panel's own rows (Block adds Show on taskbar, Compact mode, Start with
+//! Windows, Edit settings… and Quit) and following the settings file.
 
 use super::*;
-use taskbar_dock::menu_panel::{self, glyph, Item, Menu, Row};
+use taskbar_dock::menu_panel::{glyph, Row};
 
-/// The right-click panel (taskbar_dock::menu_panel), from the strip or the panel (a right
-/// click there switches to this one).
-pub(crate) fn show_menu() {
-    let Some((main, Some(label), voice, cfg)) = with(|a| (a.main, a.label, a.voice.clone(), a.cfg.clone())) else { return };
-    if let Some(a) = with(|a| a.panel.right_click(false)) {
-        panel_do(a);
-    }
-    if with(|a| a.popup.is_some()) == Some(true) {
-        popup_closed(false);
-    }
-    let mut rc = RECT::default();
-    let scale;
-    unsafe {
-        let _ = GetWindowRect(label, &mut rc);
-        let tb = GetParent(label).ok().or_else(taskbar);
-        scale = tb.map_or(1.0, scale_of);
-        if let (Some(tb), false) = (tb, menu_panel::is_open()) {
-            dock::close_other_panels(raw(tb), raw(label));
-        }
-    }
-    let (l1, l2) = render::strip_lines(&voice);
-    let mut items = Vec::new();
-    if voice.in_call() {
-        items.push(Row::switch(ID_MUTE, "Mute microphone", voice.self_mute));
-        items.push(Row::switch(ID_DEAF, "Deafen", voice.self_deaf));
-        items.push(Row::action(ID_LEAVE, '\u{E711}', "Leave call"));
-        items.push(Item::Sep);
-    }
-    items.push(Row::switch(ID_COMPACT, "Compact mode", cfg.compact));
-    items.push(Row::switch(ID_IDLE, "Show when not in a call", cfg.show_when_idle));
-    items.push(Row::switch(ID_STARTUP, "Start with Windows", startup_enabled()));
-    items.push(Item::Sep);
-    if cfg.configured() {
-        items.push(Row::action(ID_SIGNIN, '\u{E77B}', "Sign in to Discord"));
-        items.push(Row::action(ID_RECONNECT, glyph::REFRESH, "Reconnect"));
-        items.push(Item::Sep);
-    }
-    items.push(menu_panel::settings_and_quit(ID_SETTINGS, ID_EXIT));
-    let menu = Menu { title: l1, subtitle: l2, items };
+const ID_MUTE: usize = 100;
+const ID_DEAF: usize = 101;
+const ID_LEAVE: usize = 102;
+const ID_SIGNIN: usize = 106;
+const ID_RECONNECT: usize = 107;
 
-    // the switches flip and the panel stays open
-    let mut flip = |id: usize| -> bool {
-        let save = |f: &mut dyn FnMut(&mut Config) -> bool| {
-            with(|a| {
-                let on = f(&mut a.cfg);
-                a.cfg.save();
-                a.cfg_mtime = config_mtime();
-                on
-            })
-            .unwrap_or(false)
-        };
-        match id {
-            ID_MUTE => {
-                let on = with(|a| !a.voice.self_mute).unwrap_or(false);
-                rpc(rpc::Cmd::Mute(on));
-                on
-            }
-            ID_DEAF => {
-                let on = with(|a| !a.voice.self_deaf).unwrap_or(false);
-                rpc(rpc::Cmd::Deaf(on));
-                on
-            }
-            ID_COMPACT => {
-                let on = save(&mut |c| {
-                    c.compact = !c.compact;
-                    c.compact
-                });
-                redraw_label();
-                on
-            }
-            ID_IDLE => save(&mut |c| {
-                c.show_when_idle = !c.show_when_idle;
-                c.show_when_idle
-            }),
-            _ => {
-                set_startup(!startup_enabled());
-                startup_enabled()
-            }
-        }
-    };
-    let anchor = taskbar_dock::panel::RECT { left: rc.left, top: rc.top, right: rc.right, bottom: rc.bottom };
-    let cmd = unsafe { menu_panel::run(anchor, menu, &look(), scale, &mut flip) };
-    with(|a| a.panel.menu_closed());
-    match cmd {
-        Some(ID_LEAVE) => rpc(rpc::Cmd::Leave),
-        Some(ID_SIGNIN) => rpc(rpc::Cmd::SignIn),
-        Some(ID_RECONNECT) => {
-            let key = with(|a| a.cfg.connection_key()).unwrap_or_default();
-            rpc(rpc::Cmd::Reconnect(key));
-        }
-        Some(ID_SETTINGS) => {
-            let path = wide(&Config::path().display().to_string());
-            unsafe { ShellExecuteW(None, w!("open"), w!("notepad.exe"), pcwstr(&path), None, SW_SHOWNORMAL); }
-        }
-        Some(ID_EXIT) => unsafe { let _ = DestroyWindow(main); },
-        _ => {}
+/// The call's switches and Leave (in a call), then Reconnect (once set up), and Sign in only
+/// while signed out (the panel then says to use it).
+pub(crate) fn build(a: &App, m: &mut MenuBuilder) {
+    let (l1, l2) = render::strip_lines(&a.voice);
+    m.title(l1).subtitle(l2);
+    if a.voice.in_call() {
+        m.item(Row::switch(ID_MUTE, "Mute microphone", a.voice.self_mute));
+        m.item(Row::switch(ID_DEAF, "Deafen", a.voice.self_deaf));
+        m.item(Row::action(ID_LEAVE, '\u{E711}', "Leave call"));
+        m.sep();
     }
-    // show_when_idle may have changed
-    update_visibility();
+    if a.cfg.configured() {
+        if matches!(a.voice.status, Status::NeedsSignIn(_)) {
+            m.item(Row::action(ID_SIGNIN, '\u{E77B}', "Sign in to Discord"));
+        }
+        m.item(Row::action(ID_RECONNECT, glyph::REFRESH, "Reconnect"));
+        m.sep();
+    }
 }
 
-/// Picks up edits to the shared settings file (e.g. via "Edit settings…"): new app credentials
-/// reconnect; the look settings redraw.
-pub(crate) fn watch_config() {
-    let mtime = config_mtime();
-    if with(|a| a.cfg_mtime != mtime) != Some(true) {
-        return;
+/// Mute / Deafen flipped: Discord does it and reports back (the strip follows its event).
+pub(crate) fn switch(a: &mut App, id: usize) -> bool {
+    match id {
+        ID_MUTE => {
+            let on = !a.voice.self_mute;
+            a.send(rpc::Cmd::Mute(on));
+            on
+        }
+        ID_DEAF => {
+            let on = !a.voice.self_deaf;
+            a.send(rpc::Cmd::Deaf(on));
+            on
+        }
+        _ => false,
     }
+}
+
+pub(crate) fn action(a: &mut App, id: usize) {
+    match id {
+        ID_LEAVE => a.send(rpc::Cmd::Leave),
+        ID_SIGNIN => a.send(rpc::Cmd::SignIn),
+        ID_RECONNECT => a.send(rpc::Cmd::Reconnect(a.cfg.connection_key())),
+        _ => {}
+    }
+}
+
+/// The settings file changed (Edit settings…, another widget): new app credentials reconnect;
+/// media's text column width or the avatar count redraw.
+pub(crate) fn settings_changed(a: &mut App, ctx: &mut Ctx) {
     let cfg = Config::load();
-    let Some(old) = with(|a| {
-        let old = a.cfg.clone();
-        a.cfg = cfg.clone();
-        a.cfg_mtime = config_mtime();
-        old
-    }) else { return };
-    if old.connection_key() != cfg.connection_key() {
+    if a.cfg.connection_key() != cfg.connection_key() {
         log("app settings changed: reconnecting");
-        rpc(rpc::Cmd::Reconnect(cfg.connection_key()));
+        a.send(rpc::Cmd::Reconnect(cfg.connection_key()));
     }
-    if old != cfg {
-        update_visibility();
-        redraw_label();
+    if a.cfg.max_avatars != cfg.max_avatars {
+        a.slots.update(a.voice.channel.as_ref().map_or(&[], |c| &c.members), cfg.max_avatars);
     }
+    a.cfg = cfg;
+    a.media_w = media_text_width();
+    ctx.redraw();
+    ctx.redraw_panel();
 }

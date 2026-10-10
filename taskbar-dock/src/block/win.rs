@@ -231,7 +231,7 @@ fn call<R>(f: impl FnOnce(&mut dyn Content, &mut Ctx) -> R) -> Option<R> {
 }
 
 fn apply(reqs: Vec<Request>) {
-    let mut redraw_after = false;
+    let (mut redraw_after, mut resize_after) = (false, false);
     for r in reqs {
         match r {
             Request::Redraw => redraw_after = true,
@@ -240,6 +240,7 @@ fn apply(reqs: Vec<Request>) {
                     unsafe { InvalidateRect(p, std::ptr::null(), 0) };
                 }
             }
+            Request::ResizePanel => resize_after = true,
             Request::Every(id, ms) => {
                 if let Some(main) = st(|s| s.main) {
                     unsafe { SetTimer(main, id, ms, None) };
@@ -269,6 +270,12 @@ fn apply(reqs: Vec<Request>) {
     if redraw_after {
         redraw();
         tray_sync(false, false); // the tooltip may follow the data, the icon the state
+    }
+    // after the redraw: placed by the strip as it is now (it may just have appeared or gone)
+    if resize_after {
+        if let Some((p, strip)) = st(|s| (s.panel, s.strip)).filter(|(p, _)| *p != 0) {
+            shell::resize(p, strip);
+        }
     }
 }
 
@@ -1199,13 +1206,16 @@ fn redraw() {
             .unwrap_or(1)
         });
         let shown_compact = compact && resize_w.is_none();
-        let Some(Some((mut cv, feel, cover, hover, dragging_now, hot))) = st(|s| {
+        let Some(Some((mut cv, feel, cover, hover, dragging_now, hot, tint))) = st(|s| {
             let mut f = frame(&s.look, &s.core, floating, height, dpi, zoom, shown_compact);
             f.fit_width = narrowed.map(|w| (w as f32 * zoom).round() as i32);
             let natural = s.content.measure(&f, shown_compact).max(1);
             let mut cv = Canvas::new(natural, height)?;
             s.content.draw(&mut cv, &f);
-            Some((cv, s.core.feel.value(), s.content.cover(), s.core.hover, s.core.motion.dragging(), s.core.hot))
+            let hot = s.core.hot;
+            // a brand tint for the strip (and the hovered button's own)
+            let tint = s.content.tint(Hit::Strip, &s.look).map(|t| (t, matches!(hot, Hit::Button(..)).then(|| s.content.tint(hot, &s.look)).flatten()));
+            Some((cv, s.core.feel.value(), s.content.cover(), s.core.hover, s.core.motion.dragging(), hot, tint))
         }) else { return };
         let natural = cv.w;
         // the cover's hover / press feel, then the cut-off, then the background under it all
@@ -1216,8 +1226,19 @@ fn redraw() {
         let fade = (space::M * dpi * zoom).round() as i32;
         let mut px = core::cut(cv.pixels(), natural, height, width, fade);
         let (radius, inset) = draw::highlight_shape(&look, dpi * zoom);
-        let hl = core::highlight(hover, dragging_now, hot, width, height, inset);
-        draw::background_rect(&mut px, width, height, hl, look.light, radius);
+        match tint {
+            None => {
+                let hl = core::highlight(hover, dragging_now, hot, width, height, inset);
+                draw::background_rect(&mut px, width, height, hl, look.light, radius);
+            }
+            Some((strip_tint, button_tint)) => {
+                // the faint base (the whole strip takes the mouse), then the brand boxes under it all
+                draw::background_rect(&mut px, width, height, None, look.light, radius);
+                for (b, rgb, alpha) in core::tints(strip_tint, button_tint, hover, dragging_now, hot, width, height, inset) {
+                    draw::tint_box(&mut px, width, b, (rgb >> 16 & 0xff, rgb >> 8 & 0xff, rgb & 0xff), alpha, radius);
+                }
+            }
+        }
         drop(cv);
         let Some(mut out) = Canvas::new(width, height) else { return };
         out.pixels().copy_from_slice(&px);

@@ -13,14 +13,18 @@ read by the leader only) · panel (`PanelBehaviour` hover/click/pin, `Fade`, `pl
 rows, switches, `run` like TrackPopupMenu) · strip (`Motion`: glide, drag,
 zoom, compact resize animation; `Limits`; `keep_right_edge`; `move_strip`; `client_pos`) · draw (corners: `shape_cover`, `round_rect`, `fill_round`, `card_radius`, `concentric`; `background_in`, `background_rect`, `button_box`, `centered_box`, `contains`, `grow_box`, `grow_pixels`, `tint_box`, `progress_ring`) · emoji (colour emoji via Direct2D + DirectWrite: `render`, `fit_over` into a strip's icon box, `flatten` for a GDI panel; GDI draws emoji in one colour) · badge · anim
 (`pulse`, easing, `Feel`: cover hover/press size) · marquee (scrolling text) · window (`raise`, `find`, `exe_path`: bring an app's window to the front) · ctl (dockctl's command format; `block/remote.rs` answers it, `src/bin/dockctl.rs` sends it).
-block (plan\PLAN.md; used by weather since step 3): the strip window and all its behaviour; a
+block (plan\PLAN.md; used by weather since step 3, discord since step 5): the strip window and all its behaviour; a
 widget gives a `Spec` and a `Content` and calls `block::run`. `mod.rs` API (Spec, Content, Ctx requests
 applied after the borrow incl. `toggle_panel`/`open_menu` for a tray icon (no strip needed: the panel
 opens above the pointer) and `redraw_panel`, Frame, Canvas, Hit, MenuBuilder with the standard rows,
 `with` for the widget's own windows/worker posts). Main panel (step 4): Block's window (`shell.rs`,
 class `<class>Panel`: create, place, paint, Esc / lost focus / right click); the Content gives
 `panel_size(kind, scale)` (px; None: no panel), `panel_draw(kind, cv, &PanelFrame)` (theme bg already
-filled, opaque GDI) and optionally `panel_mouse`; no `Spec::panel` hook any more. Block owns the section's `compact` and `show_on_taskbar` keys: a widget saving its section must merge,
+filled, opaque GDI) and optionally `panel_mouse`; no `Spec::panel` hook any more. Step 5 (discord):
+`Ctx::resize_panel()` (the open panel takes a new `panel_size`, re-placed by the rule it opened with,
+after the strip's redraw, no fade) and `Content::tint(area, look) -> Option<Tint>` (a brand colour
+for the strip's highlight boxes instead of the neutral one: whole strip at rest/hover strength, the
+hovered button's box on top; order in `core::tints`, tested). Block owns the section's `compact` and `show_on_taskbar` keys: a widget saving its section must merge,
 not replace it (weather `Config::save`). Show on taskbar + tray icon (step 3b): the strip shows when
 the switch is on and `Content::visible()`; the tray icon (`tray.rs`, logo from `Content::tray_icon`,
 tooltip `tray_tip`) shows whenever the strip doesn't; a widget without `tray_icon` gets neither the
@@ -84,7 +88,7 @@ mirrored in the others. Status 2026-10-09: all four widgets have all five. Bus, 
 
 ## Testing (prefer in this order)
 1. Unit tests (pure logic in the library: `block/core.rs`, `ctl.rs`, `panel.rs`, …).
-2. **dockctl** for widgets on Block (weather; the others after their ports):
+2. **dockctl** for widgets on Block (weather, discord; bus and media after their ports):
    `taskbar-dock\dockctl.exe <widget|all> state|panel …|menu …|tray click …|set|get|log|redraw|quit|simulate …`
    (README.md "Testing"). It runs commands through Block's own paths in the running widget, so
    settings, logs and state are the REAL `%APPDATA%`. Use it instead of `_tmp\real.ps1` for the
@@ -155,7 +159,8 @@ if animations are off) on every mouse move / down / up / leave / capture loss, r
 `FEEL_FRAME_MS` timer while `animating()`, `tick` it each frame and redraw. In the strip's
 drawing, after the cover and its ring, `draw::grow_pixels(buf, w, ring_box, feel.value())`
 rescales them about their centre. Hit-test the resting box (not the grown one). Media
-(`main.rs` `feel_update`) and discord (`label.rs` `feel_update`) do this; a new widget copies it.
+(`main.rs` `feel_update`) does this; widgets on Block (weather, discord) get it from Block by
+returning the box from `Content::cover`; a new widget on Block does the same.
 
 ## Hard rules
 - `%APPDATA%\TaskbarDock\settings.json` and source files: write UTF-8 only (Rust/serde, the

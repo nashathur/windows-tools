@@ -31,12 +31,12 @@ pub(super) unsafe fn register(class: &str, hinst: isize, cursor: isize) {
     RegisterClassW(&wc);
 }
 
-/// Creates the main panel (layered, not shown yet: the caller shows and fades it): centred above
-/// the strip; without one (`strip` 0: opened from the tray icon) above the icon, never over the
-/// tray overflow panel ([`core::panel_at_tray`]), or above the pointer when Windows doesn't say
-/// where the icon is; kept on its monitor. 0: the Content has no panel, or creating failed.
-pub(super) fn open(strip: HWND) -> HWND {
-    let Some((class, title, look, main)) = st(|s| (s.spec.class, s.spec.title, s.look.clone(), s.main)) else { return 0 };
+/// Where the main panel goes and its size (x, y, w, h), at what the Content asks for now: centred
+/// above the strip; without one (`strip` 0: opened from the tray icon) above the icon, never over
+/// the tray overflow panel ([`core::panel_at_tray`]), or above the pointer when Windows doesn't
+/// say where the icon is; kept on its monitor. None: the Content has no panel. `say`: log it.
+fn placement(strip: HWND, say: bool) -> Option<(i32, i32, i32, i32)> {
+    let (look, main) = st(|s| (s.look.clone(), s.main))?;
     unsafe {
         let pt = dock::cursor();
         // from the tray: where its icon is (on the taskbar, or in the overflow panel)
@@ -52,9 +52,9 @@ pub(super) fn open(strip: HWND) -> HWND {
         let (mut dx, mut dy) = (96u32, 96u32);
         GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy);
         let scale = dx.max(96) as f32 / 96.0;
-        let Some(Some((w, h))) = st(|s| s.content.panel_size(PanelKind::Main, scale)) else { return 0 };
+        let (w, h) = st(|s| s.content.panel_size(PanelKind::Main, scale))??;
         if w <= 0 || h <= 0 {
-            return 0;
+            return None;
         }
         let (x, y) = if strip != 0 {
             crate::panel::place(strip, w, h, &look, scale)
@@ -66,9 +66,21 @@ pub(super) fn open(strip: HWND) -> HWND {
                 Some((icon, overflow)) => core::panel_at_tray(icon, overflow, w, h, work, margin),
                 None => core::panel_at_pointer((pt.x, pt.y), w, h, work, margin),
             };
-            log(&format!("panel from the tray: icon {:?}, overflow {:?} -> {at:?}", tray_at.map(|t| t.0), tray_at.and_then(|t| t.1)));
+            if say {
+                log(&format!("panel from the tray: icon {:?}, overflow {:?} -> {at:?}", tray_at.map(|t| t.0), tray_at.and_then(|t| t.1)));
+            }
             at
         };
+        Some((x, y, w, h))
+    }
+}
+
+/// Creates the main panel where [`placement`] says (layered, not shown yet: the caller shows and
+/// fades it). 0: the Content has no panel, or creating failed.
+pub(super) fn open(strip: HWND) -> HWND {
+    let Some((class, title, look)) = st(|s| (s.spec.class, s.spec.title, s.look.clone())) else { return 0 };
+    let Some((x, y, w, h)) = placement(strip, true) else { return 0 };
+    unsafe {
         let (cls, title) = (class_name(class), wide(title));
         let p = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED, cls.as_ptr(), title.as_ptr(),
             WS_POPUP, x, y, w, h, 0, 0, GetModuleHandleW(std::ptr::null()), std::ptr::null());
@@ -81,6 +93,20 @@ pub(super) fn open(strip: HWND) -> HWND {
         DwmSetWindowAttribute(p, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, &dark as *const _ as *const _, 4);
         TRACKING.set(false);
         p
+    }
+}
+
+/// The open panel `p` takes the size the Content asks for now, placed by the same rule as when it
+/// opened (above the strip, or the tray icon), no fade; repainted either way ([`Ctx::resize_panel`]).
+pub(super) fn resize(p: HWND, strip: HWND) {
+    unsafe {
+        if let Some((x, y, w, h)) = placement(strip, false) {
+            let r = dock::rect(p);
+            if (r.left, r.top, r.right - r.left, r.bottom - r.top) != (x, y, w, h) {
+                SetWindowPos(p, 0, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+        }
+        InvalidateRect(p, std::ptr::null(), 0);
     }
 }
 

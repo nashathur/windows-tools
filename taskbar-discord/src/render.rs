@@ -4,13 +4,11 @@ use crate::avatars::{self, Image};
 use crate::voice::{Member, Status, Voice};
 use std::ffi::c_void;
 use std::sync::Arc;
-use taskbar_dock::draw;
+use taskbar_dock::{block, draw};
 use taskbar_dock::style::Look;
 use taskbar_dock::theme::{self, size, space, Rgb, Theme};
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
 /// Discord's colours (0xRRGGBB), from the theme's brand list.
 fn brand24(name: &str) -> u32 {
@@ -21,14 +19,6 @@ pub const GLYPH_HEADSET: &str = "\u{E95B}";
 pub const GLYPH_MIC: &str = "\u{E720}";
 pub const GLYPH_HEADPHONE: &str = "\u{E7F6}";
 pub const GLYPH_HANGUP: &str = "\u{E778}";
-
-pub fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-pub fn pcwstr(v: &[u16]) -> PCWSTR {
-    PCWSTR(v.as_ptr())
-}
 
 pub const fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
     COLORREF(r as u32 | (g as u32) << 8 | (b as u32) << 16)
@@ -195,6 +185,23 @@ impl StripLayout {
             })
             .map(|i| STRIP_BUTTONS[i])
     }
+
+    /// The logo with its ring (in a call): Block grows it on hover, dips it on press.
+    pub fn cover(&self) -> Option<block::Box4> {
+        self.buttons.then(|| draw::centered_box(self.ring_x, self.ring_d, self.size.cy))
+    }
+
+    /// What is at strip point (`x`, `y`) for Block: a button (its id is its place in
+    /// [`STRIP_BUTTONS`], its box the highlight box), the logo, or the strip itself.
+    pub fn block_hit(&self, x: i32, y: i32) -> block::Hit {
+        if let Some(i) = self.hit(x, y).and_then(|b| STRIP_BUTTONS.iter().position(|s| *s == b)) {
+            return block::Hit::Button(i, draw::button_box(self.button(i), self.size.cy, self.scale));
+        }
+        match self.cover() {
+            Some(c) if self.on_logo(x, y) => block::Hit::Cover(c),
+            _ => block::Hit::Strip,
+        }
+    }
 }
 
 /// The two text lines of the full strip.
@@ -290,23 +297,22 @@ fn fill_capsule(buf: &mut [u32], width: i32, x: i32, y: i32, w: i32, h: i32, col
     }
 }
 
-/// Draws the strip into its layered window. `scale` is the DPI scale times the drag zoom;
-/// `hover`: the mouse is over the strip, `hot`: over that button (its highlight only); `clip`
-/// cuts it at a width (compact switch animation); `measure_only` returns the layout only;
-/// `grow`: the logo's hover / press factor (`anim::Feel`, 1.0 = at rest).
+/// The strip's layout, and with `cv` its foreground drawn into Block's canvas (`cv.w` wide: the
+/// width this gave). `scale` is the DPI scale times the drag zoom. Block puts the background and
+/// the blurple boxes ([`tint`]) under it, grows the logo (`StripLayout::cover`) and cuts it off
+/// during a compact switch.
 ///
 /// In a call it is laid out like the media strip (same logo/ring, text-column and button sizes,
 /// so the two have the same width): `| logo+ring | stacked avatars (+N) | mute deafen leave |`,
 /// compact without the avatars. Otherwise a headset and two lines of text.
-#[allow(clippy::too_many_arguments)]
-pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, scale: f32, look: &Look, hover: bool, hot: Option<Button>, clip: Option<i32>, measure_only: bool, grow: f32) -> StripLayout {
+pub fn strip(cv: Option<&mut block::Canvas>, c: &StripContent, compact: bool, height: i32, scale: f32, look: &Look) -> StripLayout {
     let s = |v: f32| (v * scale).round() as i32;
     let v = c.voice;
     let f = Font::new(s(look.font_size), 400, &look.font, ANTIALIASED_QUALITY);
     let icon_font = Font::new(theme::GLYPH_RASTER_PX, 400, ICON_FONT, ANTIALIASED_QUALITY);
     let in_call = v.channel.is_some();
     let (icon_top, gw) = draw::icon_box(height, scale);
-    let (radius, inset) = draw::highlight_shape(look, scale);
+    let (_, inset) = draw::highlight_shape(look, scale);
     let members: &[Member] = v.channel.as_ref().map_or(&[], |ch| &ch.members);
 
     let dc = unsafe { CreateCompatibleDC(None) };
@@ -340,14 +346,11 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc
         buttons_x = 0;
         natural = text_x + text_w + pad;
     }
-    let mut lay = StripLayout { size: SIZE { cx: natural, cy: height }, buttons_x, button_w, buttons: in_call, scale, ring_x, ring_d };
-    if measure_only {
-        return lay;
-    }
-    let width = clip.map_or(natural, |cl| cl.clamp(1, natural));
-    lay.size.cx = width;
-    let Some(mut cv) = Canvas::new(width, height) else { return StripLayout::default() };
+    let lay = StripLayout { size: SIZE { cx: natural, cy: height }, buttons_x, button_w, buttons: in_call, scale, ring_x, ring_d };
+    let Some(cv) = cv else { return lay };
+    let width = cv.w;
     let white = rgb(255, 255, 255);
+    let cdc = HDC(cv.dc as _);
 
     if in_call {
         // tray-icon sized glyphs centred in their columns; muted / deafened ones slashed
@@ -359,18 +362,18 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc
                 Button::Deafen => GLYPH_HEADPHONE,
                 Button::Leave => GLYPH_HANGUP,
             };
-            draw_text(cv.dc, &bf, glyph, white, bl, icon_top, br - bl, gw, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            draw_text(cdc, &bf, glyph, white, bl, icon_top, br - bl, gw, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             if strip_button_on(v, *b) {
-                slash(cv.dc, bl + (br - bl - gw) / 2, icon_top, gw, white, scale);
+                slash(cdc, bl + (br - bl - gw) / 2, icon_top, gw, white, scale);
             }
         }
     } else {
         let ell = DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS;
         if idle2.is_empty() {
-            draw_text(cv.dc, &f, &idle1, white, text_x, (height - line_h + 1) / 2, text_w, line_h, ell);
+            draw_text(cdc, &f, &idle1, white, text_x, (height - line_h + 1) / 2, text_w, line_h, ell);
         } else {
-            draw_text(cv.dc, &f, &idle1, white, text_x, top1, text_w, line_h, ell);
-            draw_text(cv.dc, &f, &idle2, white, text_x, top2, text_w, line_h, ell);
+            draw_text(cdc, &f, &idle1, white, text_x, top1, text_w, line_h, ell);
+            draw_text(cdc, &f, &idle2, white, text_x, top2, text_w, line_h, ell);
         }
         // the headset, drawn large and fitted into the tray-icon box (shared rule)
         if let Some(mut big) = Canvas::new(96, 96) {
@@ -406,8 +409,6 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc
             Ring::Red => (brand24("discord.red"), 255),
         };
         avatars::draw_ring_a(buf, width, ring_x as f32, (cover_top - around) as f32, ring_d as f32, s(RING_WIDTH) as f32, rgb24, alpha);
-        // hovered / pressed: the logo and its ring grow / dip about their centre
-        draw::grow_pixels(buf, width, draw::centered_box(ring_x, ring_d, height), grow);
 
         // the people in the places, stacked, the first on top; everyone else (muted, deafened,
         // quiet longest, or more than fit): "+N"
@@ -464,37 +465,36 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, compact: bool, height: i32, sc
         let d = 6.0 * scale;
         avatars::draw_circle(buf, width, s(8.0) as f32 + gw as f32 - d * 0.5, icon_top as f32 - d * 0.5, d, None, Theme::new(look).brand("discord.attention").rgb24(), 255);
     }
-    if width < natural {
-        // cut off while collapsing or expanding: fades out at the right end
-        fade_right(buf, width, height, s(12.0));
-    }
-    // Highlights in Discord's colours (blurple; red for Leave and switched-on buttons). The whole
-    // strip always sits in a blurple box (stronger on hover); a hovered button gets a box of
-    // just its glyph plus the shared margin (`draw::button_box`) on top.
-    draw::background_rect(buf, width, height, None, look.light, radius);
-    let (rest, over) = if look.light { (70.0, 105.0) } else { (85.0, 125.0) };
-    // (each box goes under the pixels already there, so the button's is drawn first)
-    if let Some(i) = STRIP_BUTTONS.iter().position(|b| Some(*b) == hot).filter(|_| in_call) {
-        let b = STRIP_BUTTONS[i];
-        let tint = if b == Button::Leave || strip_button_on(v, b) { brand24("discord.red") } else { brand24("discord.blurple") };
-        tint_highlight(buf, width, draw::button_box(lay.button(i), height, scale), tint, over, radius);
-    }
-    tint_highlight(buf, width, (0, inset, width, height - inset), brand24("discord.blurple"), if hover { over } else { rest }, radius);
-
-    let size = SIZE { cx: width, cy: height };
-    let src = POINT::default();
-    let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };
-    unsafe {
-        let _ = windows::Win32::UI::WindowsAndMessaging::UpdateLayeredWindow(hwnd, None, None, Some(&size), cv.dc, Some(&src), COLORREF(0), Some(&blend), windows::Win32::UI::WindowsAndMessaging::ULW_ALPHA);
-    }
     lay
 }
 
-/// A highlight box over `rect` in `rgb24` (a Discord colour) at `alpha` (0..255), with the
-/// highlight's `radius`: the shared tinted box, under the strip's pixels.
-fn tint_highlight(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), rgb24: u32, alpha: f32, radius: f32) {
-    let rgb = (rgb24 >> 16 & 0xff, rgb24 >> 8 & 0xff, rgb24 & 0xff);
-    draw::tint_box(buf, width, rect, rgb, alpha / 255.0, radius);
+/// The blurple boxes Block draws under the strip (`Content::tint`): the whole strip always (stronger
+/// on hover), a hovered button's box blurple, or red for Leave and switched-on buttons, like
+/// Discord's own.
+pub fn tint(v: &Voice, area: block::Hit, look: &Look) -> Option<block::Tint> {
+    let (rest, over) = if look.light { (70.0, 105.0) } else { (85.0, 125.0) };
+    let rgb = match area {
+        block::Hit::Button(i, _) => match STRIP_BUTTONS.get(i) {
+            Some(&b) if b == Button::Leave || strip_button_on(v, b) => brand24("discord.red"),
+            _ => brand24("discord.blurple"),
+        },
+        _ => brand24("discord.blurple"),
+    };
+    Some(block::Tint { rgb, rest: rest / 255.0, hover: over / 255.0 })
+}
+
+/// The tray icon: the headset (Segoe Fluent E95B), mono in the taskbar's text colour, as weather's
+/// cloud: a static logo, not the call.
+pub fn tray_logo(cv: &mut block::Canvas, look: &Look) -> bool {
+    let Some(mut big) = Canvas::new(96, 96) else { return false };
+    let font = Font::new(theme::GLYPH_RASTER_PX, 400, ICON_FONT, ANTIALIASED_QUALITY);
+    draw_text(big.dc, &font, GLYPH_HEADSET, rgb(255, 255, 255), 0, 0, 96, 96, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    let src = big.pixels().to_vec();
+    let (w, h) = (cv.w, cv.h);
+    draw::fit_icon(cv.pixels(), w, 0, 0, w.min(h), &src, 96, 96);
+    let (fg, _) = look.text_rgb();
+    draw::text_to_color(cv.pixels(), w, h, |_| fg);
+    true
 }
 
 /// Is the strip's button switched on (we're muted / deafened)?
@@ -529,18 +529,6 @@ fn slash(dc: HDC, x: i32, y: i32, size: i32, color: COLORREF, scale: f32) {
         let _ = LineTo(dc, x + size - m, y + size - m);
         SelectObject(dc, op);
         let _ = DeleteObject(pen);
-    }
-}
-
-/// Premultiplied pixels fade to transparent over the last `fade` columns.
-fn fade_right(buf: &mut [u32], width: i32, height: i32, fade: i32) {
-    for y in 0..height {
-        for i in 0..fade.min(width) {
-            let keep = (i as f32 + 0.5) / fade as f32;
-            let p = &mut buf[(y * width + width - 1 - i) as usize];
-            let ch = |s: u32| ((((*p >> s) & 0xff) as f32 * keep).round() as u32) << s;
-            *p = ch(24) | ch(16) | ch(8) | ch(0);
-        }
     }
 }
 
@@ -697,27 +685,18 @@ const SETUP: &str = "Discord only shares voice chat with an app you register you
 4. Right-click this widget → Edit settings… and paste both into \"discord\": client_id, client_secret.\n\
 5. Discord then asks once: click Authorize.";
 
-/// Paints the panel. `avatar` gives a member's image if it's ready, `logo` the server's;
-/// `hover` is the button under the mouse. `scale` = DPI / 96.
-pub fn paint_panel(hwnd: HWND, v: &Voice, avatar: &dyn Fn(&Member) -> Option<Arc<Image>>, logo: Option<&Image>, hover: Option<Button>, scale: f32, look: &Look) {
+/// Paints the panel into `dc` (`w` × `h`, Block's canvas, already filled with the theme's
+/// background). `avatar` gives a member's image if it's ready, `logo` the server's; `hover` is
+/// the button under the mouse. `scale` = DPI / 96.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_panel(dc: HDC, w: i32, h: i32, v: &Voice, avatar: &dyn Fn(&Member) -> Option<Arc<Image>>, logo: Option<&Image>, hover: Option<Button>, scale: f32, look: &Look) {
     let s = |x: f32| (x * scale).round() as i32;
     let theme = Theme::new(look);
     let pal = palette(&theme);
     let cr = |c: Rgb| COLORREF(c.colorref());
     let font = |t: theme::TextStyle, face: &str, q| Font::new(s(t.px), t.weight, face, q);
     let lay = panel_layout(v, scale);
-    unsafe {
-        let mut ps = PAINTSTRUCT::default();
-        let hdc = BeginPaint(hwnd, &mut ps);
-        let mut rc = RECT::default();
-        let _ = GetClientRect(hwnd, &mut rc);
-        let (w, h) = (rc.right, rc.bottom);
-        let dc = CreateCompatibleDC(hdc);
-        let bmp = CreateCompatibleBitmap(hdc, w, h);
-        let old = SelectObject(dc, bmp);
-        SetBkMode(dc, TRANSPARENT);
-        fill(dc, rc, pal.bg);
-
+    {
         let q = CLEARTYPE_QUALITY;
         let small = font(theme::CAPTION, &theme.font.text, q);
         let body = font(theme::BODY, &theme.font.text, q);
@@ -831,12 +810,6 @@ pub fn paint_panel(hwnd: HWND, v: &Voice, avatar: &dyn Fn(&Member) -> Option<Arc
                 draw_text(dc, &small, &body_text, pal.fg, pad, s(HEAD_H) + s(12.0), inner, h - s(HEAD_H) - s(20.0), DT_LEFT | DT_WORDBREAK);
             }
         }
-
-        let _ = BitBlt(hdc, 0, 0, w, h, dc, 0, 0, SRCCOPY);
-        SelectObject(dc, old);
-        let _ = DeleteObject(bmp);
-        let _ = DeleteDC(dc);
-        let _ = EndPaint(hwnd, &ps);
     }
 }
 

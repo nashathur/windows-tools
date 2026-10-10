@@ -79,10 +79,13 @@ if ((Resolve-Path $built).Path -ne [IO.Path]::GetFullPath($Deploy)) {
 # a different order.txt / settings.json than the other widgets and overlap them in the dock.
 $task = "TaskbarDockDev_$Name"
 $action = New-ScheduledTaskAction -Execute $Deploy -WorkingDirectory (Split-Path $Deploy)
-# the task doesn't inherit this shell's environment: pass the fit test aid on (fit_test.ps1)
-if ($env:TASKBAR_DOCK_TEST_ICONS_RIGHT) {
+# the task doesn't inherit this shell's environment: pass the test aids on (every TASKBAR_*
+# variable: TASKBAR_DOCK_TEST_ICONS_RIGHT for fit_test.ps1, TASKBAR_DISCORD_TEST, ...)
+$aids = @(Get-ChildItem Env: | Where-Object { $_.Name -like 'TASKBAR_*' -and $_.Value })
+if ($aids) {
+    $sets = ($aids | ForEach-Object { "set `"$($_.Name)=$($_.Value)`" && " }) -join ''
     $action = New-ScheduledTaskAction -Execute 'cmd.exe' -WorkingDirectory (Split-Path $Deploy) `
-        -Argument "/c set `"TASKBAR_DOCK_TEST_ICONS_RIGHT=$env:TASKBAR_DOCK_TEST_ICONS_RIGHT`" && start `"`" `"$Deploy`""
+        -Argument "/c $sets start `"`" `"$Deploy`""
 }
 Register-ScheduledTask -TaskName $task -Action $action -Force | Out-Null
 Start-ScheduledTask -TaskName $task

@@ -177,7 +177,7 @@ cargo test --release
 ### dockctl: command-line control of widgets on Block
 
 `taskbar-dock\dockctl.exe <weather|bus|discord|media|all> <command> [args]` talks to a running
-widget and prints JSON. Only widgets on Block answer (weather now; the others once ported); one
+widget and prints JSON. Only widgets on Block answer (weather and discord now; bus and media once ported); one
 that isn't is reported as `"absent": "running, not on Block yet"` or `"not running"`.
 For `all` that isn't an error. Exit code: 0 ok, 1 error / no reply, 2 usage.
 

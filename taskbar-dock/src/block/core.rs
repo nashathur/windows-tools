@@ -158,6 +158,23 @@ pub(crate) fn highlight(hover: bool, dragging: bool, hot: Hit, width: i32, heigh
     }
 }
 
+/// The tinted boxes under a strip with a brand tint ([`Content::tint`]), in drawing order (each
+/// goes under what is there, so the first one shows on top): the hovered button's box (its own
+/// tint, else the strip's) at hover strength, then the whole strip (inset) at rest or hover
+/// strength. As [`highlight`], no hover while dragged. (box, 0xRRGGBB, opacity); boxes with
+/// opacity 0 are left out.
+pub(crate) fn tints(strip: Tint, button: Option<Tint>, hover: bool, dragging: bool, hot: Hit, width: i32, height: i32, inset: i32) -> Vec<(Box4, u32, f32)> {
+    let hover = hover && !dragging;
+    let mut out = Vec::new();
+    if let (true, Hit::Button(_, b)) = (hover, hot) {
+        let t = button.unwrap_or(strip);
+        out.push((b, t.rgb, t.hover));
+    }
+    out.push(((0, inset, width, height - inset), strip.rgb, if hover { strip.hover } else { strip.rest }));
+    out.retain(|t| t.2 > 0.0);
+    out
+}
+
 /// Where the right-click panel goes: above the strip, or above the pointer `pt` without one.
 pub(crate) fn menu_anchor(strip: Option<Box4>, pt: (i32, i32)) -> Box4 {
     strip.unwrap_or((pt.0, pt.1, pt.0 + 1, pt.1 + 1))
@@ -483,6 +500,25 @@ mod tests {
         assert_eq!(highlight(true, false, COVER, 100, 48, 4), Some((0, 4, 100, 44)));
         assert_eq!(highlight(true, false, BTN, 100, 48, 4), Some((50, 4, 74, 28)), "a button: its own box");
         assert_eq!(highlight(true, true, Hit::Strip, 100, 48, 4), None, "not while dragged");
+    }
+
+    #[test]
+    fn tinted_boxes() {
+        let blurple = Tint { rgb: 0x5865F2, rest: 0.3, hover: 0.5 };
+        let red = Tint { rgb: 0xED4245, rest: 0.0, hover: 0.6 };
+        let whole = (0, 4, 100, 44);
+        // at rest: the whole strip, rest strength
+        assert_eq!(tints(blurple, None, false, false, Hit::Strip, 100, 48, 4), vec![(whole, 0x5865F2, 0.3)]);
+        // hovered: stronger
+        assert_eq!(tints(blurple, None, true, false, COVER, 100, 48, 4), vec![(whole, 0x5865F2, 0.5)]);
+        // a hovered button: its box first (on top), in its own tint
+        assert_eq!(tints(blurple, Some(red), true, false, BTN, 100, 48, 4), vec![((50, 4, 74, 28), 0xED4245, 0.6), (whole, 0x5865F2, 0.5)]);
+        // ... or the strip's when it has none
+        assert_eq!(tints(blurple, None, true, false, BTN, 100, 48, 4)[0], ((50, 4, 74, 28), 0x5865F2, 0.5));
+        // dragged: rest strength, no button box
+        assert_eq!(tints(blurple, Some(red), true, true, BTN, 100, 48, 4), vec![(whole, 0x5865F2, 0.3)]);
+        // a tint only on hover leaves nothing at rest
+        assert!(tints(red, None, false, false, Hit::Strip, 100, 48, 4).is_empty());
     }
 
     #[test]

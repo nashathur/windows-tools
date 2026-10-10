@@ -7,10 +7,12 @@
 //! - dock slot, order, drop, fit next to the taskbar's buttons ([`crate::dock`]), WinEvent hooks
 //! - left or right of the taskbar's buttons ([`Content::side`])
 //! - Explorer restarts, and the floating fallback when the taskbar can't be joined
-//! - hover highlight, button highlight boxes, the cover's hover / press feel
+//! - hover highlight, button highlight boxes (neutral, or the Content's brand colour:
+//!   [`Content::tint`]), the cover's hover / press feel
 //! - when the panel opens and closes ([`crate::panel::PanelBehaviour`]), one panel across widgets
 //! - the main (click / hover) panel's window (`shell.rs`): placed above the strip or the
-//!   pointer, faded in, closed on Esc or lost focus; the Content only sizes and draws it
+//!   pointer, faded in, resized while open ([`Ctx::resize_panel`]), closed on Esc or lost
+//!   focus; the Content only sizes and draws it
 //!   ([`Content::panel_size`], [`Content::panel_draw`]) and gets its mouse ([`Content::panel_mouse`])
 //! - the right-click panel with the standard rows (Show on taskbar, Compact mode, Start with
 //!   Windows, Edit settings…, Quit)
@@ -181,6 +183,17 @@ pub enum Hit {
     Cover(Box4),
 }
 
+/// A brand colour for the strip's highlight boxes ([`Content::tint`]), instead of Block's
+/// neutral one. Drawn under the Content's pixels with the shared highlight shape.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Tint {
+    /// 0xRRGGBB.
+    pub rgb: u32,
+    /// Opacity (0..1) at rest (0: only on hover) and while hovered.
+    pub rest: f32,
+    pub hover: f32,
+}
+
 /// Everything [`Content::measure`] and [`Content::draw`] need.
 #[derive(Clone, Copy, Debug)]
 pub struct Frame<'a> {
@@ -292,6 +305,7 @@ pub struct Ctx {
 pub(crate) enum Request {
     Redraw,
     RedrawPanel,
+    ResizePanel,
     Every(usize, u32),
     Stop(usize),
     OpenPanel,
@@ -307,6 +321,7 @@ impl std::fmt::Debug for Request {
         match self {
             Request::Redraw => write!(f, "Redraw"),
             Request::RedrawPanel => write!(f, "RedrawPanel"),
+            Request::ResizePanel => write!(f, "ResizePanel"),
             Request::Every(id, ms) => write!(f, "Every({id}, {ms})"),
             Request::Stop(id) => write!(f, "Stop({id})"),
             Request::OpenPanel => write!(f, "OpenPanel"),
@@ -335,6 +350,13 @@ impl Ctx {
     /// change repaints it anyway.
     pub fn redraw_panel(&mut self) {
         self.reqs.push(Request::RedrawPanel);
+    }
+
+    /// The open panel's size changed (discord: people joined or left): Block asks
+    /// [`Content::panel_size`] again, moves it by the same rule as when it opened (above the
+    /// strip, or the tray icon), no fade, and draws it again. Nothing if none is open.
+    pub fn resize_panel(&mut self) {
+        self.reqs.push(Request::ResizePanel);
     }
 
     /// Call [`Content::timer`] with `id` every `ms` (replaces a running one with the same id).
@@ -418,6 +440,14 @@ pub trait Content: AsAny + 'static {
 
     /// The cover's resting box (with its ring) as last drawn, for the hover / press feel.
     fn cover(&self) -> Option<Box4> {
+        None
+    }
+
+    /// The highlight's colour over `area`: [`Hit::Strip`] for the whole strip, a [`Hit::Button`]
+    /// for that button's box. None for the strip: Block's neutral highlight (the default). With a
+    /// strip tint, Block draws the hovered button's box (its tint, else the strip's) at `hover`,
+    /// then the whole strip at `rest` or `hover` (discord: always in a blurple box).
+    fn tint(&self, _area: Hit, _look: &Look) -> Option<Tint> {
         None
     }
 
