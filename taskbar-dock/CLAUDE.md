@@ -12,7 +12,7 @@ hooks; `fit` next to the taskbar's buttons: narrow, compact, hide) · icons (tas
 read by the leader only) · panel (`PanelBehaviour` hover/click/pin, `Fade`, `place`) · menu_panel (right-click panel:
 rows, switches, `run` like TrackPopupMenu) · strip (`Motion`: glide, drag,
 zoom, compact resize animation; `Limits`; `keep_right_edge`; `move_strip`; `client_pos`) · draw (corners: `shape_cover`, `round_rect`, `fill_round`, `card_radius`, `concentric`; `background_in`, `background_rect`, `button_box`, `centered_box`, `contains`, `grow_box`, `grow_pixels`, `tint_box`, `progress_ring`) · emoji (colour emoji via Direct2D + DirectWrite: `render`, `fit_over` into a strip's icon box, `flatten` for a GDI panel; GDI draws emoji in one colour) · badge · anim
-(`pulse`, easing, `Feel`: cover hover/press size) · marquee (scrolling text) · window (`raise`, `find`, `exe_path`: bring an app's window to the front).
+(`pulse`, easing, `Feel`: cover hover/press size) · marquee (scrolling text) · window (`raise`, `find`, `exe_path`: bring an app's window to the front) · ctl (dockctl's command format; `block/remote.rs` answers it, `src/bin/dockctl.rs` sends it).
 block (plan\PLAN.md; used by weather since step 3): the strip window and all its behaviour; a
 widget gives a `Spec` and a `Content` and calls `block::run`. `mod.rs` API (Spec, Content, Ctx requests
 applied after the borrow incl. `toggle_panel`/`open_menu` for a tray icon (no strip needed: the panel
@@ -79,6 +79,18 @@ mirrored in the others. Status 2026-10-09: all four widgets have all five. Bus, 
   other through their WinEvent hooks (~7 restacks/s, measured 2026-10-09) and every strip
   flickered now and then. Probe: `tools\_tmp\watch_z.ps1` (prints restacks; 0 at rest).
 - Read files by section (grep the `// ----` headers or `fn name`, then read that range), not whole.
+
+## Testing (prefer in this order)
+1. Unit tests (pure logic in the library: `block/core.rs`, `ctl.rs`, `panel.rs`, …).
+2. **dockctl** for widgets on Block (weather; the others after their ports):
+   `taskbar-dock\dockctl.exe <widget|all> state|panel …|menu …|tray click …|set|get|log|redraw|quit|simulate …`
+   (README.md "Testing"). It runs commands through Block's own paths in the running widget, so
+   settings, logs and state are the REAL `%APPDATA%`. Use it instead of `_tmp\real.ps1` for the
+   widget's settings and log, and instead of mouse clicks for opening panels and menus and
+   flipping switches. `scripts\restart_explorer.ps1` restarts Explorer (no keystrokes).
+3. Logs and geometry scripts that print numbers (`_tmp\real.ps1` for widgets not on Block yet).
+4. Screenshots: `local_widget_check` (click / rightclick go through dockctl for Block widgets:
+   no mouse moved), only where pixels matter.
 
 ## UI: rounded corners (rule; reasoning and table in README.md "Corner design")
 Modelled on Apple's hardware/UI: the closer a surface is to the hand, the rounder it is.

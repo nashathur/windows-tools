@@ -3,6 +3,9 @@
 //! 4). Every handler borrows the state briefly, never across a Win32 call that can send
 //! messages, and carries out the Content's requests after the borrow ([`apply`]).
 
+#[path = "remote.rs"]
+mod remote;
+
 use super::core::{self, Core, Route, Up};
 use super::place;
 use super::*;
@@ -287,10 +290,11 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         }
         WM_SETTINGCHANGE | WM_DISPLAYCHANGE | WM_DPICHANGED => {
             // theme, scaling, time format or another Windows setting changed: follow it now
-            refresh_look();
+            refresh_look(false);
             redraw();
             DefWindowProcW(hwnd, msg, wp, lp)
         }
+        WM_COPYDATA => remote::on_copydata(wp, lp),
         WM_DESTROY => {
             PostQuitMessage(0);
             0
@@ -303,10 +307,14 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             }
             if msg == tray::WM_TRAY {
                 match (lp as u32) & 0xFFFF {
-                    WM_LBUTTONUP => apply(vec![Request::TogglePanel]), // main panel at the pointer
-                    WM_RBUTTONUP => right_click(false),                 // right-click panel at the pointer
+                    WM_LBUTTONUP => tray_click(true),
+                    WM_RBUTTONUP => tray_click(false),
                     _ => {}
                 }
+                return 0;
+            }
+            if msg == remote::click_message() {
+                remote::pending_click();
                 return 0;
             }
             if msg >= WM_USER {
@@ -362,6 +370,16 @@ unsafe extern "system" fn strip_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
             0
         }
         _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+
+/// A click on the tray icon: left opens the main panel, right the right-click panel, both at
+/// the pointer.
+fn tray_click(left: bool) {
+    if left {
+        apply(vec![Request::TogglePanel]);
+    } else {
+        right_click(false);
     }
 }
 
@@ -1013,17 +1031,8 @@ fn float_watch() {
 /// Every second: follows the look and the settings file, keeps the strip alive and in place
 /// (backup for the hooks; re-asserts the z-order), re-hooks restarted processes.
 fn watch() {
-    refresh_look();
-    let m = settings::mtime();
-    if let Some(Some(section)) = st(|s| (s.settings_mtime != m).then_some(s.spec.section)) {
-        let (compact, show) = (read_bool(section, COMPACT_KEY, false), read_bool(section, SHOW_KEY, true));
-        st(|s| {
-            s.settings_mtime = m;
-            s.core.compact = compact;
-            s.core.show = show;
-        });
-        call(|c, ctx| c.settings_changed(ctx));
-    }
+    refresh_look(false);
+    follow_settings();
     if let Some(strip) = st(|s| s.strip).filter(|h| *h != 0) {
         if unsafe { IsWindow(strip) } == 0 {
             st(|s| s.strip = 0);
@@ -1035,11 +1044,26 @@ fn watch() {
     update_hooks();
 }
 
-/// Re-reads the shared style and Windows' settings; tells the Content and the panel if changed.
-fn refresh_look() {
+/// The settings file changed (an edit, or dockctl's `set`): Block's keys, then the widget.
+fn follow_settings() {
+    let m = settings::mtime();
+    if let Some(Some(section)) = st(|s| (s.settings_mtime != m).then_some(s.spec.section)) {
+        let (compact, show) = (read_bool(section, COMPACT_KEY, false), read_bool(section, SHOW_KEY, true));
+        st(|s| {
+            s.settings_mtime = m;
+            s.core.compact = compact;
+            s.core.show = show;
+        });
+        call(|c, ctx| c.settings_changed(ctx));
+    }
+}
+
+/// Re-reads the shared style and Windows' settings; tells the Content and the panel if changed
+/// (`force`: even if not, for dockctl's `simulate look-changed`).
+fn refresh_look(force: bool) {
     let new = Look::current();
     let Some((changed, panel)) = st(|s| {
-        let changed = s.look != new;
+        let changed = force || s.look != new;
         s.look = new;
         (changed, s.panel)
     }) else { return };

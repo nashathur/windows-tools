@@ -38,11 +38,15 @@ pub(crate) struct App {
     look: Look,
 }
 
+fn log_file() -> std::path::PathBuf {
+    taskbar_dock::settings::dir().join("taskbar-weather.log")
+}
+
 /// Appends a line to taskbar-weather.log in the settings folder.
 pub(crate) fn log(line: &str) {
     use std::io::Write;
     let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
-    let path = taskbar_dock::settings::dir().join("taskbar-weather.log");
+    let path = log_file();
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "{:04}-{:02}-{:02} {:02}:{:02}:{:02} {line}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
     }
@@ -156,6 +160,7 @@ fn main() {
     spec.mutex = "Local\\TaskbarWeather.SingleInstance".into();
     spec.float = Float::Off; // as before: nothing shows until the taskbar can be joined
     spec.panel = Some(flyout::panel);
+    spec.log_file = Some(log_file());
     let app = App {
         main: 0,
         cfg: Config::load(),

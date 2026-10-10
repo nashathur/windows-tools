@@ -111,6 +111,8 @@ pub struct Spec {
     /// it. `Close` destroys it. The widget reports a close of its own (lost focus, Esc) with
     /// [`panel_closed`], and a right click on it with [`right_click_on_panel`].
     pub panel: Option<fn(PanelCmd) -> isize>,
+    /// The widget's log file, for dockctl's `log` (None: dockctl says there is none).
+    pub log_file: Option<std::path::PathBuf>,
 }
 
 impl Spec {
@@ -129,6 +131,7 @@ impl Spec {
             compact_when_crowded: true,
             stretch: false,
             panel: None,
+            log_file: None,
         }
     }
 }

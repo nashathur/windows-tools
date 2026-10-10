@@ -847,6 +847,24 @@ user32.IsWindowVisible.argtypes = [wintypes.HWND]
 user32.GetClassNameW.argtypes = [wintypes.HWND, ctypes.c_wchar_p, ctypes.c_int]
 
 
+DOCKCTL = Path(__file__).resolve().parent.parent / "taskbar-dock" / "dockctl.exe"
+
+
+def dockctl(widget: str, *args: str) -> dict | None:
+    """dockctl's reply for a widget on Block (taskbar-dock\\dockctl.exe), None if the widget
+    isn't on Block, isn't running, or the command failed."""
+    name = next((n for n in ("weather", "bus", "discord", "media") if n in widget.lower()), None)
+    if not name or not DOCKCTL.exists():
+        return None
+    try:
+        r = subprocess.run([str(DOCKCTL), name, *args], capture_output=True, text=True,
+                           encoding="utf-8", timeout=15)
+        v = json.loads(r.stdout)
+    except Exception:
+        return None
+    return v if isinstance(v, dict) and v.get("ok") else None
+
+
 def layered_alpha(hwnd) -> int | None:
     """Alpha set by SetLayeredWindowAttributes, None if the window doesn't use it."""
     a, flags = ctypes.c_ubyte(), wintypes.DWORD()
@@ -1260,6 +1278,10 @@ def setup(mcp, chat, embed, index_dir: Path):
         - closes what it opened afterwards (left click: clicks the strip again; right click:
           Esc to the menu; hover: mouse put back) and says whether it closed. keep=True leaves
           it open.
+        - widgets on Block (dockctl answers, e.g. weather): click / rightclick go through
+          dockctl (`panel open` / `menu open`, closed with `panel close` / `menu close`): the
+          mouse isn't moved, x/y are ignored, and with the strip switched off the tray icon's
+          left click opens the panel. Hover still uses the mouse.
         baseline: "compare" (default: pixel diff against the saved baseline of the same
         window + state: changed %, changed box, and a _diff.png with changes in red; live
         values like time/temperature always differ), "save" (store this capture as the new
@@ -1271,7 +1293,9 @@ def setup(mcp, chat, embed, index_dir: Path):
         old_ctx = user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))  # per-monitor v2: real pixels
         try:
             wins = widget_windows(widget)
-            if not wins:
+            # a widget on Block opens its panels through dockctl: no mouse, and no strip needed
+            ctl = dockctl(widget, "state") if action in ("click", "rightclick") else None
+            if not wins and not ctl:
                 return f"No visible window of a process matching {widget!r} (is it running?)"
             report = []
             if action:
@@ -1280,6 +1304,29 @@ def setup(mcp, chat, embed, index_dir: Path):
                     return ("Refused: a panel or menu is already open, so a click could land in it "
                             "or be taken for its own:\n" + "\n".join("- " + describe(w) for w in already)
                             + "\nClose it first, or pass force=True.")
+            if ctl:
+                cmd = ("panel", "open") if action == "click" else ("menu", "open")
+                if not ctl["strip"]["shown"] and action == "click":
+                    cmd = ("tray", "click", "left")  # strip off: the tray icon opens it
+                before = {w["hwnd"] for w in already}
+                done = dockctl(widget, *cmd)
+                report.append(f"{action} via dockctl `{' '.join(cmd)}` (mouse not moved)"
+                              + ("" if done else ": FAILED"))
+                new, secs, settled = settle(before, wait)
+                me = widget.lower()
+                if not new:
+                    report.append(f"no panel opened (waited {secs:.1f} s)")
+                for w in new:
+                    report.append(f"opened: {describe(w)}, "
+                                  + (f"settled after {secs:.2f} s" if settled
+                                     else f"still changing after {secs:.1f} s"))
+                    if me not in Path(w["exe"]).stem.lower():
+                        report.append(f"WARNING: THIS PANEL BELONGS TO ANOTHER WIDGET ({w['exe']}), "
+                                      f"not {widget}")
+                wins = widget_windows(widget)
+                mine = {w["hwnd"] for w in wins}
+                wins += [w for w in new if w["hwnd"] not in mine]
+            elif action:
                 sx, sy, sw, sh = wins[0]["rect"]
                 px, py = (sw // 2 if x < 0 else x), (sh // 2 if y < 0 else y)
                 if not (0 <= px < sw and 0 <= py < sh):
@@ -1356,7 +1403,18 @@ def setup(mcp, chat, embed, index_dir: Path):
                                images=[str(tmp)])
                     info.append("  answer: " + " ".join(ans.split()))
                 lines += info
-            if action:
+            if ctl:
+                hw = {w["hwnd"] for w in new}
+                if keep:
+                    report.append("kept open (keep=True)" if new else "")
+                elif new:
+                    close = ("panel", "close") if action == "click" else ("menu", "close")
+                    dockctl(widget, *close)
+                    how = f"dockctl `{' '.join(close)}`"
+                    report.append(f"closed ({how})" if gone(hw, 2.0) else
+                                  f"NOT CLOSED after {how}: " + ", ".join(
+                                      describe(w) for w in new if user32.IsWindowVisible(w["hwnd"])))
+            elif action:
                 hw = {w["hwnd"] for w in new}
                 if keep:
                     report.append("kept open (keep=True)" if new else "")

@@ -26,12 +26,15 @@
 //! - [`block`]: the strip window with all its behaviour; a widget supplies a `Spec` and a
 //!   `Content` (plan\PLAN.md, step 2; not used by a widget yet).
 //!
+//! - [`ctl`]: the `dockctl` command format (command-line control of widgets on Block, for tests).
+//!
 //! See README.md for how to build a new widget with it.
 
 pub mod anim;
 pub mod badge;
 pub mod block;
 pub mod crash;
+pub mod ctl;
 pub mod dock;
 pub mod draw;
 pub mod emoji;

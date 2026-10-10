@@ -311,6 +311,30 @@ pub fn close() {
     }
 }
 
+/// The open menu panel's window and rows (for dockctl).
+pub fn rows() -> Option<(HWND, Vec<Row>)> {
+    with(|s| (s.hwnd, s.layout.rows.iter().map(|(_, r)| r.clone()).collect()))
+}
+
+/// Clicks a row of the open menu panel as the mouse does: a switch flips (the panel stays
+/// open), an action is chosen and closes it. False: no panel, or no such row.
+pub fn click(id: usize) -> bool {
+    let Some(Some((h, is_switch))) = with(|s| s.layout.rows.iter().find(|(_, r)| r.id == id).map(|(_, r)| (s.hwnd, r.switch.is_some())))
+    else {
+        return false;
+    };
+    unsafe {
+        if is_switch {
+            with(|s| s.flip = Some(id));
+            PostMessageW(h, WM_NULL, 0, 0); // wakes `run`'s loop, which flips it
+        } else {
+            with(|s| s.chosen = Some(id));
+            DestroyWindow(h);
+        }
+    }
+    true
+}
+
 fn class() -> *const u16 {
     static NAME: std::sync::OnceLock<Vec<u16>> = std::sync::OnceLock::new();
     let name = NAME.get_or_init(|| {

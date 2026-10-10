@@ -174,6 +174,49 @@ cargo test --release
 
 ## Testing
 
+### dockctl: command-line control of widgets on Block
+
+`taskbar-dock\dockctl.exe <weather|bus|discord|media|all> <command> [args]` talks to a running
+widget and prints JSON. Only widgets on Block answer (weather now; the others once ported); one
+that isn't is reported as `"absent": "running, not on Block yet"` or `"not running"`.
+For `all` that isn't an error. Exit code: 0 ok, 1 error / no reply, 2 usage.
+
+| Command | Does |
+|---|---|
+| `state` | pid, exe build time; strip (hwnd, rect, shown, visible_by_state, show_on_taskbar, compact, fit, floating, side), panel (open, pinned, focused, rect), menu (open, focused, rect), tray (shown, tip), look (theme, scale) |
+| `panel open\|close\|toggle` | the left-click panel, as a click on the strip does |
+| `menu open\|close` | the right-click panel |
+| `menu rows` | id, label, switch state of every row (of the open menu, or the one a right click would show) |
+| `menu click <id\|label>` | a row, as a click does: a switch flips and the menu stays open; opens the menu first if needed |
+| `tray click left\|right` | a click on the tray icon (error while it isn't shown) |
+| `set <key> <value>` / `get [key]` | the widget's settings section, written by the widget (`settings::update`) and followed at once; value is JSON or else text; secrets (`*key*`, `*token*`, …) print as `***` |
+| `log [n]` | the widget's log, last n lines (`Spec::log_file`) |
+| `redraw`, `quit` | as Block does them |
+| `simulate taskbar-restarted`, `simulate look-changed` | test only: Block's Explorer-restart path; re-read Windows' theme and tell the widget even if unchanged |
+
+How it works (`src\ctl.rs`, `src\block\remote.rs`, `src\bin\dockctl.rs`): dockctl finds the
+widget's hidden main window (`<strip class>Main`, owned by the widget's exe) and sends a
+`WM_COPYDATA`; Block runs the command through its own paths and replies with a `WM_COPYDATA` to
+dockctl's window. The widget does the reading and writing, so it's the real `%APPDATA%` even
+from a Claude session. Build: `cargo build --release --bin dockctl`, then copy
+`target\release\dockctl.exe` to `taskbar-dock\`.
+
+Examples:
+```
+dockctl weather state
+dockctl weather menu click "Compact mode"
+dockctl weather set show_on_taskbar false
+dockctl all state
+```
+
+`scripts\restart_explorer.ps1` restarts Explorer without keystrokes (the taskbar's own Exit
+Explorer message, then explorer.exe started through a one-off scheduled task). Use it with
+`dockctl … state` / `log` to check the Explorer-restart path for real.
+
+### Other rules
+
+- Prefer, in this order: unit tests, dockctl, logs and geometry scripts that print numbers,
+  screenshots (`local_widget_check`, which opens Block widgets' panels through dockctl).
 - Prefer unit tests for rules: layouts, timings and behaviour live in the library as plain functions so they can be tested without windows (see `panel.rs`, `badge.rs`, `draw.rs`).
 - On screen, measure instead of eyeballing: UI Automation gives the strip and tray button rectangles, and a screenshot of the taskbar gives pixel extents (that's how the clock baselines and the tray-icon box were found).
 - Mouse tests may move and click only on the widgets, their panels and their own menus. Find the windows first and stop if one isn't found or its rectangle looks wrong, so nothing is clicked by accident.
