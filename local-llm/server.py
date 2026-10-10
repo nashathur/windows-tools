@@ -71,17 +71,21 @@ def image_b64(img: str | bytes) -> str:
 
 def chat(prompt: str, system: str = "", json_mode: bool = False,
          think: bool = False, temperature: float = 0.2,
-         images: list[str | bytes] | None = None) -> str:
-    """Send one prompt (plus optional images: paths or bytes) to the local model and return its reply."""
+         images: list[str | bytes] | None = None, model: str = "", ctx: int = 0) -> str:
+    """Send one prompt (plus optional images: paths or bytes) to the local model and return its
+    reply. model/ctx override the defaults (e.g. the coding model in code_tools.py)."""
     user = {"role": "user", "content": prompt}
     if images:
         user["images"] = [image_b64(i) for i in images]
     messages = ([{"role": "system", "content": system}] if system else []) + [user]
-    body = {"model": MODEL, "messages": messages, "stream": False, "think": think,
-            "options": {"num_ctx": CTX, "temperature": temperature}}
+    body = {"model": model or MODEL, "messages": messages, "stream": False, "think": think,
+            "options": {"num_ctx": ctx or CTX, "temperature": temperature}}
     if json_mode:
         body["format"] = "json"
-    r = httpx.post(f"{HOST}/api/chat", json=body, timeout=600)
+    r = httpx.post(f"{HOST}/api/chat", json=body, timeout=900)
+    if r.status_code == 400 and "think" in r.text:  # model without thinking support
+        del body["think"]
+        r = httpx.post(f"{HOST}/api/chat", json=body, timeout=900)
     r.raise_for_status()
     return r.json()["message"]["content"].strip()
 
@@ -893,6 +897,10 @@ def local_status() -> str:
                        for m in ps) or "none"
     return f"Model in use: {MODEL}, ctx {CTX}\nInstalled: {inst}\nLoaded: {loaded}"
 
+
+import code_tools  # noqa: E402  code search, dependency docs, compile-checked patches, widget screenshots
+
+code_tools.setup(mcp, chat, embed, INDEX_DIR)
 
 if __name__ == "__main__":
     mcp.run()

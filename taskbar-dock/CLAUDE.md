@@ -11,7 +11,7 @@ system (Windows settings) · theme (design code: colours light/dark, `brand` all
 hooks; `fit` next to the taskbar's buttons: narrow, compact, hide) · icons (taskbar buttons via UIA,
 read by the leader only) · panel (`PanelBehaviour` hover/click/pin, `Fade`, `place`) · menu_panel (right-click panel:
 rows, switches, `run` like TrackPopupMenu) · strip (`Motion`: glide, drag,
-zoom, compact resize animation; `Limits`; `keep_right_edge`; `move_strip`; `client_pos`) · draw (corners: `shape_cover`, `round_rect`, `fill_round`, `card_radius`, `concentric`; `background_in`, `background_rect`, `button_box`, `centered_box`, `contains`, `grow_box`, `grow_pixels`, `tint_box`, `progress_ring`) · badge · anim
+zoom, compact resize animation; `Limits`; `keep_right_edge`; `move_strip`; `client_pos`) · draw (corners: `shape_cover`, `round_rect`, `fill_round`, `card_radius`, `concentric`; `background_in`, `background_rect`, `button_box`, `centered_box`, `contains`, `grow_box`, `grow_pixels`, `tint_box`, `progress_ring`) · emoji (colour emoji via Direct2D + DirectWrite: `render`, `fit_over` into a strip's icon box, `flatten` for a GDI panel; GDI draws emoji in one colour) · badge · anim
 (`pulse`, easing, `Feel`: cover hover/press size) · marquee (scrolling text) · window (`raise`, `find`, `exe_path`: bring an app's window to the front).
 Shared front end: all three widgets use `strip` (glide, drag, zoom) and `panel` (when the panel
 opens/closes, fade, placement); each widget only wires them to its own windows and timers.
@@ -48,7 +48,14 @@ mirrored in the others. Status 2026-10-09: all four widgets have all five. Bus, 
 - Library tests: `dev.ps1 -Lib` from any widget, or `cargo test --profile fast` here.
 - Big files: `main.rs` holds App state, window procedures and `main`; features live in modules
   (`use super::*;`, items `pub(crate)`). `scripts\split.sh` moves a line range into a module.
-- Before changing the library, back it up (`src_backup_YYYYMMDD`) and keep all widgets building.
+- Version control: `C:\Users\thurs\tools` is one git repo (since 2026-10-10; replaces the old
+  `src_backup_*` copies, which are git-ignored). Before changing the library, make sure the last good
+  state is committed (ask before committing), and keep all widgets building.
+- Local model help (MCP `local-llm`, free): `local_code_search` (find code by meaning across all
+  widgets), `local_docs` (windows-sys API/feature lookup for a widget crate), `local_patch`
+  (compile-checked mechanical edits, e.g. mirroring a change into the other widgets; review the
+  diff), `local_widget_check` (screenshot strip/panels, diff vs baseline). `sg` (ast-grep) for
+  exact structural search/rewrite.
 - Start with Windows: the `startup` list in settings.json (`startup::set/is_on`), started at
   sign-in by `taskbar-dock\taskbar-dock-start.exe` via the Startup-folder shortcut "Taskbar
   widgets". It then stays as a watchdog (restarts a crashed widget with growing waits; not after Quit or

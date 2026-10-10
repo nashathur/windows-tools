@@ -46,6 +46,10 @@ Don't run alongside Marker (book.py / convert.py): both need the GPU memory.
 | `local_video_frames` | frames at scene changes + even fill-ins, and contact sheets (16 numbered, time-stamped thumbnails per PNG) for Claude to view; default `<name>_frames\` next to the video; `start`/`end` to zoom in (no model) |
 | `local_describe_video` | transcript + vision descriptions of key frames (with nearby speech as context) → `<name>.timeline.md`, returns a summary |
 | `local_status` | model, installed models, VRAM use |
+| `local_code_search` | search a code project by meaning; one hit per fn / struct / impl method (tree-sitter), with file:line range; `full=N` returns the code of the top N |
+| `local_docs` | search a Rust crate's dependency APIs (windows-sys features enabled in the build, ureq, serde, chrono, …); an exact identifier is looked up in ALL windows-sys features → which feature it needs and whether it's on |
+| `local_patch` | small, mechanical edit by the coding model in a scratch git worktree, `cargo check` after each round, errors fed back; returns PASS/FAIL + diff (`D:\lp\last.patch`) |
+| `local_widget_check` | screenshot a running widget's windows (docked strip + open panels) → PNGs in `shots\`; pixel diff vs a saved baseline; optional hover/click first; optional vision question |
 
 PDF input works in every tool that takes a path (text layer via PyMuPDF; scanned PDFs have none, so convert them first).
 
@@ -64,6 +68,28 @@ PDF input works in every tool that takes a path (text layer via PyMuPDF; scanned
   `~\.cache\huggingface`. Change with env var `LOCAL_LLM_WHISPER` (e.g. `medium`).
 - Online videos (YouTube etc.) aren't downloaded by the server; download first, then
   point the tools at the file.
+
+### Code tools notes (`code_tools.py`, added 2026-10-10)
+
+- `C:\Users\thurs\tools` is one git repo (widgets, taskbar-dock, local-llm, pdf2md), so the
+  widgets' `../taskbar-dock` path dependencies also work in a worktree. `.gitignore` skips
+  `target\`, `src_backup*`, `*.bak*`, exes, logs.
+- **local_patch** uses the coding model `qwen2.5-coder:7b` at 32k context (`LOCAL_LLM_CODE_MODEL`,
+  `LOCAL_LLM_CODE_CTX`). Scratch lives in `D:\lp` (`LOCAL_LLM_SCRATCH`): `wt\` (worktree of the
+  current working tree, recreated each call at the same path so builds stay incremental),
+  `target\` (shared cargo target dir), `sccache\`, `last.patch`. The real files change only
+  with `apply=True` (after a clean `git apply --check`). Errors that already existed before
+  the edit are ignored. When a taskbar-dock file changes, every widget is checked too.
+- **local_docs** reads crate sources via `cargo metadata`. From `windows` it keeps only COM
+  interface methods when `windows-sys` is also used (the rest duplicates it); error-code
+  constants (HRESULT / WIN32_ERROR / NTSTATUS) are skipped in the meaning search.
+- **local_code_search / local_docs** indexes live in `index\` (`code_*`, `docs_*`).
+- **local_widget_check** finds strips as children of `Shell_TrayWnd` and panels as top-level
+  windows; captures are screen copies at real pixels (per-monitor DPI). `hover`/`click`/`rightclick`
+  move the real mouse (put back afterwards). Baselines in `shots\baseline\`.
+- Also installed for direct use by Claude: `sccache` and `ast-grep` (`sg`) via winget, both on PATH.
+  `ast-grep` does exact structural search/rewrite (e.g. `sg -p 'dock::slot($$$)' -l rust`), better
+  than any model when a pattern fits.
 
 ## Adding a tool
 
@@ -87,6 +113,8 @@ change `DEFAULT_MODEL` / `LOCAL_LLM_CTX` in `server.py`. Pull new models with
 ## Files
 
 - `server.py`: the MCP server
+- `code_tools.py`: the four code tools (registered by server.py)
+- `shots\`: local_widget_check screenshots and baselines (safe to delete)
 - `whisper_worker.py`: Whisper transcription, run by server.py in its own process
 - `_whisper\`: worker job/result files, selftest video (safe to delete)
 - `index\`: local_search caches (safe to delete; rebuilt on next search)
