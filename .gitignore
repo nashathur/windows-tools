@@ -1,0 +1,20 @@
+# build output
+target/
+*.exe
+*.pdb
+node_modules/
+
+# old manual backups (git replaces these)
+src_backup*/
+*.bak*
+
+# runtime files
+*.log
+*.zip
+local-llm/index/
+local-llm/_whisper/
+__pycache__/
+
+# scratch
+_tmp/
+thread.txt

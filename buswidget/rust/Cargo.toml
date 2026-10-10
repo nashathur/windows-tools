@@ -1,0 +1,42 @@
+[package]
+name = "buswidget"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+taskbar-dock = { path = "../../taskbar-dock" }   # shared settings, style, Windows settings, docking
+ureq = { version = "2", default-features = false }   # feeds are plain http: no TLS stack needed
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+csv = "1"
+serde_json = "1"
+chrono = "0.4"
+chrono-tz = "0.9"
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_Accessibility",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# Edit-loop profile for dev.ps1: tests always, the widget too with -Fast. No LTO, parallel
+# codegen and incremental, so a small change rebuilds in seconds. `release` stays the small final build.
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true

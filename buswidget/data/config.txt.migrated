@@ -1,0 +1,10 @@
+# Bus widget settings. Right-click the widget > Change stop… to pick another stop.
+# label = text above the times; dest = destination in the popup (empty = trip headsign)
+# badge_color / badge_text = RRGGBB colours of the line badge (empty = automatic)
+agency = UOV
+line = 30
+stop_code = 50002191
+label = Overvecht → Science Park
+dest = Science Park
+badge_color =
+badge_text =

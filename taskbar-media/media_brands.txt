@@ -1,0 +1,53 @@
+# Brand colours for taskbar media-widget tint
+# Format: name | match | colour | logo | source
+# Colours are either documented brand values or icon-derived tint approximations.
+# "neutral" is used for predominantly monochrome brands.
+# logo (for media without a cover): "app" = the installed app's own icon; a domain = the site's
+#   own icon, downloaded once into logos\ and refreshed monthly; or a full https URL to a PNG/ICO.
+# An optional "label=XX" in the source column sets the badge text shown when there's no logo.
+
+[apps]
+Spotify              | SpotifyAB.SpotifyMusic        | #1ED760 | app | https://developer.spotify.com/documentation/general/design-and-branding/
+Firefox              | 308046B0AF4A39CB; firefox   | #FF7139 | app | https://mozilla.design/firefox/logos-usage/
+Google Chrome        | chrome                       | #4285F4 | app | https://www.google.com/chrome
+Microsoft Edge       | msedge; MSEdge               | #097CCE | app | local icon
+Media Player         | Microsoft.ZuneMusic          | #F88F50 | app | local icon
+Windows Media Player | wmplayer                     | #F28434 | app | local icon
+VLC                  | vlc                          | #FF8800 | app | icon: https://code.videolan.org/videolan/vlc
+Apple Music          | AppleInc.AppleMusic          | #FA243C | app | https://www.apple.com/itunes/marketing-on-music/identity-guidelines.html
+Discord              | discord                      | #5865F2 | app | https://discord.com/branding
+
+[sites]
+# Music
+YouTube Music   | - YouTube Music                         | #FF0000 | music.youtube.com | https://partnermarketinghub.withgoogle.com/
+Spotify Web     | Spotify – Web Player; Spotify - Web Player | #1ED760 | open.spotify.com | https://developer.spotify.com/documentation/general/design-and-branding/
+SoundCloud      | SoundCloud                              | #FF5500 | soundcloud.com | https://developers.soundcloud.com/docs/api/buttons-logos
+Apple Music Web | - Apple Music; Apple Music               | #FA243C | music.apple.com | https://www.apple.com/itunes/marketing-on-music/identity-guidelines.html
+Deezer          | Deezer                                  | #A238FF | deezer.com | https://deezerbrand.com/document/37#/-/logo
+TIDAL           | TIDAL                                   | neutral | tidal.com | https://tidal.com/press
+Bandcamp        | Bandcamp                                | #408294 | bandcamp.com | https://bandcamp.com/buttons
+Mixcloud        | Mixcloud                                | #5000FF | mixcloud.com | https://www.mixcloud.com/about
+Audiomack       | Audiomack                               | #FFA200 | audiomack.com | https://styleguide.audiomack.com
+JOOX            | JOOX                                    | #00CB5E | joox.com | icon: https://static.joox.com/pc/prod/static/di/icons/icon-512x512.png
+
+# Video
+YouTube         | - YouTube                               | #FF0000 | youtube.com | https://www.youtube.com/howyoutubeworks/resources/brand-resources/
+Twitch          | - Twitch                                | #9146FF | twitch.tv | https://brand.twitch.tv
+Kick            | on Kick; - Kick                         | #53FC19 | kick.com | https://kick.com
+Netflix         | Netflix                                 | #E50914 | netflix.com | https://brand.netflix.com/en/assets/logos
+Disney+         | Disney+                                 | #1395A5 | disneyplus.com | icon: https://static-assets.bamgrid.com/product/disneyplus/favicons/
+Prime Video     | Prime Video                             | #0673F0 | primevideo.com | icon: https://m.media-amazon.com/images/G/01/digital/video/DVUI/favicons/favicon.png
+Vidio           | Vidio                                   | #FC2057 | vidio.com | icon: https://static-web.prod.vidiocdn.com/_next/static/icons/favicon.ico
+Viu             | - Viu; Viu                              | #FDBD2C | viu.com | icon: https://www.viu.com/ott/no-service/img/icons/viu.png
+WeTV            | WeTV                                    | #2DA8FA | wetv.vip | icon: https://vm.gtimg.cn/tencentvideo/m_wetv/images/logo512.png
+iQIYI           | iQIYI; iQ.com                          | #04CA56 | iq.com | icon: https://www.iqiyipic.com/lequ/20230706/icon57*57.png
+Vimeo           | on Vimeo; Vimeo                         | #1AB7EA | vimeo.com | https://press.vimeo.com/brand-guidelines
+Bilibili        | bilibili; 哔哩哔哩                        | #00A1D6 | bilibili.com | https://www.bilibili.com
+Dailymotion     | Dailymotion                             | neutral | dailymotion.com | https://careers.dailymotion.com
+
+# Social
+TikTok          | TikTok                                  | #F84064 | tiktok.com | icon accent (approximate)
+Instagram       | Instagram                               | #FF0069 | instagram.com | https://about.meta.com/brand/resources/instagram
+Facebook        | Facebook                                | #0866FF | facebook.com | https://about.meta.com/brand/resources/facebook/logo
+X               | / X                                     | neutral | x.com | https://x.com
+Reddit          | Reddit; : r/                           | #FF4500 | reddit.com | https://www.redditinc.com/brand

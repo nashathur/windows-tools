@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>taskbar-sysmon mockup</title>
+<style>
+body{background:#f3f3f3;color:#333;font-family:"Segoe UI",system-ui,sans-serif;margin:0;padding:24px;max-width:760px}
+.cap{font-size:12px;color:#666;margin:1.4rem 0 6px}
+.tb{background:#1c1c1c;height:48px;border-radius:8px;display:flex;align-items:center;padding:0 10px;gap:8px;color:#fff;overflow:hidden}
+.ico{width:24px;height:24px;border-radius:5px;background:#3a3a3a;flex:none}
+.strip{display:flex;gap:12px;align-items:center;height:40px;padding:0 8px;border-radius:6px}
+.strip:hover{background:#2e2e2e}
+.col{display:flex;flex-direction:column;justify-content:center;gap:2px;font-size:12px;line-height:15px;white-space:nowrap}
+.lb{color:#a8a8a8}
+.v{font-weight:600}
+.bx{display:block;border-radius:3px;background:#262626;outline:1px solid #4a4a4a;outline-offset:-1px}
+.tray{display:flex;align-items:center;gap:10px;font-size:12px;margin-left:6px}
+.clock{text-align:right;line-height:15px}
+.g2{display:grid;grid-template-columns:auto auto;column-gap:12px;font-size:12px;line-height:15px;white-space:nowrap}
+.pn{background:#2b2b2b;color:#fff;border-radius:8px;border:1px solid #3c3c3c;padding:12px;font-size:12px}
+.card{background:#323232;border-radius:6px;padding:8px 10px}
+.row{display:flex;justify-content:space-between;color:#c8c8c8;line-height:18px}
+.seg{display:flex;gap:2px;background:#232323;border-radius:5px;padding:2px}
+.seg span{padding:1px 8px;border-radius:4px;color:#a8a8a8;cursor:pointer}
+.seg span.on{background:#454545;color:#fff}
+.btn{border:1px solid #555;border-radius:5px;padding:2px 8px}
+.sw{width:30px;height:16px;border-radius:8px;background:#4cc2ff;position:relative;flex:none}
+.sw::after{content:"";position:absolute;right:3px;top:3px;width:10px;height:10px;border-radius:50%;background:#1c1c1c}
+.sw.off{background:transparent;border:1px solid #9a9a9a;box-sizing:border-box}
+.sw.off::after{left:3px;right:auto;top:2px;background:#9a9a9a}
+.mi{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-radius:5px;color:#e8e8e8}
+.mi:hover{background:#3a3a3a}
+.two{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:640px){.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="cap">1 · Full strip: sparklines in 0–100% boxes</div>
+<div class="tb">
+  <div class="ico"></div><div class="ico"></div><div class="ico"></div>
+  <div style="flex:1"></div>
+  <div class="strip">
+    <div class="col"><span><span class="lb">CPU</span> <span class="v" id="vC"></span></span><svg class="bx" width="62" height="14" id="sC"></svg></div>
+    <div class="col"><span><span class="lb">GPU</span> <span class="v" id="vG"></span></span><svg class="bx" width="62" height="14" id="sG"></svg></div>
+    <div class="col"><span><span class="lb">RAM</span> <span class="v" id="vR"></span></span><svg class="bx" width="62" height="14" id="sR"></svg></div>
+    <div class="col" style="min-width:76px"><span><span style="color:#5DCAA5">↓</span> <span id="vD"></span></span><span><span style="color:#F0997B">↑</span> <span id="vU"></span></span></div>
+  </div>
+  <div class="tray"><span>⌃</span><div class="clock">14:32<br>10/10/2026</div></div>
+</div>
+
+<div class="cap">Threshold colours: amber above 80%, red above 95% (value and sparkline together)</div>
+<div class="tb">
+  <div style="flex:1"></div>
+  <div class="strip">
+    <div class="col"><span><span class="lb">CPU</span> <span class="v" style="color:#EF9F27">86%</span></span><svg class="bx" width="62" height="14" id="wC"></svg></div>
+    <div class="col"><span><span class="lb">GPU</span> <span class="v" style="color:#F0605F">99%</span></span><svg class="bx" width="62" height="14" id="wG"></svg></div>
+    <div class="col"><span><span class="lb">RAM</span> <span class="v">71%</span></span><svg class="bx" width="62" height="14" id="wR"></svg></div>
+    <div class="col" style="min-width:76px"><span><span style="color:#5DCAA5">↓</span> 48.6 MB/s</span><span><span style="color:#F0997B">↑</span> 2.1 MB/s</span></div>
+  </div>
+</div>
+
+<div class="cap">2 · Compact strip: CPU / GPU left, RAM / network right</div>
+<div class="tb">
+  <div class="ico"></div>
+  <div style="flex:1"></div>
+  <div class="strip"><div class="g2">
+    <span><span class="lb">C</span> <span id="cC"></span></span><span><span class="lb">R</span> <span id="cR"></span></span>
+    <span><span class="lb">G</span> <span id="cG"></span></span><span><span style="color:#5DCAA5">↓</span><span id="cD"></span></span>
+  </div></div>
+  <div class="tray"><div class="clock">14:32<br>10/10/2026</div></div>
+</div>
+
+<div class="two">
+<div>
+<div class="cap">3 · Panel (same for hover and left-click)</div>
+<div class="pn">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <span style="font-size:13px">System</span>
+    <span style="display:flex;gap:8px;align-items:center">
+      <span class="seg" id="seg"><span class="on" data-n="60">1m</span><span data-n="300">5m</span><span data-n="3600">1h</span></span>
+      <span class="btn">↗ Task Manager</span>
+    </span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+    <div class="card"><div class="row"><span style="color:#fff">CPU · Ryzen 5 5600X</span><span style="color:#85B7EB">23%</span></div><svg class="bx" width="100%" height="36" viewBox="0 0 150 36" preserveAspectRatio="none" id="pC"></svg><div style="display:grid;grid-template-columns:repeat(12,1fr);gap:2px;height:16px;align-items:end;margin:4px 0" id="cores"></div><div class="row"><span>Clock</span><span>4.4 GHz</span></div><div class="row"><span>Temp</span><span>54 °C</span></div></div>
+    <div class="card"><div class="row"><span style="color:#fff">GPU · RTX 3070</span><span style="color:#97C459">41%</span></div><svg class="bx" width="100%" height="36" viewBox="0 0 150 36" preserveAspectRatio="none" id="pG"></svg><div class="row"><span>VRAM</span><span>5.1 / 8.0 GB</span></div><div class="row"><span>Temp · power</span><span>64 °C · 142 W</span></div><div class="row"><span>Clock · fan</span><span>1.79 GHz · 48%</span></div></div>
+    <div class="card"><div class="row"><span style="color:#fff">Memory</span><span style="color:#AFA9EC">62%</span></div><svg class="bx" width="100%" height="36" viewBox="0 0 150 36" preserveAspectRatio="none" id="pR"></svg><div class="row"><span>In use</span><span>19.8 / 32 GB</span></div><div class="row"><span>Committed</span><span>24.1 / 37 GB</span></div><div class="row"><span>Cached</span><span>8.6 GB</span></div></div>
+    <div class="card"><div class="row"><span style="color:#fff">Network · Wi-Fi</span><span style="color:#5DCAA5">1.2 MB/s</span></div><svg class="bx" width="100%" height="36" viewBox="0 0 150 36" preserveAspectRatio="none" id="pN"></svg><div class="row"><span>Link</span><span>866 Mbps</span></div><div class="row"><span>Session ↓ / ↑</span><span>3.4 GB / 210 MB</span></div></div>
+  </div>
+</div>
+</div>
+<div>
+<div class="cap">4 · Right-click panel</div>
+<div class="pn" style="padding:6px">
+  <div class="mi"><span>Compact mode</span><span class="sw off"></span></div>
+  <div class="mi"><span>Start with Windows</span><span class="sw"></span></div>
+  <div style="border-top:1px solid #3c3c3c;margin:4px 0"></div>
+  <div class="mi"><span>Open Task Manager</span></div>
+  <div class="mi"><span>Edit settings…</span></div>
+  <div class="mi"><span>Quit</span></div>
+</div>
+</div>
+</div>
+
+<p class="cap">Mockup with random data. Hardware values (12 threads, 32 GB, Wi-Fi 866 Mbps) are placeholders.</p>
+
+<script>
+function walk(n,b,v){var a=[],x=b;for(var i=0;i<n;i++){x=Math.max(2,Math.min(98,x+(Math.random()-.5)*v));a.push(x)}return a}
+function spark(id,data,col,W,H){var s=document.getElementById(id);if(!s)return;W=W||+s.getAttribute('width');H=H||+s.getAttribute('height');var st=(W-2)/(data.length-1);var pts=data.map(function(v,i){return (1+i*st).toFixed(1)+','+(H-1-(v/100)*(H-2)).toFixed(1)}).join(' ');
+s.innerHTML='<line x1="1" x2="'+(W-1)+'" y1="'+(H/2)+'" y2="'+(H/2)+'" stroke="#3a3a3a" stroke-width="0.6" stroke-dasharray="2 2"/><polygon points="1,'+(H-1)+' '+pts+' '+(W-1)+','+(H-1)+'" fill="'+col+'" fill-opacity="0.28"/><polyline points="'+pts+'" fill="none" stroke="'+col+'" stroke-width="1.2"/>'}
+function set(id,t){var e=document.getElementById(id);if(e)e.textContent=t}
+var S={C:walk(30,23,14),G:walk(30,41,20),R:walk(30,62,3)},range=60;
+function strip(){spark('sC',S.C,'#85B7EB');spark('sG',S.G,'#97C459');spark('sR',S.R,'#AFA9EC');
+var c=Math.round(S.C[29])+'%',g=Math.round(S.G[29])+'%',r=Math.round(S.R[29])+'%',d=(Math.random()*3).toFixed(1);
+set('vC',c);set('vG',g);set('vR',r);set('cC',c);set('cG',g);set('cR',r);set('vD',d+' MB/s');set('cD',d+'M');set('vU',Math.round(40+Math.random()*90)+' KB/s')}
+function panel(){var k=Math.min(range,150);spark('pC',walk(k,23,14),'#85B7EB',150,36);spark('pG',walk(k,41,20),'#97C459',150,36);spark('pR',walk(k,62,3),'#AFA9EC',150,36);
+var d=walk(k,30,25),u=walk(k,8,6),pt=function(a){return a.map(function(v,i){return (1+i*148/(k-1)).toFixed(1)+','+(35-v*.34).toFixed(1)}).join(' ')};
+document.getElementById('pN').innerHTML='<polyline points="'+pt(d)+'" fill="none" stroke="#5DCAA5" stroke-width="1.2"/><polyline points="'+pt(u)+'" fill="none" stroke="#F0997B" stroke-width="1.2"/>';
+var h='';for(var i=0;i<12;i++)h+='<div style="background:#85B7EB;height:'+Math.round(10+Math.random()*90)+'%;border-radius:1px"></div>';document.getElementById('cores').innerHTML=h}
+document.querySelectorAll('#seg span').forEach(function(b){b.onclick=function(){document.querySelectorAll('#seg span').forEach(function(x){x.classList.remove('on')});b.classList.add('on');range=+b.dataset.n;panel()}});
+spark('wC',walk(30,80,10),'#EF9F27');spark('wG',walk(30,95,5),'#F0605F');spark('wR',walk(30,71,3),'#AFA9EC');
+strip();panel();setInterval(function(){for(var k in S){S[k].shift();S[k].push(Math.max(2,Math.min(98,S[k][28]+(Math.random()-.5)*(k=='R'?3:k=='G'?20:14))))}strip()},1000);
+</script>
+</body>
+</html>
