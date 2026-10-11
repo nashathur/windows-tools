@@ -219,9 +219,10 @@ pub fn tint_box(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), (r, g, 
     }
 }
 
-/// [`background_in`] with the hover highlight over any rectangle `hover` = (left, top, right,
-/// bottom); None = no highlight. The whole strip uses (0, inset, width, height - inset); a
-/// button uses [`button_box`].
+/// The background under everything: almost transparent (alpha 1 keeps the whole strip
+/// clickable), with a rounded highlight like the taskbar's buttons (white ~10% on a dark taskbar,
+/// black ~6% on a light one) over the rectangle `hover` = (left, top, right, bottom); None = no
+/// highlight. The whole strip uses (0, inset, width, height - inset); a button uses [`button_box`].
 pub fn background_rect(buf: &mut [u32], width: i32, height: i32, hover: Option<(i32, i32, i32, i32)>, light: bool, radius: f32) {
     let (bg_c, bg_a): (u32, u32) = match (hover.is_some(), light) {
         (true, false) => (255, 0x1a),

@@ -14,14 +14,14 @@ Modelled on Apple's hardware/UI: the closer a surface is to the hand, the rounde
    (menu rows: `PANEL_RADIUS` − inset). Never give a child the parent's radius.
 3. **One source of radii:** `Look` (`control_radius`) via `draw::highlight_shape` /
    `card_radius` / `concentric`; widgets never hard-code a radius. Multiply by DPI `scale`,
-   round to whole px; `shape_cover`/`background_in` clamp to min(w, h) ÷ 2. One
+   round to whole px; `shape_cover`/`background_rect` clamp to min(w, h) ÷ 2. One
    `draw::fill_round` (anti-aliased, alpha) for panel pixels; don't copy it into a widget.
    Known gap: weather's bars and discord's buttons are GDI `RoundRect` (not anti-aliased,
    drawn on a plain DC); the radius is shared, the edge is not smooth.
 4. **Panels:** top-level popups get `DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND` (as
    `menu_panel`/`popup` do). Never `DWMWCP_DONOTROUND`, never a custom `SetWindowRgn` (jagged,
    no anti-aliasing).
-5. **Drawn shapes** go through `draw::round_rect` / `background_in` (anti-aliased coverage, so
+5. **Drawn shapes** go through `draw::round_rect` / `background_rect` (anti-aliased coverage, so
    the edge fades instead of stepping). Borders and rings follow the same shape (`progress_ring`
    runs along the rounded outline); inset a stroke by half its width.
 6. **Radius above 8 px (`draw::SMOOTH_ABOVE`):** a plain circular arc shows where the straight
