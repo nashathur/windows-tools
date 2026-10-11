@@ -8,6 +8,8 @@
 #            running is left stopped)
 #   -Fast    build the widget with the `fast` profile (no LTO, incremental: rebuilds in seconds,
 #            exe a bit larger) instead of `release`. Tests always use `fast`.
+#   -NoSmoke skip the smoke check after a restart (dockctl `state`, `do help`, `do now` if the
+#            widget has it: read-only commands only; then the same pid must still be running)
 # Before building, the theme lint (tests\theme_lint.rs) checks the widget's src for raw colours,
 # font names and literal font sizes (they come from taskbar_dock::theme).
 param(
@@ -15,7 +17,7 @@ param(
     [Parameter(Mandatory)] [string]$Name,
     [Parameter(Mandatory)] [string]$Deploy,
     [string]$Log,
-    [switch]$NoTest, [switch]$NoRestart, [switch]$Lib, [switch]$Start, [switch]$Fast
+    [switch]$NoTest, [switch]$NoRestart, [switch]$Lib, [switch]$Start, [switch]$Fast, [switch]$NoSmoke
 )
 # Continue: PS 5.1 turns cargo's stderr (warnings) into errors, which 'Stop' would throw on
 $ErrorActionPreference = 'Continue'
@@ -108,3 +110,41 @@ Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyCo
 $p = Get-Process $Name -ErrorAction SilentlyContinue
 if ($p) { Write-Output ("restarted {0:HH:mm:ss}, pid {1}" -f (Get-Date), $p.Id) } else { Write-Output 'NOT RUNNING after start' }
 if ($Log -and (Test-Path $Log)) { Get-Content $Log | Select-Object -Skip $lines | ForEach-Object { "log: $_" } }
+if (-not $p) { exit 1 }
+if ($NoSmoke) { exit 0 }
+
+# Smoke check: the restarted widget answers dockctl through Block's real paths, and is still the
+# same process afterwards (widgets build with panic = "abort"; the launcher would restart a
+# crashed one under a new pid). Read-only commands only: every widget's `do now` reports what it
+# already has (no network, no timetable, no playback).
+$dockctl = Join-Path $PSScriptRoot '..\dockctl.exe'
+$target = switch ($Name) { 'buswidget' { 'bus' } default { $Name -replace '^taskbar-', '' } }
+function Ask-Widget([string[]]$cmd) {
+    $out = & $dockctl @cmd 2>&1 | Out-String
+    try { $out | ConvertFrom-Json } catch { [pscustomobject]@{ ok = $false; error = "not JSON: $($out.Trim())" } }
+}
+function Smoke-Failed([string]$why) { Write-Output "SMOKE FAILED: $why"; exit 1 }
+# Block may still be setting up its main window: give `state` a moment
+for ($i = 0; ; $i++) {
+    $state = Ask-Widget @($target, 'state')
+    if ($state.ok) { break }
+    if ($i -ge 10) { Smoke-Failed "state: $($state.error)$($state.absent)" }
+    Start-Sleep -Milliseconds 200
+}
+$help = Ask-Widget @($target, 'do', 'help')
+if (-not $help.ok) { Smoke-Failed "do help: $($help.error)" }
+$names = @($help.commands | ForEach-Object { $_.name })
+$checked = "state, do help ($($names.Count) commands)"
+if ($names -contains 'now') {
+    # an error reply is fine (media with nothing playing says so); no answer or a gone widget isn't
+    $now = Ask-Widget @('--timeout', '10', $target, 'do', 'now')
+    if (-not $now.ok -and ($now.absent -or "$($now.error)" -match '^(no answer within|not JSON)')) {
+        Smoke-Failed "do now: $($now.error)$($now.absent)"
+    }
+    $checked += ', do now'
+}
+$after = Get-Process -Id $p.Id -ErrorAction SilentlyContinue
+if (-not $after -or $after.ProcessName -ne $Name) { Smoke-Failed "pid $($p.Id) is gone after the checks (crashed? see the log)" }
+Write-Output "smoke ok: $checked"
+# not dockctl's last exit code (an error reply to `do now` is fine)
+exit 0

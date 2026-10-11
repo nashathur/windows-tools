@@ -56,8 +56,10 @@ drawing, its menu rows).
 
 ## Working on any widget
 - Build/test/restart with the widget's `dev.ps1` (wraps `scripts\dev.ps1`): prints only errors,
-  warnings, test totals and new log lines. Switches: `-NoTest -NoRestart -Lib -Start -Fast`.
-  A widget that wasn't running is left stopped unless `-Start`.
+  warnings, test totals and new log lines. Switches: `-NoTest -NoRestart -Lib -Start -Fast -NoSmoke`.
+  A widget that wasn't running is left stopped unless `-Start`. After a restart it runs a smoke
+  check (dockctl `state`, `do help`, `do now`; read-only), then checks that the same pid still
+  runs; "SMOKE FAILED" exits 1.
 - Use `-Fast` in the edit loop (`[profile.fast]`: release without LTO, incremental; whole dev.ps1
   ~1 s vs ~14 s); build the small full-LTO `release` exe once at the end. Tests always run in
   `fast`. Measured 2026-10-09: `rust-lld` and splitting crates gain nothing (the time is LTO).
