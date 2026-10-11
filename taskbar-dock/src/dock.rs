@@ -31,6 +31,9 @@ pub const PROP_SQUEEZED: &str = "TaskbarDock.Squeezed";
 pub const PROP_FULL: &str = "TaskbarDock.FullWidth";
 pub const PROP_MIN: &str = "TaskbarDock.MinWidth";
 pub const PROP_STRETCH: &str = "TaskbarDock.Stretch";
+/// While a member's width animates (compact switch): the width it's drawn at right now
+/// ([`publish_drawn`]). The others place themselves by it, frame by frame ([`Slot::follow`]).
+pub const PROP_DRAWN: &str = "TaskbarDock.DrawnWidth";
 /// The right edge of the taskbar's own buttons, published by the member that reads them.
 pub const PROP_ICONS: &str = "TaskbarDock.IconsRight";
 /// While dragged: the slot it would drop into (widgets staying to its right), decided by the
@@ -64,7 +67,7 @@ pub unsafe fn mark_member(h: HWND) {
 
 /// Leaves the stack (e.g. a widget moved to the other end of the taskbar).
 pub unsafe fn leave(h: HWND) {
-    for p in [PROP_MEMBER, PROP_SQUEEZED, PROP_FULL, PROP_MIN, PROP_STRETCH, PROP_ICONS, PROP_SLOT] {
+    for p in [PROP_MEMBER, PROP_SQUEEZED, PROP_FULL, PROP_MIN, PROP_STRETCH, PROP_DRAWN, PROP_ICONS, PROP_SLOT] {
         RemovePropW(h, wide(p).as_ptr());
     }
 }
@@ -140,6 +143,19 @@ pub unsafe fn publish_widths(h: HWND, s: Size) {
     }
 }
 
+/// While this member's width animates (compact switch): the width it's drawn at on this frame;
+/// None on the last frame. Call before the window takes the new width, so the others, placing
+/// themselves on the move it causes, already see it. The fit still goes by [`publish_widths`].
+/// True if it changed (cleared: [`notify`], as the window may not change on that frame).
+pub unsafe fn publish_drawn(h: HWND, w: Option<i32>) -> bool {
+    let w = w.filter(|w| *w > 0);
+    if get_num(h, PROP_DRAWN) == w {
+        return false;
+    }
+    set_num(h, PROP_DRAWN, w);
+    true
+}
+
 /// Hidden for lack of room ([`Fit::Hidden`]): it stays in the stack's order while hidden, and
 /// the others keep its widths in the fit, so it comes back when there's room again.
 pub unsafe fn set_squeezed(h: HWND, on: bool) {
@@ -187,6 +203,8 @@ pub struct Child {
     pub squeezed: bool,
     /// A member's widths for the fit ([`publish_widths`]).
     pub size: Size,
+    /// A member whose width is animating: its width right now ([`publish_drawn`]).
+    pub drawn: Option<i32>,
 }
 
 /// The taskbar's visible child windows, plus squeezed-out members. While the action center is
@@ -220,6 +238,7 @@ pub unsafe fn children(tb: HWND) -> Vec<Child> {
                 dragging: GetPropW(h, dragging.as_ptr()) != 0,
                 squeezed: is_squeezed,
                 size: if is_member { size_of(h, rc) } else { Size::fixed(rc.right - rc.left) },
+                drawn: if is_member { get_num(h, PROP_DRAWN).filter(|w| *w > 0) } else { None },
             })
         })
         .collect()
@@ -541,12 +560,14 @@ pub struct Member {
 }
 
 /// The stack as seen by one member (`me`): the members not being dragged and not squeezed out,
-/// in dock order, at their fitted widths; every member with its fit; the obstacles; and a
-/// member being dragged, if any.
+/// in dock order, at their widths for placing ([`placed_width`]); every member with its fit; the
+/// obstacles; and a member being dragged, if any.
 pub struct Layout {
     pub hwnds: Vec<HWND>,
     pub classes: Vec<String>,
     pub widths: Vec<i32>,
+    /// Another member in the stack is changing width ([`publish_drawn`]): follow it.
+    pub resizing: bool,
     pub ranks: Vec<usize>,
     pub obstacles: Vec<RECT>,
     /// Another member being dragged: (window, width, left, right, rank in the saved order).
@@ -555,6 +576,14 @@ pub struct Layout {
     pub all: Vec<Member>,
     /// The taskbar's buttons' right edge, if known.
     pub icons: Option<i32>,
+}
+
+/// The width a member takes in the stack's placement: while its width animates, the width it's
+/// drawn at ([`publish_drawn`]), so its neighbours stay flush on every frame; otherwise its fitted
+/// width. (The fit itself always goes by the published widths: who narrows or hides doesn't
+/// change in the middle of an animation.)
+pub fn placed_width(fit: Fit, size: Size, drawn: Option<i32>) -> i32 {
+    drawn.filter(|w| *w > 0).unwrap_or(fit.width(size.full))
 }
 
 /// `mine`: my sizes (None: as I published them).
@@ -582,7 +611,8 @@ pub unsafe fn layout(tb: HWND, me: HWND, mine: Option<Size>, boundary: i32, gap:
     Layout {
         hwnds: stack.iter().map(|&i| members[i].hwnd).collect(),
         classes: stack.iter().map(|&i| members[i].class.clone()).collect(),
-        widths: stack.iter().map(|&i| fits[i].width(sizes[i].full)).collect(),
+        widths: stack.iter().map(|&i| placed_width(fits[i], sizes[i], members[i].drawn)).collect(),
+        resizing: stack.iter().any(|&i| members[i].hwnd != me && members[i].drawn.is_some()),
         ranks: stack.iter().map(|&i| rank(&order, &members[i].class)).collect(),
         obstacles,
         dragged: kids
@@ -595,12 +625,15 @@ pub unsafe fn layout(tb: HWND, me: HWND, mine: Option<Size>, boundary: i32, gap:
 }
 
 /// Where a member belongs: its screen x for its fitted `width`, whether to slide there (another
-/// member is being dragged: the live preview flows), and its fit (narrower, or hidden).
+/// member is being dragged: the live preview flows), whether to follow (another member's width
+/// is animating: go there at once, frame by frame, see `strip::Motion::follow`), and its fit
+/// (narrower, or hidden).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Slot {
     pub x: i32,
     pub width: i32,
     pub slide: bool,
+    pub follow: bool,
     pub fit: Fit,
 }
 
@@ -620,10 +653,11 @@ pub unsafe fn slot(tb: HWND, me: HWND, size: Size, boundary: i32, gap: i32) -> O
     let fit = l.all.iter().find(|m| m.hwnd == me)?.fit;
     let Some(mine) = l.hwnds.iter().position(|h| *h == me) else {
         let r = rect(me);
-        return Some(Slot { x: r.left, width: r.right - r.left, slide: false, fit });
+        return Some(Slot { x: r.left, width: r.right - r.left, slide: false, follow: false, fit });
     };
     let Some((dh, dw, d_left, _, _)) = l.dragged else {
-        return Some(Slot { x: place(boundary, gap, &l.obstacles, &l.widths)[mine], width: l.widths[mine], slide: false, fit });
+        let x = place(boundary, gap, &l.obstacles, &l.widths)[mine];
+        return Some(Slot { x, width: l.widths[mine], slide: false, follow: l.resizing, fit });
     };
     let width = l.widths[mine];
     // the slot the dragged one published; computed here only if it hasn't (yet)
@@ -631,7 +665,7 @@ pub unsafe fn slot(tb: HWND, me: HWND, size: Size, boundary: i32, gap: i32) -> O
         .unwrap_or_else(|| insert_index(boundary, gap, &l.obstacles, &l.widths, d_left, dw));
     l.widths.insert(ins, dw);
     let xs = place(boundary, gap, &l.obstacles, &l.widths);
-    Some(Slot { x: xs[if mine >= ins { mine + 1 } else { mine }], width, slide: true, fit })
+    Some(Slot { x: xs[if mine >= ins { mine + 1 } else { mine }], width, slide: true, follow: false, fit })
 }
 
 /// The slot dragged member `h` published ([`track_drag`]), if it's a valid index for `n` others.
@@ -877,6 +911,30 @@ mod tests {
         assert!(s.hidden());
         assert_eq!(s.update(Fit::Full), FitChange::Show);
         assert_eq!(s.narrowed(), None);
+    }
+
+    #[test]
+    fn neighbours_stay_flush_with_a_strip_changing_width() {
+        // bus against the tray switches to compact (179 → 52) and back, weather on its left; at
+        // each frame bus is drawn `w` wide and keeps its right edge
+        let flush = |w: i32| {
+            let ws = [placed_width(Fit::Full, BUS, Some(w)), placed_width(Fit::Full, WEATHER, None)];
+            let xs = place(B, GAP, &[], &ws);
+            assert_eq!(xs[0] + w, B - GAP, "bus keeps its right edge");
+            assert_eq!(xs[1] + 88 + GAP, xs[0], "weather flush with bus at {w} px");
+        };
+        for t in 0..=10 {
+            let e = crate::anim::ease_dock(t as f32 / 10.0);
+            flush(179 - (127.0 * e).round() as i32); // shrinking
+            flush(52 + (127.0 * e).round() as i32); // growing
+        }
+        // by the published (final) widths, mid-switch weather would sit over the still-wide bus
+        let bus_left = B - GAP - 120;
+        let weather_right = place(B, GAP, &[], &[52, 88])[1] + 88;
+        assert!(weather_right > bus_left);
+        // no animation running: the fitted width
+        assert_eq!(placed_width(Fit::Shrunk(52), BUS, None), 52);
+        assert_eq!(placed_width(Fit::Full, BUS, Some(0)), 179);
     }
 
     #[test]

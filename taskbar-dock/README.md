@@ -9,11 +9,11 @@ A shared Rust library for the taskbar widgets: the bus widget (`C:\Users\thurs\t
 | `settings` | One settings file for all widgets: `%APPDATA%\TaskbarDock\settings.json`. Each widget has its own section and the shared one is `dock`. Each widget rewrites only its own section, and every write is atomic. |
 | `style` | The shared look and behaviour from `dock` (gap, font, radii, timings, hover delays, "follow Windows" switches), resolved into a `Look` for right now. |
 | `system` | The Windows settings that are followed live: theme, Animation effects, mouse hover time, Text size, time format, and display scale per monitor. Also time formatting. |
-| `dock` | The stacking protocol: tray boundary, member/dragging window properties, order file, live drag preview, drop reorder, WinEvent hooks for instant reflow, and "one panel at a time". The fit next to the taskbar's own buttons: each member publishes its widths (`publish_widths`), `slot` gives its x and its `Fit` (full, narrower, hidden), `FitState` says what changed. |
+| `dock` | The stacking protocol: tray boundary, member/dragging window properties, order file, live drag preview, drop reorder, WinEvent hooks for instant reflow, and "one panel at a time". The fit next to the taskbar's own buttons: each member publishes its widths (`publish_widths`), `slot` gives its x and its `Fit` (full, narrower, hidden), `FitState` says what changed. While a member's width animates it also publishes the drawn width (`publish_drawn`); the others place themselves by it and follow frame by frame (`Slot::follow`). |
 | `icons` | The taskbar's own buttons (Start, apps) through UI Automation, on a worker thread, read only by the stack's leader (the member nearest the tray), which publishes their right edge for the others. |
 | `panel` | How a widget's panel opens and closes: hover, click, pin, right-click, drag, one at a time, and the fade-in. The same for every widget, with tests. |
 | `menu_panel` | The right-click panel, in place of a Windows menu: an optional title and subtitle, action rows with an icon, on/off switches (flip and stay open), separators, and "Edit settings… / Quit" side by side. `run(anchor, menu, look, scale, on_switch)` works like `TrackPopupMenu` (own message loop, returns the action chosen); call `close()` on the shared close-panel message. Same colours as the other panels. With tests. |
-| `strip` | How a strip moves in the dock: slide right / jump left into its slot, press vs drag (3 px), follow the mouse centred while the content zooms to `drag_zoom`, shrink back after the drop. `Motion` answers with positions and does no window work (move outside your state's borrow); `move_strip` puts a child or floating strip at a screen x. A width change keeps the right edge (`keep_right_edge`); switching compact mode animates the width (`resize`, `resize_width`); a drag stays within `Limits` (tray, taskbar buttons). With tests. |
+| `strip` | How a strip moves in the dock: slide right / jump left into its slot, press vs drag (3 px), follow the mouse centred while the content zooms to `drag_zoom`, shrink back after the drop. `Motion` answers with positions and does no window work (move outside your state's borrow); `move_strip` puts a child or floating strip at a screen x. A width change keeps the right edge (`keep_right_edge`, or in one step with `right_anchored`); switching compact mode animates the width (`resize`, `resize_width`); a neighbour's width change is followed frame by frame (`follow`); a drag stays within `Limits` (tray, taskbar buttons). Glides and the switch ease like the taskbar's own buttons (`anim::ease_dock`). With tests. |
 | `draw` | Drawing for a per-pixel-alpha taskbar strip: text colour, two lines on the clock's baselines, icons in the tray-icon box, rounded shapes, the hover highlight (whole strip, or one button with `background_in`), and an anti-aliased `progress_ring` along a rounded square (fractional positions allowed). |
 | `badge` | A coloured, rounded badge with short text (e.g. a bus line number): tray-icon tall, as wide as its text, text centred, shared corners and font, automatic black/white text. |
 | `anim` | Easing and animation progress (0 ms when animations are off). `pulse`: a slow, smooth 0 → 1 → 0 every 2.4 s for "alive, nothing else to show"; `pulse_settle`: gliding down to 0 from wherever a pulse stopped. |
@@ -32,7 +32,7 @@ A shared Rust library for the taskbar widgets: the bus widget (`C:\Users\thurs\t
   "animations": "system",
   "hover_open_ms": "system",
   "hover_close_ms": 300,
-  "fade_ms": 150, "glide_ms": 150, "zoom_ms": 120,
+  "fade_ms": 150, "glide_ms": 300, "zoom_ms": 120,
   "drag_zoom": 1.15,
   "panel_margin": 12
 }
@@ -48,7 +48,7 @@ A shared Rust library for the taskbar widgets: the bus widget (`C:\Users\thurs\t
 | `animations` | `"system"` follows Settings → Accessibility → Visual effects → Animation effects. `true`/`false` fix it. When off, slides, zooms and fades are instant. |
 | `hover_open_ms` | How long the mouse rests on a widget before its panel opens. `"system"` uses Windows' mouse hover time (400 ms by default). |
 | `hover_close_ms` | A hover-opened panel closes this long after the mouse leaves both the widget and the panel. |
-| `fade_ms`, `glide_ms`, `zoom_ms` | Panel fade-in, slide into place, and drag zoom durations. |
+| `fade_ms`, `glide_ms`, `zoom_ms` | Panel fade-in, slide into place, and drag zoom durations. `glide_ms` also times the compact switch; its default 300 and the slides' easing match the Windows 11 taskbar's own button slide (measured: cubic-bezier(0.5, 0, 0, 1) over 300 ms). A settings.json written before 2026-10-11 has the old 150. |
 | `drag_zoom` | Content size while dragged (1.15 = 115%). |
 | `panel_margin` | Pixels (at 100%) a panel keeps from the taskbar and from the screen edges. Windows 11's own flyouts use 12. |
 

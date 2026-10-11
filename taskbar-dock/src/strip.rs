@@ -8,7 +8,11 @@
 //! The rules:
 //! - Moving to a new slot slides when moving right (a gap opened up); moving left it jumps
 //!   (making room: sliding would briefly overlap the neighbour), unless `always_slide` (after a
-//!   drop, or while another widget is dragged, so the live preview flows).
+//!   drop, or while another widget is dragged, so the live preview flows). While a neighbour
+//!   changes width (its compact switch), it follows that neighbour frame by frame instead
+//!   ([`Motion::follow`]: jumps either way).
+//! - Slides and the compact switch take `glide_ms` and ease like the taskbar's own buttons
+//!   ([`anim::ease_dock`]).
 //! - A press becomes a drag once the mouse has moved more than [`DRAG_THRESHOLD`] px; a release
 //!   without that is a click.
 //! - Picked up, the content grows to `drag_zoom`; while it grows the strip stays centred where
@@ -272,7 +276,7 @@ impl Motion {
     pub fn resize_step(&mut self, look: &Look, now: Instant) -> Option<Step<i32>> {
         let r = self.resize?;
         let t = anim::progress(now.duration_since(r.t0).as_secs_f32() * 1000.0, look.glide_ms);
-        let value = r.from + ((r.to - r.from) as f32 * anim::ease_out_cubic(t)).round() as i32;
+        let value = r.from + ((r.to - r.from) as f32 * anim::ease_dock(t)).round() as i32;
         let done = t >= 1.0;
         self.resize_w = if done { None } else { Some(value) };
         if done {
@@ -297,6 +301,17 @@ impl Motion {
         Glide::Slide
     }
 
+    /// Follow a neighbour that's changing width, frame by frame ([`crate::dock::Slot::follow`]):
+    /// straight to `x` either way (a slide would trail behind it: a gap or an overlap), ending any
+    /// slide. Stays put while dragged.
+    pub fn follow(&mut self, current: i32, x: i32) -> Glide {
+        if self.dragging() {
+            return Glide::Stay;
+        }
+        self.glide = None;
+        if x == current { Glide::Stay } else { Glide::Jump(x) }
+    }
+
     /// Stop a slide where it is (e.g. the window went away).
     pub fn stop_glide(&mut self) {
         self.glide = None;
@@ -309,7 +324,7 @@ impl Motion {
         }
         let g = self.glide?;
         let t = anim::progress(now.duration_since(g.t0).as_secs_f32() * 1000.0, look.glide_ms);
-        let value = g.from + ((g.to - g.from) as f32 * anim::ease_out_cubic(t)).round() as i32;
+        let value = g.from + ((g.to - g.from) as f32 * anim::ease_dock(t)).round() as i32;
         let done = t >= 1.0;
         if done {
             self.glide = None;
@@ -354,6 +369,25 @@ pub unsafe fn keep_right_edge(h: HWND, tb: HWND, before: RECT) {
     if w0 > 0 && w1 > 0 && w0 != w1 && now.left == before.left {
         move_strip(h, tb, before.right - w1, false);
     }
+}
+
+/// For a docked strip about to be drawn `width` px wide: the position that keeps its right edge
+/// where it is now (`before`, its window rectangle), for `UpdateLayeredWindow`'s `pptDst`, so the
+/// size and the position change in one step. (Without it the strip first grows to the right, over
+/// its neighbour, until [`keep_right_edge`] moves it back ~2 ms later; seen every frame of a
+/// compact switch, 2026-10-11.) None: the width doesn't change, or it isn't a taskbar child.
+/// Call only while [`Motion::settled`].
+///
+/// # Safety
+/// Win32 calls on `h`.
+pub unsafe fn right_anchored(h: HWND, before: RECT, width: i32) -> Option<POINT> {
+    if before.right - before.left == width || width <= 0 || GetWindowLongW(h, GWL_STYLE) as u32 & WS_CHILD == 0 {
+        return None;
+    }
+    // child window: coordinates relative to the parent (the taskbar)
+    let mut pt = POINT { x: before.right - width, y: before.top };
+    ScreenToClient(GetParent(h), &mut pt);
+    Some(pt)
 }
 
 /// Puts the strip `h` at screen x, vertically centred on the taskbar (a taskbar child) or on the
@@ -420,7 +454,7 @@ mod tests {
         let mut m = Motion::default();
         assert_eq!(m.glide_to(100, 160, false, &lk, t0), Glide::Slide);
         assert_eq!(m.glide_to(100, 160, false, &lk, t0), Glide::Stay, "already heading there");
-        let mid = m.glide_step(&lk, ms(t0, 40)).unwrap();
+        let mid = m.glide_step(&lk, ms(t0, 100)).unwrap();
         assert!(mid.value > 100 && mid.value < 160 && !mid.done);
         let end = m.glide_step(&lk, ms(t0, 1000)).unwrap();
         assert_eq!(end, Step { value: 160, done: true });
@@ -500,7 +534,7 @@ mod tests {
         let mut m = Motion::default();
         assert!(m.resize(300, 120, &lk, t0));
         assert_eq!(m.resize_width(), Some(300), "draws at the old width until the first frame");
-        let mid = m.resize_step(&lk, ms(t0, 40)).unwrap();
+        let mid = m.resize_step(&lk, ms(t0, 100)).unwrap();
         assert!(mid.value < 300 && mid.value > 120 && !mid.done);
         assert_eq!(m.resize_width(), Some(mid.value));
         let end = m.resize_step(&lk, ms(t0, 1000)).unwrap();
@@ -509,6 +543,36 @@ mod tests {
         assert!(m.resize_step(&lk, ms(t0, 1010)).is_none());
         assert!(!m.resize(120, 120, &lk, t0));
         assert!(!Motion::default().resize(120, 300, &look(false), t0), "instant without animations");
+    }
+
+    #[test]
+    fn glide_and_compact_switch_ease_like_the_taskbar() {
+        let (lk, t0) = (look(true), Instant::now());
+        // a 44 px glide and a 44 px switch move together, along the measured curve
+        let mut g = Motion::default();
+        assert_eq!(g.glide_to(100, 144, false, &lk, t0), Glide::Slide);
+        let mut r = Motion::default();
+        assert!(r.resize(144, 100, &lk, t0));
+        for t in [20, 80, 150, 250] {
+            let x = g.glide_step(&lk, ms(t0, t)).unwrap().value;
+            let w = r.resize_step(&lk, ms(t0, t)).unwrap().value;
+            let want = (44.0 * anim::ease_dock(t as f32 / lk.glide_ms)).round() as i32;
+            assert_eq!((x - 100, 144 - w), (want, want), "{t} ms");
+        }
+    }
+
+    #[test]
+    fn following_a_resizing_neighbour_jumps_both_ways() {
+        let (lk, t0) = (look(true), Instant::now());
+        let mut m = Motion::default();
+        assert_eq!(m.glide_to(100, 160, false, &lk, t0), Glide::Slide);
+        assert_eq!(m.follow(100, 104), Glide::Jump(104), "right: no slide, and the slide ends");
+        assert!(!m.gliding());
+        assert_eq!(m.follow(104, 98), Glide::Jump(98));
+        assert_eq!(m.follow(98, 98), Glide::Stay);
+        m.press(500, 98);
+        m.mouse_move(520, 80, Limits::NONE, &lk, t0);
+        assert_eq!(m.follow(98, 120), Glide::Stay, "the mouse has it");
     }
 
     #[test]

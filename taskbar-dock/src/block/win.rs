@@ -1252,10 +1252,19 @@ fn redraw() {
         let Some(mut out) = Canvas::new(width, height) else { return };
         out.pixels().copy_from_slice(&px);
         let before = dock::rect(strip);
+        // a compact switch running: the others place themselves by this frame's width (published
+        // before the window takes it, so the move it causes finds it); cleared on the last frame
+        let drawn_cleared = right && dock::publish_drawn(strip, resize_w.map(|_| width)) && resize_w.is_none();
         let sz = SIZE { cx: width, cy: height };
         let src = POINT { x: 0, y: 0 };
         let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };
-        UpdateLayeredWindow(strip, 0, std::ptr::null(), &sz, out.dc, &src, 0, &blend, ULW_ALPHA);
+        let settled = st(|s| s.core.motion.settled()).unwrap_or(true);
+        // docked against the tray: a new width keeps the right edge, moved in the same step
+        let dst = if right && settled && !dragging && IsWindowVisible(strip) != 0 { strip::right_anchored(strip, before, width) } else { None };
+        UpdateLayeredWindow(strip, 0, dst.as_ref().map_or(std::ptr::null(), |p| p as *const POINT), &sz, out.dc, &src, 0, &blend, ULW_ALPHA);
+        if drawn_cleared {
+            dock::notify(strip); // the last frame may not move it: the others look once more
+        }
 
         if floating {
             if !dragging {
@@ -1286,17 +1295,21 @@ fn redraw() {
         if dragging {
             return; // the mouse has it
         }
-        let settled = st(|s| s.core.motion.settled()).unwrap_or(true);
         if right && settled {
-            // docked against the tray: a new width keeps the right edge, not the left
+            // docked against the tray: a new width keeps the right edge, not the left (a no-op
+            // when UpdateLayeredWindow already moved it)
             strip::keep_right_edge(strip, tb, before);
         }
         if dock::needs_raise(strip) {
             // the taskbar's own content came over it: back on top (never on every redraw)
             SetWindowPos(strip, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
-        // after a drop (zooming back) or while another member is dragged: slide, so it flows
-        move_to(strip, tb, target(width), !settled || slot.is_some_and(|s| s.slide));
+        if slot.is_some_and(|s| s.follow) {
+            follow(strip, tb, target(width)); // a neighbour is changing width: keep flush with it
+        } else {
+            // after a drop (zooming back) or while another member is dragged: slide, so it flows
+            move_to(strip, tb, target(width), !settled || slot.is_some_and(|s| s.slide));
+        }
     }
 }
 
@@ -1369,6 +1382,15 @@ fn move_to(strip: HWND, tb: HWND, x: i32, always_slide: bool) {
     }
 }
 
+/// Goes straight to x, either way: a neighbour is changing width ([`dock::Slot::follow`]).
+fn follow(strip: HWND, tb: HWND, x: i32) {
+    let cur = unsafe { dock::rect(strip).left };
+    if let Some(Glide::Jump(x)) = st(|s| s.core.motion.follow(cur, x)) {
+        timer(T_GLIDE, false);
+        unsafe { put(strip, tb, x) };
+    }
+}
+
 /// Recomputes only the position (no redraw): a neighbour moved, or a drop. Not while pressed.
 fn reposition(always_slide: bool) {
     let Some((strip, floating, pressed, side, look)) =
@@ -1381,21 +1403,25 @@ fn reposition(always_slide: bool) {
         let tb = GetParent(strip);
         let (scale, gap) = scale_gap(tb, &look);
         let width = width_of(strip);
-        let (x, slide) = if side == Side::Right {
+        let (x, slide, follows) = if side == Side::Right {
             let size = dock_size(strip, width);
             let Some(slot) = dock::slot(tb, strip, size, dock::tray_boundary(tb, scale), gap) else { return };
             // the room changed: redrawn compact or full, or hidden
             if apply_fit(strip, slot.fit, true) != FitChange::None {
                 return;
             }
-            (slot.x_for(width), slot.slide)
+            (slot.x_for(width), slot.slide, slot.follow)
         } else {
-            (place::left_side(tb, strip, width, gap, scale), false)
+            (place::left_side(tb, strip, width, gap, scale), false, false)
         };
         if IsWindowVisible(strip) == 0 {
             return;
         }
-        move_to(strip, tb, x, always_slide || slide);
+        if follows && !always_slide {
+            follow(strip, tb, x); // a neighbour is changing width: keep flush with it
+        } else {
+            move_to(strip, tb, x, always_slide || slide);
+        }
     }
 }
 

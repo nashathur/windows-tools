@@ -28,6 +28,12 @@ with, after the strip's redraw, no fade.
 - During a compact switch `Frame::fit_width` is the animated width (`core::fit_width`), so a
   Content that keeps things at its right end lays out to it instead of being cut off (discord: the
   avatar column narrows, its avatars fading with it).
+- The compact switch and every glide take `glide_ms` (300) on the taskbar's own curve
+  (`anim::ease_dock`, measured 2026-10-11). Each frame of a switch Block publishes the drawn width
+  (`dock::publish_drawn`, before the window takes it; cleared + `notify` on the last frame) and
+  passes the right-anchored position to `UpdateLayeredWindow` (`strip::right_anchored`: size and
+  position in one step). The others place themselves by it (`dock::placed_width`) and, while
+  `Slot::follow`, jump to their slot each frame (`Motion::follow`) instead of gliding.
 - `badge::font_px(look, scale)` for badge text.
 - Cover feel and click: return the box from `Content::cover` (UI-RULES.md "Cover").
 

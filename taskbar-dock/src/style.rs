@@ -11,7 +11,8 @@
 //!   "animations": "system",            "system" (Windows animation effects), true or false
 //!   "hover_open_ms": "system",         rest this long to open a panel; "system" = Windows
 //!   "hover_close_ms": 300,             a hover-opened panel closes this long after leaving
-//!   "fade_ms": 150, "glide_ms": 150, "zoom_ms": 120,
+//!   "fade_ms": 150, "zoom_ms": 120,
+//!   "glide_ms": 300,                   slides and the compact switch (as the taskbar's buttons)
 //!   "drag_zoom": 1.15,                 content size while dragged
 //!   "panel_margin": 12                 px a panel keeps from the taskbar and the screen edges
 //! }
@@ -69,7 +70,7 @@ impl Default for Style {
             hover_open_ms: Follow::System,
             hover_close_ms: 300,
             fade_ms: 150.0,
-            glide_ms: 150.0,
+            glide_ms: crate::anim::DOCK_MS,
             zoom_ms: 120.0,
             drag_zoom: 1.15,
             // Windows 11's own flyouts (calendar, quick settings) sit 12 px from the taskbar

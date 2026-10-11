@@ -10,6 +10,48 @@ pub fn ease_out_quad(t: f32) -> f32 {
     1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(2)
 }
 
+/// A CSS-style cubic-bezier easing curve from (0, 0) to (1, 1) with control points (x1, y1) and
+/// (x2, y2); x1 and x2 within 0..1.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct CubicBezier {
+    pub x1: f32,
+    pub y1: f32,
+    pub x2: f32,
+    pub y2: f32,
+}
+
+impl CubicBezier {
+    /// The eased progress at progress `t` (0..1): solves x(s) = t for the curve parameter s
+    /// (bisection: x(s) always rises for x1, x2 in 0..1), then gives y(s).
+    pub fn at(&self, t: f32) -> f32 {
+        let t = t.clamp(0.0, 1.0);
+        if t == 0.0 || t == 1.0 {
+            return t;
+        }
+        let b = |p1: f32, p2: f32, s: f32| 3.0 * (1.0 - s) * (1.0 - s) * s * p1 + 3.0 * (1.0 - s) * s * s * p2 + s * s * s;
+        let (mut lo, mut hi) = (0.0f32, 1.0f32);
+        for _ in 0..24 {
+            let s = (lo + hi) / 2.0;
+            if b(self.x1, self.x2, s) < t { lo = s } else { hi = s }
+        }
+        b(self.y1, self.y2, (lo + hi) / 2.0)
+    }
+}
+
+/// The Windows 11 taskbar's own button slide (an app closes, the buttons to its right glide
+/// over): a slow start, a fast middle and a long gentle stop. Fitted 2026-10-11 to 3 measured
+/// 44 px slides (`_tmp\taskbar_slide.ps1`, 144 Hz frames): over [`DOCK_MS`] within 0.7 px of
+/// every frame (best fit 304–312 ms: 0.3 px). `ease_out_cubic` was 4.4 px off at best.
+pub const DOCK: CubicBezier = CubicBezier { x1: 0.5, y1: 0.0, x2: 0.0, y2: 1.0 };
+/// How long the taskbar's button slide takes (measured with [`DOCK`]): the default `glide_ms`.
+pub const DOCK_MS: f32 = 300.0;
+
+/// Progress `t` (0..1) eased like the taskbar's own buttons ([`DOCK`]): the strips' glide and
+/// the compact switch.
+pub fn ease_dock(t: f32) -> f32 {
+    DOCK.at(t)
+}
+
 /// Progress of an animation that started `elapsed_ms` ago and lasts `duration_ms`
 /// (1.0 straight away when the duration is 0, e.g. animations turned off).
 pub fn progress(elapsed_ms: f32, duration_ms: f32) -> f32 {
@@ -163,6 +205,29 @@ mod tests {
         f.set(false, false);
         f.snap();
         assert_eq!((f.value(), f.animating()), (1.0, false));
+    }
+
+    #[test]
+    fn dock_easing_matches_the_measured_taskbar_slide() {
+        assert_eq!((ease_dock(0.0), ease_dock(1.0)), (0.0, 1.0));
+        assert_eq!((ease_dock(-1.0), ease_dock(2.0)), (0.0, 1.0));
+        // never goes back, never overshoots
+        let mut prev = 0.0;
+        for i in 1..=1000 {
+            let v = ease_dock(i as f32 / 1000.0);
+            assert!(v >= prev - 1e-6 && v <= 1.0 + 1e-6);
+            prev = v;
+        }
+        // px still to go of a 44 px slide, measured on 144 Hz frames (slide 2; the first frame that
+        // moved is 22 ms in, the best start for 300 ms). Whole px measured (±0.5) plus the fit's
+        // 0.7: within 1.2 px
+        let measured = [(22.0, 43.0), (35.6, 42.0), (49.4, 41.0), (63.2, 38.0), (77.0, 33.0), (90.8, 25.0),
+            (97.8, 20.0), (111.6, 15.0), (132.7, 10.0), (153.5, 7.0), (174.3, 4.0), (195.1, 3.0),
+            (222.9, 2.0), (257.6, 1.0)];
+        for (ms, left) in measured {
+            let model = 44.0 * (1.0 - ease_dock(ms / DOCK_MS));
+            assert!((model - left).abs() <= 1.2, "{ms} ms: model {model:.1} px, measured {left}");
+        }
     }
 
     #[test]
