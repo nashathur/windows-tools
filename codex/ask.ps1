@@ -6,6 +6,7 @@ param(
     [string]$Out,                             # final answer; default <PromptFile>.answer.md
     [ValidateSet('read-only', 'workspace-write')][string]$Sandbox = 'read-only',
     [string]$Review,                          # 'uncommitted', 'base:<branch>' or 'commit:<sha>'
+    [ValidateSet('build', 'review')][string]$Role,  # model/effort/sandbox preset; inferred from the mode when omitted
     [string]$Model,
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'max', 'ultra')][string]$Effort = 'high',  # CLI default is 'none'
     [switch]$Worktree,                        # write in a fresh git worktree off HEAD (implies workspace-write)
@@ -73,6 +74,7 @@ if (-not $exe) { throw 'codex.exe not found under %LOCALAPPDATA%\OpenAI\Codex\bi
 
 if ([bool]$PromptFile -eq [bool]$Review) { throw 'Give exactly one of -PromptFile or -Review (review presets take no prompt).' }
 if ($Resume -and -not $PromptFile) { throw '-Resume needs -PromptFile (the follow-up message).' }
+if ($Resume -and $Worktree) { throw '-Resume reruns in the session''s own dir (a worktree session keeps its worktree): drop -Worktree.' }
 # `exec resume` runs in the launch dir and takes no -C/-s, so -Keep records both and -Resume restores them.
 if ($Resume) {
     $sessionFile = Join-Path $runs "session-$Resume.txt"
@@ -80,6 +82,27 @@ if ($Resume) {
     $Dir, $Sandbox = Get-Content -Encoding UTF8 $sessionFile
 }
 if ($Review) { $Sandbox = 'read-only' }
+
+# Role presets (user's rule, 2026-10-11): builds get Luna and write access; reviews, critiques and second
+# opinions get Sol, read-only. An explicit -Model or -Effort still wins.
+$roles = @{
+    build  = @{ Model = 'gpt-6-luna';  Effort = 'high' }
+    review = @{ Model = 'gpt-6.1-sol'; Effort = 'high' }
+}
+if (-not $Role) { $Role = if ($Worktree -or $Sandbox -eq 'workspace-write') { 'build' } else { 'review' } }
+$resumed = if ($Resume) { " (session $Resume was saved with that sandbox; start a fresh session instead)" } else { '' }
+if ($Role -eq 'review' -and ($Worktree -or $Sandbox -ne 'read-only')) {
+    throw "-Role review is read-only, but this call has write access$resumed. Drop -Worktree / -Sandbox workspace-write, or use -Role build."
+}
+if ($Role -eq 'build') {
+    if ($Review) { throw '-Review is a review: use -Role review, or omit -Role.' }
+    # A build writes in a worktree unless -Sandbox workspace-write asks for the live checkout.
+    if (-not $Resume -and -not $PSBoundParameters.ContainsKey('Sandbox')) { $Worktree = [switch]$true }
+    if (-not $Worktree -and $Sandbox -eq 'read-only') { throw "-Role build needs write access, but this call is read-only$resumed." }
+}
+if (-not $PSBoundParameters.ContainsKey('Model'))  { $Model  = $roles[$Role].Model }
+if (-not $PSBoundParameters.ContainsKey('Effort')) { $Effort = $roles[$Role].Effort }
+
 $Dir = (Resolve-Path -LiteralPath $Dir).Path
 if ($PromptFile) { $PromptFile = (Resolve-Path -LiteralPath $PromptFile).Path }
 # Review files go to runs\, outside the reviewed repo, so they never show up as untracked changes.
@@ -87,7 +110,7 @@ $base = if ($PromptFile) { $PromptFile } else { Join-Path $runs "review-$(Split-
 $Out = if ($Out) { Abs $Out } else { "$base.answer.md" }
 $log = "$base.log"
 
-$role = @'
+$preamble = @'
 You are working with Claude, which orchestrates this work and makes the final calls.
 For a question: answer with findings, options and your recommendation, each with its reasoning and the file:line or evidence behind it.
 For a task: do it within the spec, then report what you changed, what you ran and its result, and any choice the spec left open, with your reasoning.
@@ -125,7 +148,7 @@ $stdin = "$base.stdin.txt"
 $text = ''
 if ($PromptFile) {
     $text = [IO.File]::ReadAllText($PromptFile)
-    if (-not $Resume) { $text = $role + $text }
+    if (-not $Resume) { $text = $preamble + $text }
     $args_ += '-'
 }
 [IO.File]::WriteAllText($stdin, $text, (New-Object Text.UTF8Encoding $false))
@@ -135,7 +158,7 @@ $sw = [Diagnostics.Stopwatch]::StartNew()
 $p = Start-Process -FilePath $exe.FullName -ArgumentList $args_ -WorkingDirectory $Dir -NoNewWindow -Wait -PassThru `
     -RedirectStandardInput $stdin -RedirectStandardOutput "$log.out" -RedirectStandardError $log
 Remove-Item -LiteralPath $stdin
-"codex exit $($p.ExitCode) in $([int]$sw.Elapsed.TotalSeconds)s; answer: $Out; log: $log"
+"codex exit $($p.ExitCode) in $([int]$sw.Elapsed.TotalSeconds)s ($Role`: $Model, $Effort); answer: $Out; log: $log"
 $head = Get-Content $log -TotalCount 15
 function Get-HeadField($name) {   # a failed run may log neither field
     $m = $head | Select-String "^${name}: (.+)$" | Select-Object -First 1
