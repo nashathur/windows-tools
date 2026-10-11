@@ -62,10 +62,7 @@ apply within a second, without a restart. Missing keys are added with these defa
 }
 ```
 
-`compact` and `show_on_taskbar` are the right-click panel's switches (the library's keys). Since
-the move to the library (2026-10-11) `menu_panel_width`, `fade_ms` (now the shared `glide_ms`)
-and `start_with_windows` (now only the shared startup list) are gone; they're removed from the
-file on start.
+`compact` and `show_on_taskbar` are Block's switches (right-click panel).
 
 - `max_width`: the text column's widest (px at 100%); a longer title or artist scrolls, as in
   the panel (waits 1.5 s, then loops; cut with "…" when Windows' animations are off). The column
@@ -79,29 +76,8 @@ file on start.
 
 The shared `dock` section (font, gap, timings, hover delays) applies as in the other widgets.
 
-## Build and run
-
-```powershell
-.\dev.ps1            # build, test, copy to taskbar-media.exe, restart it if it was running
-.\dev.ps1 -Fast -Start
-```
-
-Start with Windows uses the shared startup list (`taskbar-dock-start.exe`), like the other
-widgets. Only one copy runs at a time.
-
-## Taskbar embedding and recovery
-
-The strip is a layered child window of the taskbar (`Shell_TrayWnd`), placed in the shared dock
-stack against the tray. Drag it to reorder the widgets.
-
-- **Explorer restarts** destroy the taskbar and the strip with it. The widget checks every
-  second (and on `TaskbarCreated`) and creates the strip again in the new taskbar.
-- **Fallback**: if attaching to the taskbar fails, or there has been no taskbar for 10 seconds
-  (another shell, Explorer not running), the strip becomes a floating topmost window left of
-  the tray and the docked widgets (bottom right without a taskbar), with a taskbar-coloured backdrop. It hides while
-  a full-screen app is in front, can't be dragged, and attaches to the taskbar as soon as one is
-  back (after a failed attach: retried every minute). `taskbar-media.exe --float` forces this
-  mode, for testing (or `TASKBAR_MEDIA_FLOAT=1` in the environment of `dev.ps1`).
+Floating (Block's fallback, BLOCK.md "Strip"): `taskbar-media.exe --float` or
+`TASKBAR_MEDIA_FLOAT=1` in dev.ps1's environment forces it, for testing.
 
 ## Known limits
 

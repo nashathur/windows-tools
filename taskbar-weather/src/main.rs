@@ -1,5 +1,8 @@
 #![windows_subsystem = "windows"]
 
+//! The weather on the Windows 11 taskbar, on the taskbar-dock library's Block: `App` is the
+//! Content (label, flyout, menu rows, tray), plus the `Spec` and `main`.
+
 mod config;
 mod knmi;
 mod render;

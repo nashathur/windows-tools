@@ -1,6 +1,7 @@
+//! The `weather` settings section.
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::path::PathBuf;
 use taskbar_dock::settings;
 
 /// Weather settings: the "weather" section of the settings file shared with the other taskbar
@@ -52,30 +53,12 @@ impl Default for Config {
     }
 }
 
-/// The old per-app file, migrated into the shared one on first run.
-fn old_path() -> PathBuf {
-    let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| ".".into());
-    base.join("TaskbarWeather").join("config.json")
-}
-
 impl Config {
-    /// Loads the weather section. On first run it moves the old
-    /// %APPDATA%\TaskbarWeather\config.json in (kept as config.json.migrated) or writes defaults.
+    /// Loads the weather section; on first run it writes the defaults.
     pub fn load() -> Config {
         // Keep a broken file as-is so the user can fix their edit.
         let Some(root) = settings::read() else { return Config::default() };
-        let cfg: Config = match root.get("weather") {
-            Some(w) => serde_json::from_value(w.clone()).unwrap_or_default(),
-            None => {
-                // first run with the shared file: take over the old weather config if there is one
-                let old: Option<Value> = std::fs::read_to_string(old_path()).ok().and_then(|t| serde_json::from_str(&t).ok());
-                let cfg = old.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
-                if old_path().exists() {
-                    let _ = std::fs::rename(old_path(), old_path().with_extension("json.migrated"));
-                }
-                cfg
-            }
-        };
+        let cfg: Config = root.get("weather").and_then(|w| serde_json::from_value(w.clone()).ok()).unwrap_or_default();
         // write the section back in full: adds settings introduced by newer versions (no write
         // if nothing changed)
         cfg.save();

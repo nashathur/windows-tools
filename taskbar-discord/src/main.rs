@@ -1,5 +1,8 @@
 #![windows_subsystem = "windows"]
 
+//! Discord voice chat on the Windows 11 taskbar, on the taskbar-dock library's Block: `App` is
+//! the Content (strip, panel, menu rows, tray logo), plus the `Spec` and `main`.
+
 mod auth;
 mod avatars;
 mod config;

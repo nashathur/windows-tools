@@ -42,7 +42,7 @@ which is all this needs.
 | `client_id`, `client_secret` | "" | Your Discord application's OAuth2 credentials. |
 | `redirect_uri` | `http://localhost` | Must be one of the app's OAuth2 redirects. |
 | `compact` | false | Compact strip. |
-| `show_on_taskbar` | true | The strip on the taskbar during a call; off: only the tray icon. (Replaces `show_when_idle`, which is removed from the file.) |
+| `show_on_taskbar` | true | The strip on the taskbar during a call; off: only the tray icon. |
 | `max_avatars` | 5 | Avatar places on the strip (see Strip above); the rest is "+N". |
 | `fixed_width` | false | true: the strip is always its widest (media's `max_width`), never changing width as people join or leave. |
 

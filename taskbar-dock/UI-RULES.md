@@ -18,9 +18,8 @@ Modelled on Apple's hardware/UI: the closer a surface is to the hand, the rounde
    `draw::fill_round` (anti-aliased, alpha) for panel pixels; don't copy it into a widget.
    Known gap: weather's bars and discord's buttons are GDI `RoundRect` (not anti-aliased,
    drawn on a plain DC); the radius is shared, the edge is not smooth.
-4. **Panels:** top-level popups get `DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND` (as
-   `menu_panel`/`popup` do). Never `DWMWCP_DONOTROUND`, never a custom `SetWindowRgn` (jagged,
-   no anti-aliasing).
+4. **Panels:** Block's panel windows get Windows' own round corner (`DWMWCP_ROUND`); a widget
+   draws inside them and never shapes the window itself.
 5. **Drawn shapes** go through `draw::round_rect` / `background_rect` (anti-aliased coverage, so
    the edge fades instead of stepping). Borders and rings follow the same shape (`progress_ring`
    runs along the rounded outline); inset a stroke by half its width.
@@ -49,18 +48,12 @@ Clicking the strip's cover art or logo brings the app it shows to the front (med
 app; discord: Discord), on release over the same spot; it leaves the panel be, a drag from it still
 moves the strip. The widget only says which windows are the app's and the fallback to open;
 `window::raise(is_app, fallback)` finds the main window, restores and raises it (or opens the
-fallback: `shell:AppsFolder\<id>` or a `scheme://` link, for an app sitting in the tray). Hit-test
-the cover with `draw::centered_box` + `draw::contains`, mouse position with `strip::client_pos`.
-Widget colours go through `draw::tint_box` (under the pixels, same radius as the highlight).
+fallback: `shell:AppsFolder\<id>` or a `scheme://` link, for an app sitting in the tray). Build
+the cover's box with `draw::centered_box`.
 
-**Cover feel:** the same box is the cover's hitbox and it reacts: it grows while hovered
-(`anim::HOVER_GROW` 1.06) and dips while pressed (`anim::PRESS_SHRINK` 0.96), eased, and only
-while the strip is at rest (`strip::Motion::calm`: a drag from the cover eases it back to normal
-and leaves the size to the drag zoom; it reacts again on the next mouse move after landing).
-`anim::Feel` holds the state: call `set(on, on && pressed_on_cover)`, on = over the cover && calm (then `snap()`
-if animations are off) on every mouse move / down / up / leave / capture loss, run a
-`FEEL_FRAME_MS` timer while `animating()`, `tick` it each frame and redraw. In the strip's
-drawing, after the cover and its ring, `draw::grow_pixels(buf, w, ring_box, feel.value())`
-rescales them about their centre. Hit-test the resting box (not the grown one). Media
-(`main.rs` `feel_update`) does this; widgets on Block (weather, discord) get it from Block by
-returning the box from `Content::cover`; a new widget on Block does the same.
+**Cover feel** is Block's. The widget does two things with the same resting box: `Content::hit`
+returns `Hit::Cover(box)` over it (Block's hover, press and click on the cover need this; the
+default `hit` is `Hit::Strip`, and a click there toggles the panel), and `Content::cover` returns
+it. Block then grows it while hovered (`anim::HOVER_GROW` 1.06), dips it while pressed
+(`anim::PRESS_SHRINK` 0.96), eased and only while the strip is at rest, and calls
+`Content::cover_click` on release.

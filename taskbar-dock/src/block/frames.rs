@@ -14,7 +14,7 @@ use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Dwm::DwmFlush;
 use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, RegisterWindowMessageW};
 
-/// Without composition (`DwmFlush` failing): frames this far apart, as the old timer.
+/// Without composition (`DwmFlush` failing): frames this far apart.
 const FALLBACK: Duration = Duration::from_millis(10);
 /// Never closer than this (DwmFlush returning at once, e.g. while the display is off): 250 fps.
 const MIN_GAP: Duration = Duration::from_millis(4);
@@ -87,7 +87,7 @@ mod tests {
         assert_eq!(rest(true, ms(16)), Duration::ZERO);
         // returned at once (display off): no faster than 250 fps
         assert_eq!(rest(true, ms(1)), ms(3));
-        // no composition: the old 10 ms timer's pace
+        // no composition: a 10 ms pace
         assert_eq!(rest(false, Duration::ZERO), ms(10));
     }
 }

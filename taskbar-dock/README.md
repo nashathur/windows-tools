@@ -5,31 +5,22 @@ A shared Rust library for the taskbar widgets: the bus widget (`C:\Users\thurs\t
 ## What's in it
 
 A widget is a `Spec` + a `Content` given to `block::run` (see "Building a new widget" and BLOCK.md).
-`block` is the one module a widget runs on; `dock`, `icons`, `panel`, `menu_panel`, `strip`,
-`crash` and `startup` are Block's internals (widgets don't call them); `settings`, `style`,
-`system`, `theme`, `draw`, `badge`, `emoji`, `marquee`, `anim`, `window` are what a widget's own
-drawing and data code use.
 
 | Module | What it gives a widget |
 |---|---|
+| `block` | The strip window and all its behaviour (dock slot, drag, panels, right-click panel, tray icon, fit, Explorer restarts, floating fallback). A widget gives a `Spec` and a `Content` and calls `block::run`. BLOCK.md. |
 | `settings` | One settings file for all widgets: `%APPDATA%\TaskbarDock\settings.json`. Each widget has its own section and the shared one is `dock`. Each widget rewrites only its own section, and every write is atomic. |
 | `style` | The shared look and behaviour from `dock` (gap, font, radii, timings, hover delays, "follow Windows" switches), resolved into a `Look` for right now. |
 | `system` | The Windows settings that are followed live: theme, Animation effects, mouse hover time, Text size, time format, and display scale per monitor. Also time formatting. |
-| `dock` | The stacking protocol: tray boundary, member/dragging window properties, order file, live drag preview, drop reorder, WinEvent hooks for instant reflow, and "one panel at a time". The fit next to the taskbar's own buttons: each member publishes its widths (`publish_widths`), `slot` gives its x and its `Fit` (full, narrower, hidden), `FitState` says what changed. While a member's width animates it also publishes the drawn width (`publish_drawn`); the others place themselves by it and follow frame by frame (`Slot::follow`). |
-| `icons` | The taskbar's own buttons (Start, apps) through UI Automation, on a worker thread, read only by the stack's leader (the member nearest the tray), which publishes their right edge for the others. |
-| `panel` | How a widget's panel opens and closes: hover, click, pin, right-click, drag, one at a time, and the fade-in. The same for every widget, with tests. |
-| `menu_panel` | The right-click panel, in place of a Windows menu: an optional title and subtitle, action rows with an icon, on/off switches (flip and stay open), separators, and "Edit settings… / Quit" side by side. `run(anchor, menu, look, scale, on_switch)` works like `TrackPopupMenu` (own message loop, returns the action chosen); call `close()` on the shared close-panel message. Same colours as the other panels. With tests. |
-| `strip` | How a strip moves in the dock: slide right / jump left into its slot, press vs drag (3 px), follow the mouse centred while the content zooms to `drag_zoom`, shrink back after the drop. `Motion` answers with positions and does no window work (move outside your state's borrow); `move_strip` puts a child or floating strip at a screen x. A width change keeps the right edge (`keep_right_edge`, or in one step with `right_anchored`); switching compact mode animates the width (`resize`, `resize_width`); a neighbour's width change is followed frame by frame (`follow`); a drag stays within `Limits` (tray, taskbar buttons). Glides and the switch ease like the taskbar's own buttons (`anim::ease_dock`). With tests. |
 | `draw` | Shared drawing for the strip and panels: text colour, icons, rounded shapes, text boxes, scrolling-list rows, buttons and highlights; anti-aliased through common helpers. |
 | `text_edit` | A single-line Unicode text model with selection, editing keys and the Win32 clipboard. |
 | `badge` | A coloured, rounded badge with short text (e.g. a bus line number): tray-icon tall, as wide as its text, text centred, shared corners and font, automatic black/white text. |
 | `anim` | Easing and animation progress (0 ms when animations are off). `pulse`: a slow, smooth 0 → 1 → 0 every 2.4 s for "alive, nothing else to show"; `pulse_settle`: gliding down to 0 from wherever a pulse stopped. |
 | `marquee` | Scrolling text for a line too long for its fixed-width box: still if it fits; otherwise wait 1.5 s, then scroll left at 30 px/s in a loop (the start follows 40 px after the end) until it's back where it began, and repeat. `fade_edges` softens the cut-off edges. Still (cut with "…") when animations are off. |
-| `block` | The strip window and all its behaviour (dock slot, drag, panels, right-click panel, tray icon, fit, Explorer restarts, floating fallback). A widget gives a `Spec` and a `Content` and calls `block::run`. BLOCK.md. |
 | `theme` | The design code: every colour, font, font size and spacing, light and dark; the `brand` allow-list for brand and data colours. Widgets take all of them from here (`tests\theme_lint.rs` checks it). |
 | `emoji` | Colour emoji through Direct2D + DirectWrite (GDI draws emoji in one colour). |
 | `window` | `raise`: bring another app's window to the front; `exe_path`, `is_exe`. |
-| `startup`, `crash`, `ctl` | The Start with Windows list, the launcher watchdog's restart rules and panic log, and dockctl's command format. |
+| `dock`, `icons`, `panel`, `menu_panel`, `strip`, `startup`, `crash`, `ctl` | Block's internals; a widget doesn't call them: stacking and the fit next to the taskbar's buttons, reading those buttons, panel open/close, the right-click panel, strip motion, the Start with Windows list, the crash watchdog, dockctl's command format. |
 
 ## The shared `dock` settings
 
@@ -63,7 +54,7 @@ drawing and data code use.
 | `animations` | `"system"` follows Settings → Accessibility → Visual effects → Animation effects. `true`/`false` fix it. When off, slides, zooms and fades are instant. |
 | `hover_open_ms` | How long the mouse rests on a widget before its panel opens. `"system"` uses Windows' mouse hover time (400 ms by default). |
 | `hover_close_ms` | A hover-opened panel closes this long after the mouse leaves both the widget and the panel. |
-| `fade_ms`, `glide_ms`, `zoom_ms` | Panel fade-in, slide into place, and drag zoom durations. `glide_ms` also times the compact switch; its default 300 and the slides' easing match the Windows 11 taskbar's own button slide (measured: cubic-bezier(0.5, 0, 0, 1) over 300 ms). A settings.json written before 2026-10-11 has the old 150. |
+| `fade_ms`, `glide_ms`, `zoom_ms` | Panel fade-in, slide into place, and drag zoom durations. `glide_ms` also times the compact switch; its default 300 and the slides' easing match the Windows 11 taskbar's own button slide (measured: cubic-bezier(0.5, 0, 0, 1) over 300 ms). |
 | `drag_zoom` | Content size while dragged (1.15 = 115%). |
 | `panel_margin` | Pixels (at 100%) a panel keeps from the taskbar and from the screen edges. Windows 11's own flyouts use 12. |
 | `tint_dark`, `tint_light` | Opacity (0–1) of a widget's brand colour behind its strip (discord's blurple, media's app colour), on a dark / light taskbar: `quiet` while paused or muted, `active` while playing or unmuted, `hover` under the mouse. |
@@ -73,9 +64,8 @@ Missing keys are filled in with the defaults the first time a widget starts, so 
 
 ## Corner design
 
-Source: arun.is, "The secret formula for Apple's rounded corners" (2023, updated 2026), plus
-the r/apple discussion of it. The rules to follow are in `CLAUDE.md` ("UI: rounded corners");
-this is the reasoning.
+Source: arun.is, "The secret formula for Apple's rounded corners". The rules to follow are in
+UI-RULES.md; this is the reasoning.
 
 **Closer to the human, the rounder.** The author measured Apple products as a roundness score,
 corner diameter ÷ the rectangle's shorter side, and found each category sits in its own band:
@@ -100,13 +90,12 @@ gets 0 from the formula, so use `control_radius` as the floor for anything inter
 
 **Continuous curvature ("squircle").** A circular arc meets the straight edge with a jump in
 curvature, so reflections/eyes see a seam. Apple's corners ease the curvature in and out
-instead (superellipse-like; Figma's "corner smoothing 60%" is the common approximation). The
-r/apple thread disagrees on whether Apple's exact curve is a superellipse or a hand-drawn
-spline; for our purposes only the property matters: no visible seam, radius appearing larger
+instead (superellipse-like; Figma's "corner smoothing 60%" is the common approximation). Only
+the property matters: no visible seam, radius appearing larger
 near the straight edges. At 4 px it can't be seen, so small corners stay circular arcs;
 `draw::shape_cover` switches to the continuous corner above 8 px (superellipse n = 3.2, reach
 1.5 × radius, chosen so the diagonal cut is as deep as the circle's; checked by a unit test,
-not against Apple's real curve). Not yet looked at on screen at 100% and 200% scale.
+not against Apple's real curve).
 
 ## Building a new widget
 
@@ -158,36 +147,33 @@ cover, a width that follows its content), `taskbar-discord` (a worker, a width t
    `startup.log`). It then stays as a watchdog: a widget it started that crashes (exit code
    0xC0000xxx) is started again after 2, 4, 8 … s, and given up on after 5 crashes in 10 min; Quit
    or being stopped is left alone (`taskbar_dock::crash`; Block logs the panic reason in the
-   widget's log). Don't use the `HKCU\...\Run` key: on this Windows build its values were skipped
-   at sign-in.
-8. **Not the widget's job any more** (Block does them, the same for every widget): the strip
+   widget's log). Use the launcher, never the `HKCU\...\Run` key (its values are skipped at
+   sign-in on this PC).
+8. **Block's job, not the widget's** (the same for every widget): the strip
    window and its DPI handling, the dock slot, order, drag and drop, fit next to the taskbar's
    buttons (narrow, compact, hide), instant reflow on neighbours' changes, hover / click / pin
    panels with their fade and placement, the right-click panel's standard rows (Show on taskbar,
    Compact mode, Start with Windows, Edit settings…, Quit), the tray icon, one instance,
    Explorer restarts, the floating fallback and following Windows' theme and settings.
-9. **Done** when it has the five parts in CLAUDE.md ("Every widget has these five parts"), the
-   behaves like the other widgets (drag, drop, compact, crowding, panels, cover), and `dockctl <widget> state|panel|menu` answers.
+9. **Done** when it has the five parts in CLAUDE.md ("Every widget has these five parts"), it
+   behaves like the other widgets (drag, drop, compact, crowding, panels, cover), and
+   `dockctl <widget> state|panel|menu` answers.
 
 ## Building
 
-```
-cargo build --release
-cargo test --release
-```
-- The widgets build the library as part of their own builds. Run the library's tests after changing it.
+- Build, test and restart with the widget's `dev.ps1` (CLAUDE.md "Working on any widget"); the
+  widgets build the library as part of their own builds.
 - Keep paths short, because MSVC `link.exe` fails on paths over 260 characters.
 - Don't `cargo clean`: keeping `target\` makes rebuilds take seconds.
-- A running widget locks its exe. Stop the process before rebuilding or copying it, then start it again. The bus widget runs from a copy (`buswidget\buswidget.exe`); the weather widget runs from `target\release`.
+- A running widget locks its exe; dev.ps1 stops it before building or copying.
 
 ## Testing
 
 ### dockctl: command-line control of widgets on Block
 
 `taskbar-dock\dockctl.exe [--timeout <s>] <weather|bus|discord|media|all> <command> [args]` talks to a running
-widget and prints JSON. Only widgets on Block answer (all four); one
-that isn't is reported as `"absent": "running, not on Block yet"` or `"not running"`.
-For `all` that isn't an error. Exit code: 0 all succeeded, 1 error or timeout, 2 usage error.
+widget and prints JSON. A widget that isn't running is reported as `"absent": "not running"`;
+for `all` that isn't an error. Exit code: 0 all succeeded, 1 error or timeout, 2 usage error.
 For `all`, 2 takes precedence if any widget reports a usage error. The default deadline is 5
 seconds, or 120 seconds for `do`; `--timeout` overrides it.
 
@@ -260,13 +246,9 @@ dockctl media do pause --app spotify
 Explorer message, then explorer.exe started through a one-off scheduled task). Use it with
 `dockctl … state` / `log` to check the Explorer-restart path for real.
 
-### Other rules
+### Other rules (the test order and mouse rules are in CLAUDE.md "Testing", "Hard rules")
 
-- Prefer, in this order: unit tests, dockctl, logs and geometry scripts that print numbers,
-  screenshots (`local_widget_check`, which opens Block widgets' panels through dockctl).
 - Prefer unit tests for rules: layouts, timings and behaviour live in the library as plain functions so they can be tested without windows (see `panel.rs`, `badge.rs`, `draw.rs`).
 - On screen, measure instead of eyeballing: UI Automation gives the strip and tray button rectangles, and a screenshot of the taskbar gives pixel extents (that's how the clock baselines and the tray-icon box were found).
-- Mouse tests may move and click only on the widgets, their panels and their own menus. Find the windows first and stop if one isn't found or its rectangle looks wrong, so nothing is clicked by accident.
-- Never simulate system-UI keys (Win+A, Win+N, …) on the user's desktop. Ask the user to try those instead.
 - PowerShell trap: passing `$null` to a P/Invoke `string` parameter sends `""`, so `FindWindow(class, $null)` finds nothing. Use `[NullString]::Value`.
 - Don't re-download big data (e.g. a GTFS zip) just to test. Use the cached copy or a saved sample in `tests\`.

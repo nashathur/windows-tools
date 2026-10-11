@@ -205,7 +205,7 @@ impl Content for App {
 
     fn panel_mouse(&mut self, kind: PanelKind, ev: PanelMouse, ctx: &mut Ctx) {
         if kind == PanelKind::Picker { self.picker.mouse(ev,ctx); return; }
-        // a click on the departures closes them (as before the port)
+        // a click on the departures closes them
         if let PanelMouse::Up(..) = ev {
             ctx.close_panel();
         }

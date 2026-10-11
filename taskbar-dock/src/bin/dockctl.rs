@@ -115,7 +115,7 @@ enum Outcome {
 
 unsafe fn ask(me: HWND, w: &Known, args: &[String], timeout: Duration) -> Outcome {
     let Some((target, pid)) = find(&format!("{}Main", w.class), w.exe) else {
-        return Outcome::Absent(if running(w.exe) { "running, not on Block yet" } else { "not running" });
+        return Outcome::Absent(if running(w.exe) { "running, not answering" } else { "not running" });
     };
     // a panel or menu opened by the command may take focus, as after a click
     AllowSetForegroundWindow(pid);

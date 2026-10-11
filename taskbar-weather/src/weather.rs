@@ -1,3 +1,6 @@
+//! Open-Meteo: geocoding, IP location (ip-api.com), the forecast request and its parsing into
+//! `Weather`; also the shared HTTP agent.
+
 use crate::config::Config;
 use serde::Deserialize;
 use std::sync::Arc;

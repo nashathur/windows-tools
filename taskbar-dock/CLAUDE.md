@@ -4,27 +4,17 @@ Widgets using it: `..\buswidget` (bus departures), `..\taskbar-weather`, `..\tas
 `..\taskbar-discord` (Discord voice chat via Discord's local RPC). Each widget's CLAUDE.md imports
 this file. Reference, read by section when the task reaches it:
 - **BLOCK.md**: Block's API (Spec, Content, Ctx, panel shell, tray icon, settings it owns). Read
-  before changing Block or a widget on it (weather, discord, bus).
+  before changing Block or building or changing a widget.
 - **UI-RULES.md**: corners, button highlights and hitboxes, cover/logo click and feel. Read before
   changing any drawing, hit box, highlight, radius or cover behaviour.
 - README.md: the recipe for a new widget (a `Spec` + a `Content`), the shared `dock` settings,
-  corner design reasoning, dockctl ("Testing"). plan\PLAN.md: open ideas (the Block rebuild, steps 0–11, is
-  done; its notes are in git history).
+  corner design reasoning, dockctl ("Testing"). plan\PLAN.md: open ideas.
 
 ## Library modules (windows-sys 0.52, handles are isize; `windows` 0.58 only for UI Automation in icons)
 **A widget is a `Spec` + a `Content` handed to `block::run`; Block does the rest** (BLOCK.md).
-Block's internals, which a widget doesn't call: dock (stack order, `slot`, sticky drop slot,
-WinEvent hooks; `fit` next to the taskbar's buttons: narrow, compact, hide) · icons (taskbar
-buttons via UIA, read by the leader only) · panel (hover/click/pin, `Fade`, `place`) · menu_panel
-(the right-click panel; a widget only gives rows) · strip (`Motion`: glide, drag, zoom, compact
-resize) · crash (panic log, the launcher watchdog's restart rules) · startup (Start with Windows
-list) · ctl (dockctl's command format).
-What a widget's own code uses: settings (shared settings.json, one section per app; `update` holds
-a cross-process lock, writes are temp file + rename) · style (`Look`) · system (Windows settings) ·
-theme (design code: widgets take every colour, font and font size from it; `brand` allow-list;
-checked by `tests\theme_lint.rs` in dev.ps1) · draw (rounded shapes, boxes, highlights,
-`progress_ring`) · emoji (colour emoji via Direct2D + DirectWrite; GDI draws emoji in one colour) ·
-badge · anim (`pulse`, easing) · marquee · window (`raise`: bring an app's window to the front).
+A widget's own code uses settings, style, system, theme (every colour, font and size; checked by
+`tests\theme_lint.rs`), draw, text_edit, emoji, badge, anim, marquee, window; the other modules
+are Block's internals. One line per module: README.md "What's in it".
 
 ## Where a rule lives (rule)
 A behaviour every widget shares is written once, in Block or in `theme`, never copied into a
@@ -48,9 +38,8 @@ rule in UI-RULES.md is made in Block / `theme`, then checked on every widget (do
    widget's actions, then Show on taskbar, Compact mode and Start with Windows as on/off
    switches, Edit settings…, Quit (Block's `menu_panel` with its standard rows).
    Right click while the left-click panel is open switches to it, and back.
-A new widget isn't done until it has all five. All four widgets are on Block, so the parts
-themselves are Block's: a widget supplies the content of each (the strip's two modes, the panels'
-drawing, its menu rows).
+A new widget isn't done until it has all five. The parts themselves are Block's: a widget
+supplies the content of each (the strip's two modes, the panels' drawing, its menu rows).
 
 ## Working on any widget
 - Build/test/restart with the widget's `dev.ps1` (wraps `scripts\dev.ps1`): prints only errors,
@@ -60,20 +49,19 @@ drawing, its menu rows).
   runs; "SMOKE FAILED" exits 1.
 - Use `-Fast` in the edit loop (`[profile.fast]`: release without LTO, incremental; whole dev.ps1
   ~1 s vs ~14 s); build the small full-LTO `release` exe once at the end. Tests always run in
-  `fast`. Measured 2026-10-09: `rust-lld` and splitting crates gain nothing (the time is LTO).
+  `fast`. `rust-lld` and splitting crates were measured to gain nothing (the time is LTO).
 - Library tests: `dev.ps1 -Lib` from any widget, or `cargo test --profile fast` here.
 - Big files: a widget's `main.rs` holds its `App` (the `Content`), the `Spec` and `main`; features
   live in modules. `scripts\split.sh` moves a line range into a module.
-- Version control: `C:\Users\thurs\tools` is one git repo (since 2026-10-10). Before changing the
-  library, make sure the last good state is committed (ask before committing), and keep all
-  widgets building.
-- Start with Windows (README "Building a new widget", step 7): the launcher `taskbar-dock-start.exe` and its
-  watchdog. Never the Run registry key (Windows skipped those values here). After rebuilding the
-  launcher, copy `target\release\taskbar-dock-start.exe` to `taskbar-dock\`.
+- Version control: `C:\Users\thurs\tools` is one git repo. Before changing the library, make
+  sure the last good state is committed (ask before committing), and keep all widgets building.
+- Start with Windows (README "Building a new widget", step 7): the launcher `taskbar-dock-start.exe`
+  and its watchdog. After rebuilding the launcher, copy `target\release\taskbar-dock-start.exe`
+  to `taskbar-dock\`.
 - Z-order: a docked strip's `SetWindowPos(h, HWND_TOP, ..)` always ORs in `dock::raise_flag(h)`
-  (`strip::move_strip` does): it raises only when the taskbar's own content is above it, or while
-  it's dragged. Raising on every redraw made the widgets raise each other through their WinEvent
-  hooks (~7 restacks/s) and the strips flickered. Probe: `tools\_tmp\watch_z.ps1` (0 restacks at rest).
+  (`strip::move_strip` does), so it raises only when the taskbar's own content is above it or
+  while dragged; raising on every redraw makes the widgets raise each other and flicker. Probe:
+  `tools\_tmp\watch_z.ps1` (0 restacks at rest).
 - Read files by section (grep the `// ----` headers or `fn name`, then read that range), not whole.
 
 ## Code tools (MCP `local-llm`, free; decide yourself, state the choice in one line)
@@ -108,9 +96,7 @@ reaches the bug's real path, say so instead of adding a shallow test.
 - **Claude desktop sessions see a private `%APPDATA%`** (MSIX): reads/writes under
   `AppData\Roaming` from session shells, and widgets started from them, go to
   `AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\TaskbarDock`, not the real folder
-  the sign-in launcher and Explorer-started widgets use (2026-10-10: the real settings.json had no
-  `startup` list; a session-started widget read the private order.txt and overlapped the others).
-  To read/write the real folder or start widgets as at sign-in, use a one-off scheduled task
+  the sign-in launcher and Explorer-started widgets use. To read/write the real folder or start widgets as at sign-in, use a one-off scheduled task
   (`Register-ScheduledTask` + `Start-ScheduledTask`, then unregister it); `scripts\dev.ps1` already
   starts widgets that way. After changing settings.json from a session, copy it to the real folder
   that way. Never start a widget directly from a session shell.

@@ -2,13 +2,13 @@
 
 @../taskbar-dock/CLAUDE.md
 
-Rust, `windows` crate (structure copied from taskbar-weather). README.md has setup and settings.
+Rust, `windows` crate. README.md has setup and settings.
 Runs straight from `target\release\taskbar-discord.exe` (dev.ps1 stops it before building).
 Settings section `discord`; start with Windows via the shared `startup` list (name "discord").
 Log: `%APPDATA%\TaskbarDock\taskbar-discord.log` (never tokens or the secret).
 
 Data: Discord's official local RPC (`\\.\pipe\discord-ipc-N`), with the user's own Discord app
-(client_id/secret). Chosen 2026-10-09 over TaskbarWidgets' way (UI Automation of Discord's window
+(client_id/secret), not TaskbarWidgets' way (UI Automation of Discord's window
 + the `discord-webrtc_0` log): that log only gets stats every 10 s here, so speaking was ~10 s late.
 The strip shows during a call, or when the user must act (setup, sign-in, error), while Block's
 Show on taskbar switch is on (`Content::visible`); otherwise Block shows the tray icon (headset).

@@ -23,7 +23,7 @@ are Block's too (no strip needed: the panel opens above the pointer).
 ## Main panel (`shell.rs`)
 Block's window (class `<class>Panel`): create, place, paint, Esc / lost focus / right click. The
 Content gives `panel_size(kind, scale)` (px; None: no panel), `panel_draw(kind, cv, &PanelFrame)`
-(theme bg already filled, opaque GDI) and optionally `panel_mouse`; no `Spec::panel` hook any more.
+(theme bg already filled, opaque GDI) and optionally `panel_mouse`.
 `Ctx::resize_panel()`: the open panel takes a new `panel_size`, re-placed by the rule it opened
 with, after the strip's redraw, no fade.
 - The shell owns one HWND and one fade. Its active `PanelKind` is passed to every callback.
@@ -61,10 +61,10 @@ with, after the strip's redraw, no fade.
   once) and glides to it like a compact switch (`start_resize` watches the target width: compact
   or crowded; `core::animate_width`, tested), `publish_drawn` each frame so the neighbours follow. Meanwhile `Frame::fit_width` may
   be **wider** than the content: lay out to it up to your maximum (media's text column, discord's
-  avatar column). Without the flag a new width jumps as before (weather, bus); a compact switch
+  avatar column). Without the flag a new width jumps (weather, bus); a compact switch
   animates for every widget.
 - The compact switch and every glide take `glide_ms` (300) on the taskbar's own curve
-  (`anim::ease_dock`, measured 2026-10-11). Each frame of a switch Block publishes the drawn width
+  (`anim::ease_dock`). Each frame of a switch Block publishes the drawn width
   (`dock::publish_drawn`, before the window takes it; cleared + `notify` on the last frame) and
   passes the right-anchored position to `UpdateLayeredWindow` (`strip::right_anchored`: size and
   position in one step). The others place themselves by it (`dock::placed_width`) and, while
@@ -79,10 +79,17 @@ with, after the strip's redraw, no fade.
   on the frames). Only the window's opacity changes (`UpdateLayeredWindow` blend only), so the
   Content needn't draw while it goes; clicks on a fading-out strip do nothing. Instant: Quit,
   hiding for lack of room, Windows' animations off.
+- Explorer restart: Block re-creates the strip in the new taskbar (watch tick every second and
+  `TaskbarCreated`). Floating fallback (`Spec::float`, `Float::Fallback`): attaching failed or
+  no taskbar for 10 s → a topmost window (`FloatAt::BesideDock`: left of the dock, not
+  draggable; `FloatAt::Saved`: at a saved x, draggable); hides while a full-screen app is in
+  front; re-attaches when it can (after a failed attach, retried every 60 s).
+  `Spec::force_float` floats from the start.
 - Floating strips get a backdrop in the panels' background (`theme.color.bg`, 96 %), in the
   highlight's shape, under everything (readable over other windows).
 - `badge::font_px(look, scale)` for badge text.
-- Cover feel and click: return the box from `Content::cover` (UI-RULES.md "Cover").
+- Cover feel and click: `Content::hit` returns `Hit::Cover(box)` and `Content::cover` the same
+  box (UI-RULES.md "Cover").
 
 ## Show on taskbar + tray icon
 The strip shows when the switch is on and `Content::visible()`; the tray icon (`tray.rs`, logo

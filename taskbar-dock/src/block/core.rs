@@ -656,7 +656,7 @@ mod tests {
     #[test]
     fn a_tray_opened_panel_goes_above_the_pointer_at_the_work_areas_bottom() {
         let work = (0, 0, 1920, 1032);
-        // measured with the old flyout.rs: pointer x 864 → (684, 526) for 360×494, margin 12
+        // measured on screen: pointer x 864 → (684, 526) for 360×494, margin 12
         assert_eq!(panel_at_pointer((864, 761), 360, 494, work, 12), (684, 526));
         // the pointer's y doesn't matter (the tray is on the taskbar, below the work area)
         assert_eq!(panel_at_pointer((864, 1060), 360, 494, work, 12), (684, 526));

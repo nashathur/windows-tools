@@ -1,3 +1,5 @@
+//! The `discord` settings section.
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use taskbar_dock::settings;
