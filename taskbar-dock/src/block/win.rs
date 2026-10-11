@@ -9,7 +9,7 @@ mod remote;
 mod shell;
 
 use super::core::{self, Core, Route, Up};
-use super::place;
+use super::{frames, place};
 use super::*;
 use crate::dock::{self, Fit, FitChange, FitState};
 use crate::panel::{Action, Fade};
@@ -32,8 +32,8 @@ const T_HOVER: usize = CONTENT_TIMERS + 4;
 const T_FADE: usize = CONTENT_TIMERS + 5;
 const T_FEEL: usize = CONTENT_TIMERS + 6;
 const T_WATCH: usize = CONTENT_TIMERS + 7;
-/// Animation frames (glide, zoom, resize, fade).
-const FRAME_MS: u32 = 10;
+/// The animations, run on the display's refresh ([`frames`]) instead of a timer.
+const FRAME_TIMERS: [usize; 5] = [T_GLIDE, T_ZOOM, T_RESIZE, T_FADE, T_FEEL];
 /// Hover-open / hover-close checks ([`crate::panel`]).
 const HOVER_MS: u32 = 50;
 /// Keeping the strip alive and in place, following settings and Windows (backup for the hooks).
@@ -62,6 +62,8 @@ struct State {
     /// The main panel's window while open (0: none; [`shell`]).
     panel: HWND,
     fade: Fade,
+    /// The [`FRAME_TIMERS`] running now (bit i: `FRAME_TIMERS[i]`).
+    frames: u32,
     hooks: dock::Hooks,
     settings_mtime: Option<SystemTime>,
     taskbar_created: u32,
@@ -145,6 +147,7 @@ pub fn run<C: Content>(spec: Spec, content: C) {
                 fs_hidden: false,
                 panel: 0,
                 fade: Fade::default(),
+                frames: 0,
                 hooks: dock::Hooks::default(),
                 settings_mtime: settings::mtime(),
                 taskbar_created: RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()),
@@ -286,13 +289,33 @@ fn apply(reqs: Vec<Request>) {
     }
 }
 
+/// Starts or stops one of Block's timers. The animations ([`FRAME_TIMERS`]) run on the display's
+/// refresh ([`frames`]): each frame calls every running one ([`on_frame`]).
 fn timer(id: usize, on: bool) {
     let Some(main) = st(|s| s.main) else { return };
+    if let Some(bit) = FRAME_TIMERS.iter().position(|t| *t == id) {
+        let Some(running) = st(|s| {
+            if on { s.frames |= 1 << bit } else { s.frames &= !(1 << bit) }
+            s.frames
+        }) else { return };
+        return frames::run(main, running != 0);
+    }
     unsafe {
         if on {
-            SetTimer(main, id, if id == T_HOVER { HOVER_MS } else { FRAME_MS }, None);
+            SetTimer(main, id, HOVER_MS, None);
         } else {
             KillTimer(main, id);
+        }
+    }
+}
+
+/// A display refresh while animations run: one step of each (in [`FRAME_TIMERS`] order; one that
+/// a step before stopped is skipped).
+fn on_frame() {
+    frames::done();
+    for (bit, id) in FRAME_TIMERS.into_iter().enumerate() {
+        if st(|s| s.frames & (1 << bit) != 0) == Some(true) {
+            on_timer(id);
         }
     }
 }
@@ -332,6 +355,10 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             }
             if msg == remote::click_message() {
                 remote::pending_click();
+                return 0;
+            }
+            if msg == frames::message() {
+                on_frame();
                 return 0;
             }
             if msg >= WM_USER {

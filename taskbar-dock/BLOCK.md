@@ -34,6 +34,9 @@ with, after the strip's redraw, no fade.
   passes the right-anchored position to `UpdateLayeredWindow` (`strip::right_anchored`: size and
   position in one step). The others place themselves by it (`dock::placed_width`) and, while
   `Slot::follow`, jump to their slot each frame (`Motion::follow`) instead of gliding.
+- Block's animations (glide, zoom, switch, panel fade, cover feel: `FRAME_TIMERS` in win.rs) run
+  on the display's refresh, not a timer (`frames.rs`: `DwmFlush` on a worker thread, one frame
+  message at a time). Content timers (`Ctx::every`) are plain SetTimer (~15.6 ms resolution).
 - `badge::font_px(look, scale)` for badge text.
 - Cover feel and click: return the box from `Content::cover` (UI-RULES.md "Cover").
 

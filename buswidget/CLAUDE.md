@@ -25,5 +25,5 @@ widget's rows from `Content::menu`: Change stop…, Refresh live times, Update t
 
 ## Testing
 Use `taskbar-dock\dockctl.exe bus state|panel …|menu …|simulate …` (README there), not `_tmp\real.ps1`
-or mouse clicks. The dock leader is whichever strip is first in the real order.txt (now weather), so
-`_tmp\fit_test.ps1` needs `-Widget taskbar-weather` for the edge tests.
+or mouse clicks. The dock leader is whichever strip is first in the real order.txt (bus since 2026-10-11; check
+it), and `_tmp\fit_test.ps1 -Widget <its folder>` must name it for the edge tests.

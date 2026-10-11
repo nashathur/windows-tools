@@ -28,6 +28,7 @@
 //! worker threads) reaches the Content through [`with`], which works the same way.
 
 mod core;
+mod frames;
 mod place;
 mod tray;
 mod win;
