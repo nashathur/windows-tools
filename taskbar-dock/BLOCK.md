@@ -10,9 +10,10 @@ menu), `shell.rs` (main panel, child module of win.rs), `tray.rs`, `remote.rs` (
 
 ## API (`mod.rs`)
 Spec, Content, Frame, Canvas, Hit, MenuBuilder with the standard rows. Ctx requests are applied
-after the borrow: incl. `toggle_panel` / `open_menu` for a tray icon (no strip needed: the panel
-opens above the pointer), `redraw_panel`, `resize_panel`, `redraw_tray`; `with` for the widget's
-own windows / worker posts.
+after the borrow: `redraw`, `redraw_panel`, `resize_panel`, `redraw_tray`, `every` / `stop` (content
+timers), `close_panel`, `quit`, `after`; `with` for the widget's own windows / worker posts. A
+left click on the strip always toggles the panel (Block's, no widget decides); a tray icon's clicks
+are Block's too (no strip needed: the panel opens above the pointer).
 
 ## Main panel (`shell.rs`)
 Block's window (class `<class>Panel`): create, place, paint, Esc / lost focus / right click. The
@@ -42,11 +43,11 @@ with, after the strip's redraw, no fade.
   Content that keeps things at its right end lays out to it instead of being cut off (discord: the
   avatar column narrows, its avatars fading with it).
 - Width following the content (plan step 9), `Spec::glide_width` (media, discord): Block takes a
-  new measured width (`core::WidthHold`: one up to 4 px narrower is ignored, any wider is taken, else the content is cut off; `Spec::width_hold` can make
-  a width hold first, wider / narrower, default none: the user wants no delay; one-shot `T_HOLD`
-  looks again when it's due), publishes it as `full` (the others refit once) and glides to it
-  like a compact switch (`start_resize` watches the target width: compact, crowded or held; `core::animate_width`,
-  tested), `publish_drawn` each frame so the neighbours follow. Meanwhile `Frame::fit_width` may
+  new measured width at once (`core::WidthHold`: a width up to 4 px narrower than the held one is
+  ignored, room to spare; any wider is taken, else the content is cut off; no delay, the user wants
+  none; a hold-first option was removed in step 10), publishes it as `full` (the others refit
+  once) and glides to it like a compact switch (`start_resize` watches the target width: compact
+  or crowded; `core::animate_width`, tested), `publish_drawn` each frame so the neighbours follow. Meanwhile `Frame::fit_width` may
   be **wider** than the content: lay out to it up to your maximum (media's text column, discord's
   avatar column). Without the flag a new width jumps as before (weather, bus); a compact switch
   animates for every widget.

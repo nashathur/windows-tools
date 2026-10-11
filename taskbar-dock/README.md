@@ -4,6 +4,12 @@ A shared Rust library for the taskbar widgets: the bus widget (`C:\Users\thurs\t
 
 ## What's in it
 
+A widget is a `Spec` + a `Content` given to `block::run` (see "Building a new widget" and BLOCK.md).
+`block` is the one module a widget runs on; `dock`, `icons`, `panel`, `menu_panel`, `strip`,
+`crash` and `startup` are Block's internals (widgets don't call them); `settings`, `style`,
+`system`, `theme`, `draw`, `badge`, `emoji`, `marquee`, `anim`, `window` are what a widget's own
+drawing and data code use.
+
 | Module | What it gives a widget |
 |---|---|
 | `settings` | One settings file for all widgets: `%APPDATA%\TaskbarDock\settings.json`. Each widget has its own section and the shared one is `dock`. Each widget rewrites only its own section, and every write is atomic. |
@@ -14,10 +20,15 @@ A shared Rust library for the taskbar widgets: the bus widget (`C:\Users\thurs\t
 | `panel` | How a widget's panel opens and closes: hover, click, pin, right-click, drag, one at a time, and the fade-in. The same for every widget, with tests. |
 | `menu_panel` | The right-click panel, in place of a Windows menu: an optional title and subtitle, action rows with an icon, on/off switches (flip and stay open), separators, and "Edit settings… / Quit" side by side. `run(anchor, menu, look, scale, on_switch)` works like `TrackPopupMenu` (own message loop, returns the action chosen); call `close()` on the shared close-panel message. Same colours as the other panels. With tests. |
 | `strip` | How a strip moves in the dock: slide right / jump left into its slot, press vs drag (3 px), follow the mouse centred while the content zooms to `drag_zoom`, shrink back after the drop. `Motion` answers with positions and does no window work (move outside your state's borrow); `move_strip` puts a child or floating strip at a screen x. A width change keeps the right edge (`keep_right_edge`, or in one step with `right_anchored`); switching compact mode animates the width (`resize`, `resize_width`); a neighbour's width change is followed frame by frame (`follow`); a drag stays within `Limits` (tray, taskbar buttons). Glides and the switch ease like the taskbar's own buttons (`anim::ease_dock`). With tests. |
-| `draw` | Drawing for a per-pixel-alpha taskbar strip: text colour, two lines on the clock's baselines, icons in the tray-icon box, rounded shapes, the hover highlight (whole strip, or one button with `background_in`), and an anti-aliased `progress_ring` along a rounded square (fractional positions allowed). |
+| `draw` | Drawing for a per-pixel-alpha taskbar strip: text colour, two lines on the clock's baselines, icons in the tray-icon box, rounded shapes, the hover highlight (a box of the strip: `background_rect`), and an anti-aliased `progress_ring` along a rounded square (fractional positions allowed). |
 | `badge` | A coloured, rounded badge with short text (e.g. a bus line number): tray-icon tall, as wide as its text, text centred, shared corners and font, automatic black/white text. |
 | `anim` | Easing and animation progress (0 ms when animations are off). `pulse`: a slow, smooth 0 → 1 → 0 every 2.4 s for "alive, nothing else to show"; `pulse_settle`: gliding down to 0 from wherever a pulse stopped. |
 | `marquee` | Scrolling text for a line too long for its fixed-width box: still if it fits; otherwise wait 1.5 s, then scroll left at 30 px/s in a loop (the start follows 40 px after the end) until it's back where it began, and repeat. `fade_edges` softens the cut-off edges. Still (cut with "…") when animations are off. |
+| `block` | The strip window and all its behaviour (dock slot, drag, panels, right-click panel, tray icon, fit, Explorer restarts, floating fallback). A widget gives a `Spec` and a `Content` and calls `block::run`. BLOCK.md. |
+| `theme` | The design code: every colour, font, font size and spacing, light and dark; the `brand` allow-list for brand and data colours. Widgets take all of them from here (`tests\theme_lint.rs` checks it). plan\tokens.md. |
+| `emoji` | Colour emoji through Direct2D + DirectWrite (GDI draws emoji in one colour). |
+| `window` | `raise`: bring another app's window to the front; `exe_path`, `is_exe`. |
+| `startup`, `crash`, `ctl` | The Start with Windows list, the launcher watchdog's restart rules and panic log, and dockctl's command format. |
 
 ## The shared `dock` settings
 
@@ -98,73 +109,64 @@ not against Apple's real curve). Not yet looked at on screen at 100% and 200% sc
 
 ## Building a new widget
 
-The steps below follow the bus widget. `buswidget\rust\src\main.rs` uses `windows-sys` like this library, so it's the closest template. taskbar-weather shows the same steps with the `windows` crate. It converts handles with `h.0 as isize`.
+**A new widget = a `Spec` + a `Content`.** The widget supplies the parameters and what to draw;
+`block::run(spec, content)` does everything else (BLOCK.md has the API). The closest examples:
+`taskbar-weather` (smallest), `buswidget\rust` (a dialog, a worker), `taskbar-media` (buttons, a
+cover, a width that follows its content), `taskbar-discord` (a worker, a width that follows).
 
-1. **Dependency**: `taskbar-dock = { path = "C:/Users/thurs/tools/taskbar-dock" }` (or a relative path).
-2. **Manifest**: embed a Windows 8+ `supportedOS` app manifest. A transparent (layered) child window needs it. Copy `buswidget\rust\build.rs` and `buswidget.exe.manifest`.
-3. **DPI**: call `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` at startup.
-4. **The strip**: create a `WS_EX_LAYERED` `WS_CHILD` window with `dock::taskbar()` as parent and a unique window class, which is the widget's name in the dock order. Then call `dock::mark_member(hwnd)`.
-5. **Look**: keep a `Look` with `Look::current()`. Refresh it every second and on `WM_SETTINGCHANGE`/`WM_DPICHANGED`, and redraw when it changed. Get the scale with `system::scale_for(taskbar)`.
-6. **Drawing** (see the bus widget's `render_bar`):
-   1. Make a 32-bit DIB as tall as the taskbar.
-   2. Draw the text white on black with GDI at `draw::two_line_tops(...)`, then call `draw::text_to_color` with `look.text_rgb()`.
-   3. Icons and badges go in the tray-icon box from `draw::icon_box(height, scale)`. That's the same 16 px size and height as Windows' tray icons (network, volume), so everything lines up.
-      - For a glyph (emoji, symbol font, future icons), draw it large (~64 px) white on black in a scratch buffer, then call `draw::fit_icon`. It scales the visible part to fit the box and centres it, whatever spacing the font adds.
-      - For a badge (a coloured, rounded shape with short text, like the bus line number), use `badge`. Make the font with `badge::font(&look, scale)` and measure with `Badge::measure(dc, font, text, height, scale)`; its `.width` is the room it takes. After `text_to_color`, call `.paint(dc, buf, width, x, font, bg, fg, &look, scale)`. It's tray-icon tall, as wide as the text plus 4 px each side (at least square), with the text centred by its visible pixels and the shared corner radius. Pass `None` as `fg` for automatic black or white text.
-   4. Draw opaque shapes, then `draw::round_rect`.
-   5. Call `draw::background` (hover highlight) and `UpdateLayeredWindow`.
-7. **Position**: after drawing, `dock::publish_widths(me, Size { full, min, stretch })` (full: in the chosen mode; min: compact; stretch: any width between, like media's text column). Then `dock::slot(taskbar, me, size, dock::tray_boundary(taskbar, scale), gap_px)` gives `x_for(drawn width)`, `slide` and `fit`. `None` means "stay put": the taskbar's window list is briefly empty while the action center is open. Feed `fit` to a `dock::FitState`: `Redraw` → draw compact or at the narrowed width; `Hide` → close the panel, `set_squeezed(true)`, hide, log; `Show` → `set_squeezed(false)`, draw, show, log. Keep checking once a second while hidden (no events reach a hidden strip). Move there with `strip::Motion::glide_to` (it slides right and jumps left) and its `Glide` answer; see `glide_to` in the bus widget. Re-check once a second.
-8. **React instantly**: keep a `dock::Hooks` and call `hooks.update(taskbar, Some(callback))` every second. In the callback, re-snap when `dock::is_neighbour_event(...)` is true.
-9. **Drag**: keep a `strip::Motion`; the rules and the wiring are at the top of `src/strip.rs` (`block/win.rs` is the example; widgets on Block get it from there):
-   - Mouse-down: capture the mouse and `press`. Mouse move: `mouse_move`; on `Started` call `dock::set_dragging(me, true)`, `panel.drag_started()`, start the zoom timer, `dock::notify(me)`; move to the x it returns, and after every move of the dragged strip call `dock::track_drag(taskbar, me, boundary, gap)` (it decides the sticky drop slot and publishes it; does nothing when not dragged). Pass `strip::Limits` with `max` against the tray and `min` = `dock::icons_right(taskbar) + gap` (not over the taskbar's buttons).
-   - Release (or `WM_CAPTURECHANGED`): `release()`. `Click` is the click; on `Drop` call `dock::drop_reorder(...)` and only then `set_dragging(false)` (the others keep the preview until the new order is saved), start the zoom timer, glide into the slot, `dock::notify(me)`.
-   - Zoom timer: `zoom_step`, redraw at `zoom()`, then follow `drag_x` or glide to the slot.
-10. **Panel**: when it opens and closes is decided by `panel::PanelBehaviour`, the same for every widget. Don't write your own hover/click logic. The rules are in `src/panel.rs` and tested there:
-    - Hovering opens it after `look.hover_open_ms` without taking focus. It closes `look.hover_close_ms` after the mouse leaves both widget and panel.
-    - A click opens it with focus, or closes it. A click on a hover-opened panel keeps it open.
-    - A right-click isn't a hover, and starting a drag closes a hover-opened panel.
-
-    Wiring:
-    - Keep a `PanelBehaviour` and a `panel::Fade`.
-    - Report events:
-      - `mouse_entered` on the first `WM_MOUSEMOVE` (then start a 50 ms timer).
-      - `mouse_left(pointer outside the strip)` on `WM_MOUSELEAVE`.
-      - `click` on a left click that wasn't a drag.
-      - `button_click` instead, for a click on a button on the strip (e.g. play/pause): it doesn't open, pin or close the panel, and a pending hover-open waits its full delay again.
-      - `right_click(on_panel)` before the context menu, and `menu_closed` after it.
-      - `drag_started` / `drag_ended`.
-      - `closed(lost_focus)` when the panel closed by itself: deactivated, Esc, or `dock::close_panel_message()` from another widget.
-    - On the timer, call `tick(now, on_strip, on_panel, &look)`. Stop the timer when `wants_ticks()` is false.
-    - Do what each returned `Action` says:
-      - `OpenByHover`: show without activating.
-      - `OpenByClick`: show and `SetForegroundWindow`.
-      - `Pin`: `SetForegroundWindow`.
-      - `Close`: hide.
-    - Make the panel a top-level `WS_EX_LAYERED` popup with DWM `DWMWCP_ROUND`. When showing it, call `dock::close_other_panels(taskbar, me)` (one panel at a time), set alpha 0 and `fade.start(now)`. Then every 10 ms call `SetLayeredWindowAttributes` with `fade.alpha(now, &look)` until it returns `None`.
-    - Position it with `panel::place(strip, w, h, &look, scale)`. This centres it on the widget's centre, `panel_margin` above the taskbar, and keeps it inside the monitor's work area (it shifts sideways near a screen edge, and works on any monitor). `panel::position` is the same rule for any anchor rectangle.
-    - Make the panel follow the theme: pick its colours from `look.light`, and set DWM `DWMWA_USE_IMMERSIVE_DARK_MODE` to match.
-    - See `panel_do` in either widget.
-11. **Mouse on the strip**:
-    - Return `MA_NOACTIVATE` from `WM_MOUSEACTIVATE`, so clicking the widget doesn't activate the taskbar.
-    - On the first `WM_MOUSEMOVE`, call `TrackMouseEvent(TME_LEAVE)` and redraw with the hover highlight. On `WM_MOUSELEAVE` (0x02A3, which windows-sys 0.52 doesn't export there), redraw without it.
-12. **Context menu** (right-click):
-    - The strip is a child of the taskbar, so give `TrackPopupMenu` a top-level owner (e.g. the hidden panel or a hidden main window). Call `SetForegroundWindow(owner)` first, or the menu won't close when you click elsewhere.
-    - Use `TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN`.
-    - Call `panel.right_click(...)` before it and `panel.menu_closed()` after it (step 10). A right-click on the panel can show the same menu (the weather widget does), with `right_click(true)`.
-    - Standard items for every widget: **Edit settings…**, which opens `settings::path()` in Notepad (edits apply live), and **Quit**/**Exit**.
-13. **Settings**: keep your own settings in your own section with `settings::read()` and `settings::save_section("yourwidget", value)`.
-    - Watch `settings::mtime()` once a second to pick up edits. Do the same for any data file the user may edit (e.g. the bus widget's `line_colors.txt`).
-    - Secrets (API keys) go in your section but are never shown in full in logs, menus or panels; mask them.
-14. **Times**: use `look.time(h, m)` / `look.hour(h)`, never a fixed format.
-15. **Data and network**:
-    - Fetch on a worker thread, never on the UI thread, and redraw from the UI timer.
-    - Be careful with APIs: cache responses on disk and reuse them, poll no more often than the data changes, and only fetch when it's useful (the bus widget fetches live times only when a bus is due within 90 minutes).
-    - On HTTP 429 or an error, back off: keep the old data, save the next allowed try to disk so a restart doesn't retry early, and show that the data is stale rather than an empty widget.
-16. **Lifecycle**:
-    - **One instance**: create a named mutex (`Local\YourWidget.SingleInstance`) and exit if it already exists.
-    - **Explorer restarts** destroy the taskbar and the strip with it. Don't quit on `WM_DESTROY` unless the user chose Quit. Once a second, check that `dock::taskbar()` still is the parent; if it changed, create the strip again. Also listen for the `TaskbarCreated` registered message.
-    - **Fallback**: if attaching to the taskbar fails, show the strip as a floating topmost window just above it, and hide it while a full-screen app is in front.
-    - **Start with Windows**: `taskbar_dock::startup::set("<name>", on)` and `is_on("<name>")` put the widget on the `startup` list in settings.json. The launcher `taskbar-dock-start.exe` (src/bin, installed as `taskbar-dock\taskbar-dock-start.exe`) is run at sign-in by the Startup-folder shortcut "Taskbar widgets" and starts everything on the list (problems go to `startup.log`). It then stays as a watchdog: a widget it started that crashes (exit code 0xC0000xxx) is started again after 2, 4, 8 … s, and given up on after 5 crashes in 10 min; Quit or being stopped is left alone (`taskbar_dock::crash`). Call `taskbar_dock::crash::log_panics(log)` first thing in `main` so the reason is in the widget's log. Don't use the `HKCU\...\Run` key: on this Windows build its values were skipped at sign-in. Offer it as a menu item if it's easy.
+1. **The crate**: `taskbar-dock = { path = "../taskbar-dock" }`, `build.rs` + `app.manifest`
+   copied from `taskbar-weather` (a layered child window of the taskbar needs the Windows 8+
+   `supportedOS` manifest), a `dev.ps1` like theirs (it wraps `taskbar-dock\scripts\dev.ps1`), and a
+   `CLAUDE.md` that imports `..\taskbar-dock\CLAUDE.md`. `windows-sys` (like this library and bus)
+   or `windows` (weather, media: handles are `h.0 as isize`).
+2. **`Spec::new(class, section, title, log)`**: `class` is the strip window's class and its name
+   in the dock order, `section` the settings section (also the name on the startup list). Change
+   only what differs from the defaults: `mutex`, `float`, `force_float`, `draggable`, `hover_panel`,
+   `compact_when_crowded`, `stretch` (any width between compact and full, when crowded),
+   `glide_width` (a width that follows the content), `log_file` (dockctl's `log`), `dialog`.
+3. **A `Content`** (`block::Content`): `measure(frame, compact)` and `draw(canvas, frame)` are
+   required; everything else has a default: `hit`, `cover`, `tint`, `visible`, `side`, `start`,
+   `timer`, `button`, `cover_click`, the panel (`panel_size`, `panel_draw`, `panel_mouse`,
+   `panel_shown`), the right-click panel's own rows (`menu`, `menu_switch`, `menu_action`),
+   `settings_changed`, `look_changed`, `taskbar_restarted`, `on_message`, `closing`, and the tray
+   icon (`tray_icon`, `tray_tip`). A `Ctx` collects what a callback wants done (`redraw`,
+   `redraw_panel`, `every`, `after`, ...).
+4. **Drawing**: colours, fonts and sizes come from `theme` (`Theme::new(look)`, `theme::space`,
+   `theme::size`, the text styles), never typed in; `tests\theme_lint.rs` (dev.ps1) checks it.
+   Times: `look.time(h, m)` / `look.hour(h)`, never a fixed format. Helpers: `draw::icon_box`
+   (the tray-icon box: 16 px, so everything lines up with Windows' tray icons), `draw::fit_icon`
+   (a glyph drawn large, white on black, then fitted and centred), `draw::round_rect`,
+   `draw::progress_ring`, `badge` (a coloured rounded badge with short text), `emoji` (colour
+   emoji), `marquee` (a line too long for its box). UI-RULES.md for corners, highlights, hit boxes
+   and the cover.
+5. **Settings**: your own keys in your own section (`settings::read`, `settings::update`);
+   **merge** when saving: Block owns the section's `compact` and `show_on_taskbar`. Reload on
+   `Content::settings_changed` (an edit of the file applies live). Secrets (API keys) stay in the
+   section but are never shown in full in logs, menus or panels; mask them. A data file the user
+   may edit (bus's `line_colors.txt`): check its mtime from a content timer.
+6. **Data and network**: fetch on a worker thread, never the UI thread; the worker posts a
+   message to `ctx.main_window()` (`WM_APP + n`), `Content::on_message` takes it and calls
+   `ctx.redraw()`. Be careful with APIs: cache responses on disk, poll no more often than the data
+   changes, fetch only when it's useful (bus: live times only when a bus is due within 90
+   minutes). On HTTP 429 or an error back off: keep the old data, save the next allowed try so a
+   restart doesn't retry early, and show that the data is stale rather than an empty widget.
+7. **Start with Windows** is one of Block's standard right-click rows (the widget's `section` is
+   its name on the `startup` list in settings.json). The launcher `taskbar-dock-start.exe`
+   (src/bin, installed as `taskbar-dock\taskbar-dock-start.exe`) is run at sign-in by the
+   Startup-folder shortcut "Taskbar widgets" and starts everything on the list (problems go to
+   `startup.log`). It then stays as a watchdog: a widget it started that crashes (exit code
+   0xC0000xxx) is started again after 2, 4, 8 … s, and given up on after 5 crashes in 10 min; Quit
+   or being stopped is left alone (`taskbar_dock::crash`; Block logs the panic reason in the
+   widget's log). Don't use the `HKCU\...\Run` key: on this Windows build its values were skipped
+   at sign-in.
+8. **Not the widget's job any more** (Block does them, the same for every widget): the strip
+   window and its DPI handling, the dock slot, order, drag and drop, fit next to the taskbar's
+   buttons (narrow, compact, hide), instant reflow on neighbours' changes, hover / click / pin
+   panels with their fade and placement, the right-click panel's standard rows (Show on taskbar,
+   Compact mode, Start with Windows, Edit settings…, Quit), the tray icon, one instance,
+   Explorer restarts, the floating fallback and following Windows' theme and settings.
+9. **Done** when it has the five parts in CLAUDE.md ("Every widget has these five parts"), the
+   parity checks in `plan\PLAN.md` pass, and `dockctl <widget> state|panel|menu` answers.
 
 ## Building
 

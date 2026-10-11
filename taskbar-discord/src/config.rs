@@ -33,10 +33,6 @@ impl Default for Config {
     }
 }
 
-/// Keys of older versions, removed from the file once: `show_when_idle` ("Show when not in a
-/// call") went with Block's Show on taskbar switch (plan step 5).
-const GONE: [&str; 1] = ["show_when_idle"];
-
 impl Config {
     /// Loads the section and writes it back, so new settings show up in the file.
     pub fn load() -> Config {
@@ -61,11 +57,6 @@ impl Config {
             }
             for (k, v) in mine {
                 sec[k.as_str()] = v;
-            }
-            if let Some(sec) = sec.as_object_mut() {
-                for k in GONE {
-                    sec.remove(k);
-                }
             }
         });
     }

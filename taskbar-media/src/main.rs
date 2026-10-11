@@ -405,8 +405,8 @@ impl Content for App {
         m.title(if s.title.is_empty() { app.clone() } else { s.title.clone() });
         m.subtitle([s.artist.as_str(), source.as_str()].iter().filter(|t| !t.is_empty()).copied().collect::<Vec<_>>().join(" · "));
         let copy = if s.artist.is_empty() { s.title.clone() } else { format!("{} – {}", s.artist, s.title) };
-        m.item(Row::action(ID_OPEN, '\u{E8A7}', &format!("Open {app}")));
-        m.item(Row::action(ID_COPY, '\u{E8C8}', &format!("Copy \u{201C}{copy}\u{201D}")));
+        m.item(Row::action(ID_OPEN, taskbar_dock::menu_panel::glyph::OPEN, &format!("Open {app}")));
+        m.item(Row::action(ID_COPY, taskbar_dock::menu_panel::glyph::COPY, &format!("Copy \u{201C}{copy}\u{201D}")));
         m.sep();
     }
 

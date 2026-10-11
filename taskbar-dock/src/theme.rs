@@ -144,11 +144,6 @@ pub const EMOJI_FONT: &str = "Segoe UI Emoji";
 /// A strip glyph is drawn at this size, then fitted into the tray-icon box.
 pub const GLYPH_RASTER_PX: i32 = 64;
 
-/// The strip's text: the taskbar clock's font and size (`look.font_size`), regular.
-pub fn strip_text(look: &Look) -> TextStyle {
-    TextStyle { px: look.font_size, weight: 400 }
-}
-
 /// Spacing, px at 100% (4 px grid; `TIGHT` is the universal icon-text gap).
 pub mod space {
     pub const XS: f32 = 4.0;
@@ -172,10 +167,7 @@ pub mod size {
     pub const PANEL_STANDARD: f32 = 320.0;
     pub const PANEL_WIDE: f32 = 360.0;
     pub const ICON_BOX: f32 = crate::style::TRAY_ICON;
-    pub const BUTTON_BOX: f32 = ICON_BOX + 2.0 * crate::draw::BUTTON_MARGIN;
-    pub const PANEL_BUTTON: f32 = 36.0;
     pub const COVER_SMALL: f32 = 44.0;
-    pub const COVER_LARGE: f32 = 96.0;
 }
 
 /// Windows' default accent text shades (blue), used when the registry has none.
@@ -257,12 +249,6 @@ impl Theme {
     /// The allow-listed widget colour `name` for this theme (see [`brand`]).
     pub fn brand(&self, name: &str) -> Rgb {
         brand(name, self.light)
-    }
-
-    /// `c` washed `k` (0..1) toward the panel background (media tints toward the cover's colour
-    /// the other way round: `bg.mix(cover, k)`).
-    pub fn tinted(&self, c: Rgb, k: f32) -> Rgb {
-        c.mix(self.color.bg, k)
     }
 }
 
@@ -440,8 +426,6 @@ mod tests {
         }
         assert_eq!(TITLE.px_at(1.5), 23);
         assert_eq!(CAPTION.px_at(1.25), 15);
-        let look = crate::style::Style::default().resolve(&crate::system::read());
-        assert_eq!(strip_text(&look), TextStyle { px: look.font_size, weight: 400 });
     }
 
     #[test]
@@ -451,7 +435,7 @@ mod tests {
         assert_eq!((PANEL_PADDING, MENU_PADDING, ROW_HEIGHT, ROW_HEIGHT_LARGE, SECTION_GAP), (16.0, 12.0, 32.0, 40.0, 8.0));
         use size::*;
         assert_eq!((PANEL_NARROW, PANEL_STANDARD, PANEL_WIDE), (280.0, 320.0, 360.0));
-        assert_eq!((ICON_BOX, BUTTON_BOX, PANEL_BUTTON, COVER_SMALL, COVER_LARGE), (16.0, 24.0, 36.0, 44.0, 96.0));
+        assert_eq!((ICON_BOX, COVER_SMALL), (16.0, 44.0));
     }
 
     #[test]

@@ -269,10 +269,6 @@ impl Fade {
         self.0 = None;
     }
 
-    pub fn running(&self) -> bool {
-        self.0.is_some()
-    }
-
     /// The opacity (0..255) for now; None once finished (then it's fully opaque).
     pub fn alpha(&mut self, now: Instant, look: &Look) -> Option<u8> {
         let t0 = self.0?;

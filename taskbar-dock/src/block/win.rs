@@ -34,8 +34,6 @@ const T_FEEL: usize = CONTENT_TIMERS + 6;
 const T_WATCH: usize = CONTENT_TIMERS + 7;
 /// The strip fading in (new) or out (before it's removed).
 const T_APPEAR: usize = CONTENT_TIMERS + 8;
-/// A content width held back ([`core::WidthHold`]) is due: look again (one-shot).
-const T_HOLD: usize = CONTENT_TIMERS + 9;
 /// The animations, run on the display's refresh ([`frames`]) instead of a timer.
 const FRAME_TIMERS: [usize; 6] = [T_GLIDE, T_ZOOM, T_RESIZE, T_FADE, T_FEEL, T_APPEAR];
 /// Hover-open / hover-close checks ([`crate::panel`]).
@@ -285,7 +283,6 @@ fn apply(reqs: Vec<Request>) {
                 }
             }
             Request::ClosePanel => close_panels(),
-            Request::Menu => right_click(false),
             Request::Quit => quit(),
             Request::After(f) => f(),
         }
@@ -454,10 +451,6 @@ fn on_timer(id: usize) {
         T_FEEL => feel_step(),
         T_APPEAR => appear_step(),
         T_WATCH => watch(),
-        T_HOLD => {
-            timer(T_HOLD, false);
-            redraw();
-        }
         id if id < CONTENT_TIMERS => {
             call(|c, ctx| c.timer(id, ctx));
         }
@@ -545,7 +538,7 @@ fn mouse_up(h: HWND, click: bool, lp: LPARAM) {
     };
     let Some((up, reqs)) = st(|s| {
         let mut ctx = Ctx::new(s.main);
-        let up = s.core.up(click, at, s.spec.click, s.content.as_mut(), &mut ctx, Instant::now());
+        let up = s.core.up(click, at, s.content.as_mut(), &mut ctx, Instant::now());
         (up, ctx.reqs)
     }) else { return };
     if click {
@@ -1245,21 +1238,19 @@ fn redraw() {
         }
         // its widths for the dock's fit: in the chosen mode (a gliding width held steady first),
         // and compact (unzoomed)
-        let Some((size, raw, compact_w, hold, side, zoom, dragging, look, stretch, glide)) = st(|s| {
+        let Some((size, raw, compact_w, side, zoom, dragging, look, stretch, glide)) = st(|s| {
             let f = frame(&s.look, &s.core, floating, height, dpi, 1.0, s.core.compact);
             let chosen = s.content.measure(&f, s.core.compact);
             let compact = s.content.measure(&f, true);
-            let (held, hold) = if s.spec.glide_width {
+            let held = if s.spec.glide_width {
                 let key = (s.core.compact, height, (dpi * 1000.0).round() as i32);
-                s.core.width.update(key, chosen, (core::WIDTH_SLACK * dpi).round() as i32, s.spec.width_hold, Instant::now())
+                s.core.width.update(key, chosen, (core::WIDTH_SLACK * dpi).round() as i32)
             } else {
-                (chosen, None)
+                chosen
             };
             let size = core::size(held, compact, &s.spec);
-            (size, chosen, compact, hold, s.content.side(), s.core.motion.zoom(), s.core.motion.dragging(), s.look.clone(), s.spec.stretch, s.spec.glide_width)
+            (size, chosen, compact, s.content.side(), s.core.motion.zoom(), s.core.motion.dragging(), s.look.clone(), s.spec.stretch, s.spec.glide_width)
         }) else { return };
-        // a new width held back: look again when it's due
-        hold_timer(hold);
         let right = !floating && side == Side::Right;
         let gap = (look.gap * dpi).round() as i32;
         // on the right it's part of the dock stack against the tray; elsewhere it isn't
@@ -1458,18 +1449,6 @@ fn start_resize(strip: HWND, compact: bool, target: i32, glide: bool) -> Option<
         }
     }
     st(|s| s.core.motion.resize_width()).flatten()
-}
-
-/// A content width held back is due in `wait` (None: nothing pending): redraw then (T_HOLD).
-fn hold_timer(wait: Option<Duration>) {
-    match wait {
-        Some(d) => {
-            if let Some(main) = st(|s| s.main) {
-                unsafe { SetTimer(main, T_HOLD, d.as_millis() as u32 + 1, None) };
-            }
-        }
-        None => timer(T_HOLD, false),
-    }
 }
 
 /// The room next to the taskbar's buttons changed (dock::fit): hide or show the strip, and with

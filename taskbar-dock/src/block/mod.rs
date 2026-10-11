@@ -23,7 +23,7 @@
 //!
 //! Ownership ("requests, applied afterwards"): Block keeps its state, the Content included, in
 //! one thread-local `RefCell`. Content callbacks never touch windows; they record what they want
-//! on a [`Ctx`] (`redraw`, `every`, `open_panel`, `quit`, `after`), and Block carries that out
+//! on a [`Ctx`] (`redraw`, `every`, `close_panel`, `quit`, `after`), and Block carries that out
 //! once its borrow has ended. Code outside the callbacks (the widget's own windows, posts from
 //! worker threads) reaches the Content through [`with`], which works the same way.
 
@@ -76,15 +76,6 @@ pub enum Float {
     Fallback(FloatAt),
 }
 
-/// What a left click on the strip (outside its buttons and cover) does.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Click {
-    /// Opens / pins / closes the panel ([`crate::panel::PanelBehaviour::click`]).
-    TogglePanel,
-    /// [`Content::click`].
-    Content,
-}
-
 /// The adjustable parameters. Defaults (from [`Spec::new`]) are what the weather widget does.
 #[derive(Clone, Debug)]
 pub struct Spec {
@@ -102,7 +93,6 @@ pub struct Spec {
     /// Float from the start (e.g. a `--float` argument).
     pub force_float: bool,
     pub draggable: bool,
-    pub click: Click,
     pub hover_panel: bool,
     /// Crowded: compact before hiding (false: straight from full to hidden).
     pub compact_when_crowded: bool,
@@ -113,10 +103,6 @@ pub struct Spec {
     /// Meanwhile [`Frame::fit_width`] may be wider than the content: lay out to it. False: a new
     /// width jumps (weather, bus).
     pub glide_width: bool,
-    /// With `glide_width`: how long a new content width must hold before the strip takes it,
-    /// (wider, narrower). Default none (the user wants no delay, 2026-10-11); a hold keeps a
-    /// flickering width from making the strip pump.
-    pub width_hold: (std::time::Duration, std::time::Duration),
     /// The widget's log file, for dockctl's `log` (None: dockctl says there is none).
     pub log_file: Option<std::path::PathBuf>,
     /// The widget's own dialog-like window open right now (0: none), e.g. bus's stop picker:
@@ -136,12 +122,10 @@ impl Spec {
             float: Float::Fallback(FloatAt::BesideDock),
             force_float: false,
             draggable: true,
-            click: Click::TogglePanel,
             hover_panel: true,
             compact_when_crowded: true,
             stretch: false,
             glide_width: false,
-            width_hold: (std::time::Duration::ZERO, std::time::Duration::ZERO),
             log_file: None,
             dialog: None,
         }
@@ -355,7 +339,6 @@ pub(crate) enum Request {
     OpenPanel,
     TogglePanel,
     ClosePanel,
-    Menu,
     Quit,
     After(Box<dyn FnOnce()>),
 }
@@ -372,7 +355,6 @@ impl std::fmt::Debug for Request {
             Request::OpenPanel => write!(f, "OpenPanel"),
             Request::TogglePanel => write!(f, "TogglePanel"),
             Request::ClosePanel => write!(f, "ClosePanel"),
-            Request::Menu => write!(f, "Menu"),
             Request::Quit => write!(f, "Quit"),
             Request::After(_) => write!(f, "After(..)"),
         }
@@ -421,25 +403,8 @@ impl Ctx {
         self.reqs.push(Request::Stop(id));
     }
 
-    /// Open the panel as a click would (pinned, with focus), if it isn't open.
-    pub fn open_panel(&mut self) {
-        self.reqs.push(Request::OpenPanel);
-    }
-
-    /// Open, pin or close the panel as a click on the strip does (e.g. a tray icon's left click).
-    /// Works without a strip: the panel then opens above the pointer.
-    pub fn toggle_panel(&mut self) {
-        self.reqs.push(Request::TogglePanel);
-    }
-
     pub fn close_panel(&mut self) {
         self.reqs.push(Request::ClosePanel);
-    }
-
-    /// Open the right-click panel as a right click on the strip does: above the strip, or above
-    /// the pointer while there's none (e.g. a tray icon's right click).
-    pub fn open_menu(&mut self) {
-        self.reqs.push(Request::Menu);
     }
 
     /// End the program (as the Quit row does).
@@ -519,9 +484,6 @@ pub trait Content: AsAny + 'static {
 
     /// A content timer ([`Ctx::every`]).
     fn timer(&mut self, _id: usize, _ctx: &mut Ctx) {}
-
-    /// Left click on the strip with [`Click::Content`].
-    fn click(&mut self, _ctx: &mut Ctx) {}
 
     /// Released over the button `id` it was pressed on.
     fn button(&mut self, _id: usize, _ctx: &mut Ctx) {}

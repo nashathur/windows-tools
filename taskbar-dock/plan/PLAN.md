@@ -1,7 +1,8 @@
 # Plan: Block (bottom-up strip) + one design code
 
-Status: steps 0-8 done (2026-10-11): all four widgets run on Block; animations match the
-taskbar's. Next: step 9 (dynamic width), then 10 (delete old wiring). Renumbered 2026-10-11 (old 7→8, 8→10, 9→11,
+Status: steps 0-10 done (2026-10-11): all four widgets run on Block; animations match the
+taskbar's; media and discord's width follows their content; the old wiring is gone and the docs
+say so. Open: 11 (bus picker as a panel, optional), 12 (settings app, idea). Renumbered 2026-10-11 (old 7→8, 8→10, 9→11,
 10→12, 11→9, 12→7); commits before that use the old numbers.
 Spec gaps found in step 0 (not yet in section 1; decide before step 2): weather's "Show on
 taskbar" switch + tray icon (strip off, widget keeps running); media floats too (attach
@@ -146,7 +147,7 @@ its full notes go to `done.md`.
 | 7 | **Done 2026-10-11.** Animations: glides and the compact switch 300 ms on the taskbar's measured curve (`anim::ease_dock`, `glide_ms` 300); neighbours follow a switching strip frame by frame (`dock::publish_drawn`, `Slot::follow`). Media follows from step 8 | the switch and glides take 300 ms on the taskbar's curve; neighbours follow a switching strip |
 | 8 | **Done 2026-10-11.** Port **media**; Block: strip fade in/out for every widget, `Content::panel_shown`, panel mouse capture, click pins a hover-opened panel, floating backdrop. Hand checks passed 2026-10-11 | right-click panel is the shared one; strips fade in/out; click pins a hover panel; no hover-open from a strip button |
 | 9 | **Done 2026-10-11.** Dynamic width: `Spec::glide_width` (Block glides to a new content width at once, neighbours following; `Spec::width_hold` optional, none by default; `Frame::fit_width` may be wider than the content); media's text column = its text (up to `max_width`), discord's avatar column = everyone in the call (… media's `max_width`); `fixed_width` setting in both; discord shows every avatar when everyone fits | media and discord change width with their content |
-| 10 | Delete old wiring and unused library parts; rewrite README recipe ("a new widget = Spec + Content") and CLAUDE.md rules ("mirror in every widget" → "it's in Block/theme") | none |
+| 10 | **Done 2026-10-11.** Deleted the unused library parts (no old per-widget wiring was left: each port removed its own), the width-hold option and the port-time migrations; README recipe is "Spec + Content", CLAUDE.md rule is "it's in Block / theme". Details: done.md | none |
 | 11 | Optional: bus picker as a themed panel instead of a Win32 dialog | picker looks like the others |
 | 12 | **Settings app (idea, 2026-10-10).** Later (decided 2026-10-10): the per-widget tray icons go and merge into one tray icon for the settings app, which manages every widget. One settings app for every widget, like a library: a page per widget where the user can configure anything. Each widget describes its settings (label, type: switch / number with range / text / choice, help line); the app draws a generic page from that, so a new widget appears on its own and its page always matches its real settings; the standard ones (Show on taskbar, Compact mode, Start with Windows) look the same on every page. A Rust exe in taskbar-dock using the `theme` module (looks like the panels); "Edit settings…" (Block's standard row, one change) opens it at that widget's page, e.g. `taskbar-dock-settings.exe --widget weather`; notepad stays as a fallback. Writes go through `settings::update` (lock); widgets already follow file edits live (Block's watch). After step 10; the settings descriptions grow during the ports (5, 6, 8) | Edit settings… opens the settings app |
 

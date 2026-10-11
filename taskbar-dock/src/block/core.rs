@@ -7,7 +7,7 @@ use crate::anim::Feel;
 use crate::dock::{self, Fit, FitState};
 use crate::panel::{Action, PanelBehaviour};
 use crate::strip::{Motion, Release};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[derive(Default, Debug)]
 pub(crate) struct Core {
@@ -37,50 +37,28 @@ pub(crate) struct Core {
 /// Px at 100% a measured width may differ from the held one without counting as a change.
 pub(crate) const WIDTH_SLACK: f32 = 4.0;
 
-/// A strip's content width, held steady ([`Spec::glide_width`], plan step 9): a different width
-/// is taken only once it has been measured for the grow (wider) or shrink (narrower) time of
-/// [`Spec::width_hold`]; a width narrower by no more than the slack never counts (wider always does). The first width, and any width in a new
-/// `key` (mode, height, scale), is taken at once.
+/// A strip's content width, held steady ([`Spec::glide_width`], plan step 9): a width narrower
+/// than the held one by no more than the slack is ignored (some room to spare); any other
+/// change is taken at once (a wider one, or the content is cut off: a title ending in "…" that
+/// fits). The first width, and any width in a new `key` (mode, height, scale), is taken at once.
 #[derive(Default, Debug)]
 pub(crate) struct WidthHold {
     held: Option<(WidthKey, i32)>,
-    /// A different width measured since then: the latest, and since when.
-    pending: Option<(i32, Instant)>,
 }
 
 /// What a held width belongs to: compact or not, the strip's height, the scale (in 1/1000).
 pub(crate) type WidthKey = (bool, i32, i32);
 
 impl WidthHold {
-    /// `w` measured now; `(grow, shrink)`: how long a wider / narrower width must hold
-    /// ([`Spec::width_hold`]). The width to use, and how long until a pending change is due (look
-    /// again then).
-    pub fn update(&mut self, key: WidthKey, w: i32, slack: i32, (grow, shrink): (Duration, Duration), now: Instant) -> (i32, Option<Duration>) {
-        let Some((_, held)) = self.held.filter(|(k, _)| *k == key) else {
-            self.held = Some((key, w));
-            self.pending = None;
-            return (w, None);
-        };
-        // a little narrower doesn't count (some room to spare); any wider does (the content
-        // would be cut off: a title ending in "…" that fits)
-        if w == held || (w < held && held - w <= slack) {
-            self.pending = None;
-            return (held, None);
+    /// `w` measured now: the width to use.
+    pub fn update(&mut self, key: WidthKey, w: i32, slack: i32) -> i32 {
+        if let Some((_, held)) = self.held.filter(|(k, _)| *k == key) {
+            if w <= held && held - w <= slack {
+                return held;
+            }
         }
-        // the same change as before (within the slack) keeps its start
-        let since = match self.pending {
-            Some((p, t)) if (p - w).abs() <= slack => t,
-            _ => now,
-        };
-        let wait = if w > held { grow } else { shrink };
-        let gone = now.saturating_duration_since(since);
-        if gone >= wait {
-            self.held = Some((key, w));
-            self.pending = None;
-            return (w, None);
-        }
-        self.pending = Some((w, since));
-        (held, Some(wait - gone))
+        self.held = Some((key, w));
+        w
     }
 }
 
@@ -102,7 +80,7 @@ impl Core {
 
     /// The button came up (`click`) or the capture was lost (Esc, a window took the mouse): a
     /// drag ends like a drop either way; only a real release over what was pressed acts.
-    pub fn up(&mut self, click: bool, at: Hit, mode: Click, content: &mut dyn Content, ctx: &mut Ctx, now: Instant) -> Up {
+    pub fn up(&mut self, click: bool, at: Hit, content: &mut dyn Content, ctx: &mut Ctx, now: Instant) -> Up {
         let release = self.motion.release(now);
         let on = self.pressed_on.take();
         match release {
@@ -119,13 +97,7 @@ impl Core {
                 }
                 // pressed on a button or the cover, released elsewhere: nothing
                 (Some(Hit::Button(..) | Hit::Cover(_)), _) => Up::Nothing,
-                _ => match mode {
-                    Click::TogglePanel => Up::Panel(self.panel.click(now)),
-                    Click::Content => {
-                        content.click(ctx);
-                        Up::Nothing
-                    }
-                },
+                _ => Up::Panel(self.panel.click(now)),
             },
             _ => Up::Nothing,
         }
@@ -337,10 +309,6 @@ mod tests {
             f.px(if compact { 40.0 } else { 100.0 })
         }
         fn draw(&mut self, _cv: &mut Canvas, _f: &Frame) {}
-        fn click(&mut self, ctx: &mut Ctx) {
-            self.calls.push("click".into());
-            ctx.redraw();
-        }
         fn button(&mut self, id: usize, ctx: &mut Ctx) {
             self.calls.push(format!("button {id}"));
             ctx.every(7, 40);
@@ -366,9 +334,9 @@ mod tests {
     const BTN: Hit = Hit::Button(3, (50, 4, 74, 28));
     const COVER: Hit = Hit::Cover((2, 2, 30, 30));
 
-    fn release(core: &mut Core, f: &mut Fake, click: bool, at: Hit, mode: Click) -> (Up, Vec<String>) {
+    fn release(core: &mut Core, f: &mut Fake, click: bool, at: Hit) -> (Up, Vec<String>) {
         let mut ctx = Ctx::new(0);
-        let up = core.up(click, at, mode, f, &mut ctx, Instant::now());
+        let up = core.up(click, at, f, &mut ctx, Instant::now());
         (up, ctx.reqs.iter().map(|r| format!("{r:?}")).collect())
     }
 
@@ -376,33 +344,25 @@ mod tests {
     fn a_click_on_the_strip_toggles_the_panel() {
         let (mut c, mut f) = (Core::default(), Fake::default());
         c.down(Hit::Strip, 100, 500);
-        assert_eq!(release(&mut c, &mut f, true, Hit::Strip, Click::TogglePanel).0, Up::Panel(Action::OpenByClick));
+        assert_eq!(release(&mut c, &mut f, true, Hit::Strip).0, Up::Panel(Action::OpenByClick));
         assert!(f.calls.is_empty());
         c.down(Hit::Strip, 100, 500);
-        assert_eq!(release(&mut c, &mut f, true, Hit::Strip, Click::TogglePanel).0, Up::Panel(Action::Close));
-    }
-
-    #[test]
-    fn click_mode_content_goes_to_the_content_with_its_requests() {
-        let (mut c, mut f) = (Core::default(), Fake::default());
-        c.down(Hit::Strip, 100, 500);
-        let (up, reqs) = release(&mut c, &mut f, true, Hit::Strip, Click::Content);
-        assert_eq!((up, f.calls.clone(), reqs), (Up::Nothing, vec!["click".to_string()], vec!["Redraw".to_string()]));
+        assert_eq!(release(&mut c, &mut f, true, Hit::Strip).0, Up::Panel(Action::Close));
     }
 
     #[test]
     fn a_button_acts_only_when_released_over_it_and_never_toggles_the_panel() {
         let (mut c, mut f) = (Core::default(), Fake::default());
         c.down(BTN, 100, 500);
-        let (up, reqs) = release(&mut c, &mut f, true, BTN, Click::TogglePanel);
+        let (up, reqs) = release(&mut c, &mut f, true, BTN);
         assert_eq!((up, reqs), (Up::Nothing, vec!["Every(7, 40)".to_string()]));
         assert_eq!(f.calls, ["button 3"]);
         assert!(!c.panel.is_open());
         c.down(BTN, 100, 500);
-        assert_eq!(release(&mut c, &mut f, true, Hit::Strip, Click::TogglePanel).0, Up::Nothing);
+        assert_eq!(release(&mut c, &mut f, true, Hit::Strip).0, Up::Nothing);
         assert_eq!(f.calls.len(), 1, "released off the button: nothing");
         c.down(Hit::Strip, 100, 500);
-        release(&mut c, &mut f, true, BTN, Click::TogglePanel);
+        release(&mut c, &mut f, true, BTN);
         assert_eq!(f.calls.len(), 1, "pressed elsewhere, released on it: not a button press");
     }
 
@@ -410,7 +370,7 @@ mod tests {
     fn the_cover_opens_the_app_on_release_over_it() {
         let (mut c, mut f) = (Core::default(), Fake::default());
         c.down(COVER, 10, 500);
-        let (_, reqs) = release(&mut c, &mut f, true, COVER, Click::TogglePanel);
+        let (_, reqs) = release(&mut c, &mut f, true, COVER);
         assert_eq!((f.calls.clone(), reqs), (vec!["cover".to_string()], vec!["After(..)".to_string()]));
         assert!(!c.panel.is_open());
     }
@@ -424,11 +384,11 @@ mod tests {
         assert!(!c.motion.dragging(), "2 px is still a click");
         c.motion.mouse_move(110, 80, crate::strip::Limits::NONE, &lk, t0);
         assert!(c.motion.dragging());
-        assert_eq!(release(&mut c, &mut f, true, BTN, Click::TogglePanel).0, Up::Drop);
+        assert_eq!(release(&mut c, &mut f, true, BTN).0, Up::Drop);
         assert!(f.calls.is_empty());
         // capture lost without a drag: nothing at all
         c.down(Hit::Strip, 100, 500);
-        assert_eq!(release(&mut c, &mut f, false, Hit::Strip, Click::TogglePanel).0, Up::Nothing);
+        assert_eq!(release(&mut c, &mut f, false, Hit::Strip).0, Up::Nothing);
         assert!(!c.panel.is_open() && !c.motion.pressed());
     }
 
@@ -668,36 +628,18 @@ mod tests {
 
     #[test]
     fn a_content_width_is_held_steady() {
-        let t0 = Instant::now();
-        let at = |ms: u64| t0 + Duration::from_millis(ms);
         let k = (false, 48, 1000);
-        const GROW_AFTER: Duration = Duration::from_millis(400);
-        let hold = (GROW_AFTER, Duration::from_millis(2000));
         let mut h = WidthHold::default();
-        assert_eq!(h.update(k, 200, 4, hold, at(0)), (200, None), "the first width: at once");
-        assert_eq!(h.update(k, 197, 4, hold, at(10)), (200, None), "a little narrower: no change");
-        // wider: after GROW_AFTER
-        assert_eq!(h.update(k, 240, 4, hold, at(100)), (200, Some(GROW_AFTER)));
-        assert_eq!(h.update(k, 241, 4, hold, at(300)), (200, Some(GROW_AFTER - Duration::from_millis(200))), "the same change: its start kept");
-        assert_eq!(h.update(k, 241, 4, hold, at(500)), (241, None));
-        // narrower: only after 2 s, and a flicker back starts it again
-        assert_eq!(h.update(k, 150, 4, hold, at(1000)).0, 241);
-        assert_eq!(h.update(k, 241, 4, hold, at(1500)), (241, None), "back: nothing pending");
-        assert_eq!(h.update(k, 150, 4, hold, at(1600)).0, 241);
-        assert_eq!(h.update(k, 150, 4, hold, at(3500)).0, 241, "1.9 s: still held");
-        assert_eq!(h.update(k, 150, 4, hold, at(3600)), (150, None));
-        // a different measurement while pending starts the wait again
-        assert_eq!(h.update(k, 220, 4, hold, at(4000)).0, 150);
-        assert_eq!(h.update(k, 260, 4, hold, at(4300)), (150, Some(GROW_AFTER)));
-        // a new mode, height or scale: at once
-        assert_eq!(h.update((true, 48, 1000), 90, 4, hold, at(4400)), (90, None));
-        assert_eq!(h.update((false, 48, 1250), 300, 4, hold, at(4500)), (300, None));
-        // no hold (the default): at once both ways
-        let none = (Duration::ZERO, Duration::ZERO);
-        assert_eq!(h.update((false, 48, 1250), 120, 4, none, at(4600)), (120, None));
-        assert_eq!(h.update((false, 48, 1250), 123, 4, none, at(4600)), (123, None), "a little wider: taken, else the text is cut off");
-        assert_eq!(h.update((false, 48, 1250), 120, 4, none, at(4600)), (123, None), "a little narrower: room to spare");
-        assert_eq!(h.update((false, 48, 1250), 250, 4, none, at(4601)), (250, None));
+        assert_eq!(h.update(k, 200, 4), 200, "the first width: at once");
+        assert_eq!(h.update(k, 197, 4), 200, "a little narrower: room to spare");
+        assert_eq!(h.update(k, 196, 4), 200, "up to the slack");
+        assert_eq!(h.update(k, 195, 4), 195, "narrower than the slack: taken");
+        assert_eq!(h.update(k, 198, 4), 198, "a little wider: taken, else the text is cut off");
+        assert_eq!(h.update(k, 240, 4), 240);
+        assert_eq!(h.update(k, 150, 4), 150, "much narrower: at once");
+        // a new mode, height or scale: at once, even a little narrower
+        assert_eq!(h.update((true, 48, 1000), 148, 4), 148);
+        assert_eq!(h.update((true, 48, 1250), 147, 4), 147);
     }
 
     #[test]
@@ -708,14 +650,11 @@ mod tests {
         ctx.redraw_tray();
         ctx.every(1, 1000);
         ctx.stop(1);
-        ctx.open_panel();
-        ctx.toggle_panel();
         ctx.close_panel();
-        ctx.open_menu();
         ctx.quit();
         assert_eq!(ctx.main_window(), 42);
         let s: Vec<String> = ctx.reqs.iter().map(|r| format!("{r:?}")).collect();
-        assert_eq!(s, ["Redraw", "RedrawPanel", "RedrawTray", "Every(1, 1000)", "Stop(1)", "OpenPanel", "TogglePanel", "ClosePanel", "Menu", "Quit"]);
+        assert_eq!(s, ["Redraw", "RedrawPanel", "RedrawTray", "Every(1, 1000)", "Stop(1)", "ClosePanel", "Quit"]);
     }
 
     #[test]

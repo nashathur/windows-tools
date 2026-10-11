@@ -44,11 +44,6 @@ impl Default for Config {
     }
 }
 
-/// Keys of older versions, removed from the file once (plan step 8, media on Block): the menu
-/// panel is Block's shared one, the strip's fade is Block's (`glide_ms`), Start with Windows is
-/// the `startup` list.
-const GONE: [&str; 3] = ["menu_panel_width", "fade_ms", "start_with_windows"];
-
 impl Config {
     /// Loads the media section and writes it back, which adds settings introduced by newer
     /// versions. A broken file is left as-is.
@@ -73,11 +68,6 @@ impl Config {
             }
             for (k, v) in mine {
                 sec[k.as_str()] = v;
-            }
-            if let Some(sec) = sec.as_object_mut() {
-                for k in GONE {
-                    sec.remove(k);
-                }
             }
         });
     }

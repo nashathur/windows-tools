@@ -504,18 +504,6 @@ impl FitState {
         self.get() == Fit::Hidden
     }
 
-    /// Bus and weather: draw in compact mode (they have no width in between).
-    pub fn compact(&self) -> bool {
-        matches!(self.get(), Fit::Shrunk(_))
-    }
-
-    /// The width a stretchable member should draw at, when narrowed.
-    pub fn narrowed(&self) -> Option<i32> {
-        match self.get() {
-            Fit::Shrunk(w) => Some(w),
-            _ => None,
-        }
-    }
 }
 
 /// The taskbar's buttons' right edge as last seen in this process, per taskbar: for the drag
@@ -568,14 +556,11 @@ pub struct Layout {
     pub widths: Vec<i32>,
     /// Another member in the stack is changing width ([`publish_drawn`]): follow it.
     pub resizing: bool,
-    pub ranks: Vec<usize>,
     pub obstacles: Vec<RECT>,
     /// Another member being dragged: (window, width, left, right, rank in the saved order).
     pub dragged: Option<(HWND, i32, i32, i32, usize)>,
     /// Every member in dock order (also squeezed-out and dragged ones), with its fit.
     pub all: Vec<Member>,
-    /// The taskbar's buttons' right edge, if known.
-    pub icons: Option<i32>,
 }
 
 /// The width a member takes in the stack's placement: while its width animates, the width it's
@@ -613,14 +598,12 @@ pub unsafe fn layout(tb: HWND, me: HWND, mine: Option<Size>, boundary: i32, gap:
         classes: stack.iter().map(|&i| members[i].class.clone()).collect(),
         widths: stack.iter().map(|&i| placed_width(fits[i], sizes[i], members[i].drawn)).collect(),
         resizing: stack.iter().any(|&i| members[i].hwnd != me && members[i].drawn.is_some()),
-        ranks: stack.iter().map(|&i| rank(&order, &members[i].class)).collect(),
         obstacles,
         dragged: kids
             .iter()
             .find(|c| c.member && c.dragging && c.hwnd != me)
             .map(|c| (c.hwnd, c.rc.right - c.rc.left, c.rc.left, c.rc.right, rank(&order, &c.class))),
         all: (0..members.len()).map(|i| Member { hwnd: members[i].hwnd, class: members[i].class.clone(), fit: fits[i] }).collect(),
-        icons,
     }
 }
 
@@ -905,12 +888,10 @@ mod tests {
         let mut s = FitState::default();
         assert_eq!(s.update(Fit::Full), FitChange::None);
         assert_eq!(s.update(Fit::Shrunk(52)), FitChange::Redraw);
-        assert!(s.compact());
         assert_eq!(s.update(Fit::Shrunk(52)), FitChange::None);
         assert_eq!(s.update(Fit::Hidden), FitChange::Hide);
         assert!(s.hidden());
         assert_eq!(s.update(Fit::Full), FitChange::Show);
-        assert_eq!(s.narrowed(), None);
     }
 
     #[test]

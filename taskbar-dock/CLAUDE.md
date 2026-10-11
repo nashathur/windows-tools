@@ -7,24 +7,35 @@ this file. Reference, read by section when the task reaches it:
   before changing Block or a widget on it (weather, discord, bus).
 - **UI-RULES.md**: corners, button highlights and hitboxes, cover/logo click and feel. Read before
   changing any drawing, hit box, highlight, radius or cover behaviour.
-- README.md: the recipe for a new widget, the shared `dock` settings, corner design reasoning,
-  dockctl ("Testing"). plan\PLAN.md: the Block port and later steps. NOTES-2026-10-09.md:
+- README.md: the recipe for a new widget (a `Spec` + a `Content`), the shared `dock` settings,
+  corner design reasoning, dockctl ("Testing"). plan\PLAN.md: the Block rebuild (steps 0–10 done)
+  and later ideas. NOTES-2026-10-09.md:
   build-time measurements, the drag-slot fix, the icons-as-obstacles fit (test aid
   `TASKBAR_DOCK_TEST_ICONS_RIGHT`), what was taken from TaskbarWidgets.
 
 ## Library modules (windows-sys 0.52, handles are isize; `windows` 0.58 only for UI Automation in icons)
-settings (shared settings.json, one section per app; `update` holds a cross-process lock, writes
-are temp file + rename) · crash (`log_panics`, the launcher watchdog's restart rules) · style
-(`Look`) · system (Windows settings) · theme (design code: widgets take every colour, font and
-font size from it; `brand` allow-list; checked by `tests\theme_lint.rs` in dev.ps1) · dock (stack
-order, `slot`, sticky drop slot, WinEvent hooks; `fit` next to the taskbar's buttons: narrow,
-compact, hide) · icons (taskbar buttons via UIA, read by the leader only) · panel (hover/click/pin,
-`Fade`, `place`) · menu_panel (right-click panel, `run` like TrackPopupMenu) · strip (`Motion`:
-glide, drag, zoom, compact resize) · draw (rounded shapes, boxes, highlights, `progress_ring`) ·
-emoji (colour emoji via Direct2D + DirectWrite; GDI draws emoji in one colour) · badge · anim
-(`pulse`, easing, `Feel`) · marquee · window (`raise`: bring an app's window to the front) ·
-startup (Start with Windows list) · ctl (dockctl's command format) · block (the strip window and
-all its behaviour: BLOCK.md).
+**A widget is a `Spec` + a `Content` handed to `block::run`; Block does the rest** (BLOCK.md).
+Block's internals, which a widget doesn't call: dock (stack order, `slot`, sticky drop slot,
+WinEvent hooks; `fit` next to the taskbar's buttons: narrow, compact, hide) · icons (taskbar
+buttons via UIA, read by the leader only) · panel (hover/click/pin, `Fade`, `place`) · menu_panel
+(the right-click panel; a widget only gives rows) · strip (`Motion`: glide, drag, zoom, compact
+resize) · crash (panic log, the launcher watchdog's restart rules) · startup (Start with Windows
+list) · ctl (dockctl's command format).
+What a widget's own code uses: settings (shared settings.json, one section per app; `update` holds
+a cross-process lock, writes are temp file + rename) · style (`Look`) · system (Windows settings) ·
+theme (design code: widgets take every colour, font and font size from it; `brand` allow-list;
+checked by `tests\theme_lint.rs` in dev.ps1) · draw (rounded shapes, boxes, highlights,
+`progress_ring`) · emoji (colour emoji via Direct2D + DirectWrite; GDI draws emoji in one colour) ·
+badge · anim (`pulse`, easing) · marquee · window (`raise`: bring an app's window to the front).
+
+## Where a rule lives (rule)
+A behaviour every widget shares is written once, in Block or in `theme`, never copied into a
+widget: **change it there, and every widget has it.** Only content is per widget (what the strip
+and panels show, their rows, their data). If a change would touch the same code in two widgets,
+it belongs in Block (or `theme`); if Block can't express it, add a `Spec` field or a `Content`
+method with a default (and a test in `block/core.rs`), don't special-case one widget. A change to a
+rule in UI-RULES.md is made in Block / `theme`, then checked on every widget (dockctl `state`,
+`_tmp\shot_strip.ps1`).
 
 ## Every widget has these five parts (rule)
 1. **Full mode**: the normal strip.
@@ -39,9 +50,9 @@ all its behaviour: BLOCK.md).
    widget's actions, then Show on taskbar, Compact mode and Start with Windows as on/off
    switches, Edit settings…, Quit (Block's `menu_panel` with its standard rows).
    Right click while the left-click panel is open switches to it, and back.
-A new widget isn't done until it has all five. **Shared rule:** a change to one widget's part, or
-to a rule in UI-RULES.md, is mirrored in every widget. All four widgets are on Block (media since
-plan step 8), so most of these parts live in Block.
+A new widget isn't done until it has all five. All four widgets are on Block, so the parts
+themselves are Block's: a widget supplies the content of each (the strip's two modes, the panels'
+drawing, its menu rows).
 
 ## Working on any widget
 - Build/test/restart with the widget's `dev.ps1` (wraps `scripts\dev.ps1`): prints only errors,
@@ -51,12 +62,12 @@ plan step 8), so most of these parts live in Block.
   ~1 s vs ~14 s); build the small full-LTO `release` exe once at the end. Tests always run in
   `fast`. Measured 2026-10-09: `rust-lld` and splitting crates gain nothing (the time is LTO).
 - Library tests: `dev.ps1 -Lib` from any widget, or `cargo test --profile fast` here.
-- Big files: `main.rs` holds App state, window procedures and `main`; features live in modules
-  (`use super::*;`, items `pub(crate)`). `scripts\split.sh` moves a line range into a module.
+- Big files: a widget's `main.rs` holds its `App` (the `Content`), the `Spec` and `main`; features
+  live in modules. `scripts\split.sh` moves a line range into a module.
 - Version control: `C:\Users\thurs\tools` is one git repo (since 2026-10-10). Before changing the
   library, make sure the last good state is committed (ask before committing), and keep all
   widgets building.
-- Start with Windows (README "Building a new widget"): the launcher `taskbar-dock-start.exe` and its
+- Start with Windows (README "Building a new widget", step 7): the launcher `taskbar-dock-start.exe` and its
   watchdog. Never the Run registry key (Windows skipped those values here). After rebuilding the
   launcher, copy `target\release\taskbar-dock-start.exe` to `taskbar-dock\`.
 - Z-order: a docked strip's `SetWindowPos(h, HWND_TOP, ..)` always ORs in `dock::raise_flag(h)`
@@ -80,7 +91,8 @@ plan step 8), so most of these parts live in Block.
    settings, logs and state are the REAL `%APPDATA%`. Use it instead of `_tmp\real.ps1` for the
    widget's settings and log, and instead of mouse clicks for opening panels and menus and
    flipping switches. `scripts\restart_explorer.ps1` restarts Explorer (no keystrokes).
-3. Logs and geometry scripts that print numbers (`_tmp\real.ps1` for widgets not on Block yet).
+3. Logs and geometry scripts that print numbers (`_tmp\watch_z.ps1`, `fit_test.ps1`,
+   `drag_probe.ps1`, `shot_strip.ps1`; `_tmp\real.ps1` for a widget not on Block).
 4. Screenshots: `local_widget_check` (click / rightclick go through dockctl for Block widgets:
    no mouse moved), only where pixels matter.
 

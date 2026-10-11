@@ -1,4 +1,7 @@
-//! Shared building blocks for the taskbar widgets (bus widget, taskbar-weather, and any new one):
+//! Shared building blocks for the taskbar widgets (bus widget, taskbar-weather, taskbar-media,
+//! taskbar-discord, and any new one). A widget is a `Spec` and a `Content` given to
+//! [`block::run`]; [`block`] uses [`dock`], [`panel`], [`strip`], [`menu_panel`], [`icons`],
+//! [`startup`] and [`crash`] itself, and a widget's own code uses the rest:
 //!
 //! - [`settings`]: the one settings file, `%APPDATA%\TaskbarDock\settings.json`, with a section
 //!   per widget plus the shared `dock` section.
@@ -24,7 +27,7 @@
 //! - [`icons`]: the taskbar's own buttons (UI Automation), so the stack never covers them.
 //! - [`theme`]: the design code: every colour, font, size and spacing (light / dark).
 //! - [`block`]: the strip window with all its behaviour; a widget supplies a `Spec` and a
-//!   `Content` (plan\PLAN.md, step 2; not used by a widget yet).
+//!   `Content` (BLOCK.md).
 //!
 //! - [`ctl`]: the `dockctl` command format (command-line control of widgets on Block, for tests).
 //!

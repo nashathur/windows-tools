@@ -116,6 +116,7 @@ pub struct Limits {
 impl Limits {
     pub const NONE: Limits = Limits { min: None, max: None };
 
+    #[cfg(test)]
     pub fn up_to(max: i32) -> Limits {
         Limits { min: None, max: Some(max) }
     }
@@ -178,6 +179,7 @@ impl Motion {
         self.press.is_some_and(|p| p.moved)
     }
 
+    #[cfg(test)]
     pub fn gliding(&self) -> bool {
         self.glide.is_some()
     }

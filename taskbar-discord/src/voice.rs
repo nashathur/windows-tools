@@ -102,6 +102,7 @@ impl Voice {
         self.channel.is_some()
     }
 
+    #[cfg(test)]
     pub fn anyone_speaking(&self) -> bool {
         self.channel.as_ref().is_some_and(|c| c.members.iter().any(|m| m.speaking))
     }

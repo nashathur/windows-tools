@@ -8,10 +8,9 @@ Runs from a copy: `taskbar-media.exe` here (dev.ps1 stops, copies, restarts). Lo
 `taskbar-media.log` (also panics). Learned real-time table: `progress.txt`. Logo cache: `logos\`.
 
 ## Files (src/)
-The strip window, dock, drag/zoom/glide, the strip's fade in/out, floating (`--float` or
-`TASKBAR_MEDIA_FLOAT=1`), the panel's window (hover/click/pin, fade, placement, mouse capture),
-the right-click panel with its standard rows, the tray icon and following the settings file are
-the library's `block` (plan step 8); media supplies the `Content`.
+Everything about the strip window, dock, panels, tray icon and the standard menu rows is Block's
+(`..\taskbar-dock\BLOCK.md`); media supplies the `Content`. Floating: `--float` or
+`TASKBAR_MEDIA_FLOAT=1`.
 - main.rs: `App` (the `block::Content`: strip `measure`/`draw` (cached `Geo`), `hit` (buttons,
   cover), `cover`, `tint` (brand colour, fading with playback), `visible` (a session shown),
   worker posts in `on_message` (`WM_MEDIA` → `on_media` → `reselect`; `WM_LOGO`), content timers

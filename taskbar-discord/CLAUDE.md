@@ -14,9 +14,8 @@ The strip shows during a call, or when the user must act (setup, sign-in, error)
 Show on taskbar switch is on (`Content::visible`); otherwise Block shows the tray icon (headset).
 
 ## Files (src/)
-The strip window, dock, drag/zoom/glide, the panel's window (hover/click/pin, fade, placement), the
-right-click panel's standard rows, the tray icon and following the settings file are the library's
-`block` (plan step 5); discord supplies the `Content`.
+Everything about the strip window, dock, panels, tray icon and the standard menu rows is Block's
+(`..\taskbar-dock\BLOCK.md`); discord supplies the `Content`.
 - main.rs: `App` (the `block::Content`: strip `measure`/`draw`, `hit` (Mute/Deafen/Leave buttons,
   logo), `cover`, `tint` (blurple boxes), `visible`, ring pulse timer, worker posts in `on_message`
   (`on_voice`: redraw + `resize_panel`), panel size/draw/mouse, tray logo + tooltip), the `Spec`, `main`.
@@ -37,8 +36,7 @@ right-click panel's standard rows, the tray icon and following the settings file
   column's right end and faded by how much of the column is left (`over`), so a compact switch keeps
   the buttons right and fades evenly both ways),
   `tint`, `tray_logo`, panel layout + hit test, `paint_panel`.
-- config.rs: the `discord` section; `save` merges (Block owns `compact` and `show_on_taskbar`) and
-  drops the old `show_when_idle` key.
+- config.rs: the `discord` section; `save` merges (Block owns `compact` and `show_on_taskbar`).
 - open.rs: brings Discord's window to the front (the logo's click).
 
 ## Testing

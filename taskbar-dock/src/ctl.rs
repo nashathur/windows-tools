@@ -158,11 +158,6 @@ pub fn error(msg: impl Into<String>) -> String {
     json!({ "ok": false, "error": msg.into() }).to_string()
 }
 
-/// Is this reply a success?
-pub fn reply_ok(reply: &str) -> bool {
-    serde_json::from_str::<Value>(reply).ok().and_then(|v| v.get("ok")?.as_bool()) == Some(true)
-}
-
 /// The last `n` lines of `text`.
 pub fn tail(text: &str, n: usize) -> Vec<&str> {
     let lines: Vec<&str> = text.lines().collect();
@@ -269,9 +264,6 @@ mod tests {
     fn replies() {
         let r = ok(json!({ "pid": 7 }));
         assert_eq!(r, r#"{"ok":true,"pid":7}"#);
-        assert!(reply_ok(&r));
-        assert!(!reply_ok(&error("no")));
-        assert!(!reply_ok("garbage"));
         let e: Value = serde_json::from_str(&error("x \"y\"")).unwrap();
         assert_eq!(e, json!({ "ok": false, "error": "x \"y\"" }));
     }

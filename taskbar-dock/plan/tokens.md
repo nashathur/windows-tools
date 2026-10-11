@@ -30,7 +30,7 @@ allows only the bus popup to change, so those widgets keep an override until you
 
 Notes
 - Weather, discord and media panels agree exactly on `bg`, `fg`, `dim` (the plan's assumption holds).
-- Media tints `hover`, `placeholder` and the progress `bar` toward the cover's colour (`wash` ≤ 0.5, panel_view.rs:386-391). Keep as a widget effect on top of the tokens: `theme.tinted(rgb, k)`.
+- Media tints `hover`, `placeholder` and the progress `bar` toward the cover's colour (`wash` ≤ 0.5, panel_view.rs:386-391). Keep as a widget effect on top of the tokens (`bg.mix(cover, k)`; `Theme::tinted` was removed in step 10, unused).
 
 ## Colours (strip, on the taskbar)
 
@@ -86,7 +86,7 @@ Families today: weather and discord panels hard-code **"Segoe UI"** (render.rs:3
 | `icon` | 16 | discord, media, menu_panel panel glyphs | – |
 | `icon_large` | 20 | media transport buttons | – |
 | `emoji` / `emoji_large` | 20 / 42 | weather | – |
-| `strip_text` | `look.font_size` (12) / 400 | all strips | bus badge 700 (`badge::font`), media badge tile 0.42 × size / 700, discord pill 0.9 × / 600 |
+| strip text (no function: `look.font_size`, step 10) | `look.font_size` (12) / 400 | all strips | bus badge 700 (`badge::font`), media badge tile 0.42 × size / 700, discord pill 0.9 × / 600 |
 
 Scaling: bus popup fonts scale by `look.font_size / 12` (main.rs:370) as well as DPI; every other panel is fixed px × DPI. Proposed: panels fixed × DPI (as Windows' own flyouts); bus loses the factor (no change at the default 12).
 

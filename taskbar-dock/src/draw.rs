@@ -2,7 +2,7 @@
 //! by UpdateLayeredWindow), so it blends with the taskbar's Mica and stays clickable everywhere.
 //!
 //! Typical frame: draw the text white-on-black with GDI into the buffer → [`text_to_color`] →
-//! draw opaque things (badges) → [`round_rect`] them → [`background`] (hover highlight).
+//! draw opaque things (badges) → [`round_rect`] them → [`background_rect`] (hover highlight).
 
 use crate::style::{Look, CLOCK_BASELINES, TRAY_ICON};
 
@@ -104,19 +104,6 @@ pub fn round_rect(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), radiu
             *p = a << 24 | ch(16) << 16 | ch(8) << 8 | ch(0);
         }
     }
-}
-
-/// The background under everything: almost transparent (alpha 1 keeps the whole strip
-/// clickable), with a rounded highlight on hover like the taskbar's buttons (white ~10% on a
-/// dark taskbar, black ~6% on a light one), `radius` px corners, `inset` px from top and bottom.
-pub fn background(buf: &mut [u32], width: i32, height: i32, hover: bool, light: bool, radius: f32, inset: i32) {
-    background_in(buf, width, height, hover.then_some((0, width)), light, radius, inset);
-}
-
-/// [`background`] with the hover highlight only over the columns `hover` = (left, right), e.g.
-/// one button in a strip; None = no highlight.
-pub fn background_in(buf: &mut [u32], width: i32, height: i32, hover: Option<(i32, i32)>, light: bool, radius: f32, inset: i32) {
-    background_rect(buf, width, height, hover.map(|(l, r)| (l, inset, r, height - inset)), light, radius);
 }
 
 /// Padding (px at 100%) around a button's glyph in its hover highlight box (rule: "Buttons" in
@@ -468,16 +455,6 @@ mod tests {
         assert!((s_right - total / 4.0).abs() < 0.01);
         assert!((s_bottom - total / 2.0).abs() < 0.01);
         assert!((s_left - total * 0.75).abs() < 0.01);
-    }
-
-    #[test]
-    fn background_in_highlights_only_its_columns() {
-        let (w, h) = (60, 48);
-        let mut buf = vec![0u32; (w * h) as usize];
-        background_in(&mut buf, w, h, Some((20, 40)), false, 4.0, 4);
-        assert_eq!(buf[(24 * w + 30) as usize] >> 24, 0x1a); // inside the highlight
-        assert_eq!(buf[(24 * w + 10) as usize] >> 24, 1); // outside: almost transparent
-        assert_eq!(buf[(24 * w + 50) as usize] >> 24, 1);
     }
 
     #[test]

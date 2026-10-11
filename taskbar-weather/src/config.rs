@@ -79,7 +79,6 @@ impl Config {
         // write the section back in full: adds settings introduced by newer versions (no write
         // if nothing changed)
         cfg.save();
-        migrate_label();
         cfg
     }
 
@@ -111,17 +110,3 @@ impl Config {
     }
 }
 
-/// Once: the old `taskbar_label` switch becomes Block's standard `show_on_taskbar` (kept if that
-/// is already set) and the old key goes. No write when there is no old key.
-fn migrate_label() {
-    let has_old = settings::section("weather").is_some_and(|w| w.get("taskbar_label").is_some());
-    if !has_old {
-        return;
-    }
-    let _ = settings::update(|root| {
-        let Some(sec) = root.get_mut("weather").and_then(Value::as_object_mut) else { return };
-        if let Some(old) = sec.remove("taskbar_label") {
-            sec.entry("show_on_taskbar").or_insert(old);
-        }
-    });
-}

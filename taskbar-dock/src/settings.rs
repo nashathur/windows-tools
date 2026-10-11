@@ -117,8 +117,3 @@ pub fn update(f: impl FnOnce(&mut Value)) -> io::Result<()> {
     }
     Ok(())
 }
-
-/// Replaces one section (other sections untouched).
-pub fn save_section(name: &str, value: Value) -> io::Result<()> {
-    update(|root| root[name] = value)
-}

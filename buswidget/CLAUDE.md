@@ -7,11 +7,11 @@ Rust (`windows-sys`), crate in `rust\`. Runs from a copy: `buswidget.exe` in thi
 (timetable built from the GTFS zip; ovapi.nl may answer 429, it retries after 180 min),
 `line_colors.txt`. Settings section `bus`; start with Windows via the shared `startup` list
 (switch in the right-click panel). `compact: true`: badge + next two departures on two lines.
-On Block (`taskbar-dock\src\block`, since plan step 6): the strip window, dock, drag, floating
-fallback (`data\pos.txt`), panels' open/close, right-click panel (Block's standard rows + the
-widget's rows from `Content::menu`: Change stop…, Refresh live times, Update timetable), tray icon
-(line badge, when Show on taskbar is off) and settings watch are the library's. `compact` and
-`show_on_taskbar` in the `bus` section are Block's; `Config::save/load` merge their keys.
+The strip window, dock, panels, tray icon and the standard menu rows are Block's
+(`..\taskbar-dock\BLOCK.md`). Bus-specific: the floating fallback position (`data\pos.txt`), the
+right-click rows from `Content::menu` (Change stop…, Refresh live times, Update timetable), the
+tray icon's line badge (shown when Show on taskbar is off). `compact` and `show_on_taskbar` in the
+`bus` section are Block's; `Config::save/load` merge their keys.
 
 ## Files (rust/src/)
 - main.rs: `App` (the `block::Content`: measure/draw, 1 s content timer, WM_DATA from the worker
@@ -25,5 +25,6 @@ widget's rows from `Content::menu`: Change stop…, Refresh live times, Update t
 
 ## Testing
 Use `taskbar-dock\dockctl.exe bus state|panel …|menu …|simulate …` (README there), not `_tmp\real.ps1`
-or mouse clicks. The dock leader is whichever strip is first in the real order.txt (bus since 2026-10-11; check
-it), and `_tmp\fit_test.ps1 -Widget <its folder>` must name it for the edge tests.
+or mouse clicks. The dock leader is the strip nearest the tray; find it by the `IconsRight` prop in
+`_tmp\strips.ps1 -Props` (weather on 2026-10-11, not bus), and `_tmp\fit_test.ps1 -Widget <its
+folder>` must name it for the edge tests (with another widget named, the fake edge has no effect).
