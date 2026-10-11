@@ -1,6 +1,5 @@
-//! The design code: every colour, font, size and spacing a widget draws with comes from here
-//! (values measured in `plan\tokens.md`). Widgets never write a colour, font name or font size
-//! themselves; `scripts\dev.ps1` and the `widget_sources_follow_the_theme` test check that.
+//! The design code: every colour, font, size and spacing a widget draws with comes from here.
+//! Widgets never write a colour, font name or font size themselves; `scripts\dev.ps1` and the `widget_sources_follow_the_theme` test check that.
 //!
 //! - [`Theme`]: colours for light or dark (from [`Look::light`]) and the font families.
 //! - [`brand`]: the allow-list of widget colours that aren't part of the theme (Discord's

@@ -1,8 +1,8 @@
 # Block: the shared strip window (`src\block`)
 
 A widget gives a `Spec` and a `Content` and calls `block::run`; Block owns the strip window and all
-its behaviour. On Block: weather (since plan step 3), discord (step 5), bus (step 6), media (step 8).
-How it got here: plan\PLAN.md, plan\done.md and the step commits.
+its behaviour. On Block: weather, discord, bus, media.
+How it got here: the plan step commits in git history.
 
 Files: `mod.rs` (the API), `core.rs` (pure decisions, tested with a fake Content), `place.rs` (left
 side, floating), `win.rs` (windows, timers, dock/fit/hooks, Explorer restart, floating fallback,
@@ -11,7 +11,7 @@ menu), `shell.rs` (main panel, child module of win.rs), `tray.rs`, `remote.rs` (
 ## API (`mod.rs`)
 Spec, Content, Frame, Canvas, Hit, MenuBuilder with the standard rows. Ctx requests are applied
 after the borrow: `redraw`, `redraw_panel`, `resize_panel`, `redraw_tray`, `every` / `stop` (content
-timers), `close_panel`, `quit`, `after`; `with` for the widget's own windows / worker posts.
+timers), `close_panel`, `quit`, `after`.
 `Content::commands()` lists optional dockctl `do` commands; `Content::command(name, args, token,
 ctx)` returns `CommandReply::Done(result)` or `Pending`. A pending command retains its non-cloneable
 `ReplyToken`; finishing it from any thread posts the result to Block's main window for delivery.
@@ -54,10 +54,10 @@ with, after the strip's redraw, no fade.
 - During a compact switch `Frame::fit_width` is the animated width (`core::fit_width`), so a
   Content that keeps things at its right end lays out to it instead of being cut off (discord: the
   avatar column narrows, its avatars fading with it).
-- Width following the content (plan step 9), `Spec::glide_width` (media, discord): Block takes a
+- Width following the content, `Spec::glide_width` (media, discord): Block takes a
   new measured width at once (`core::WidthHold`: a width up to 4 px narrower than the held one is
   ignored, room to spare; any wider is taken, else the content is cut off; no delay, the user wants
-  none; a hold-first option was removed in step 10), publishes it as `full` (the others refit
+  none), publishes it as `full` (the others refit
   once) and glides to it like a compact switch (`start_resize` watches the target width: compact
   or crowded; `core::animate_width`, tested), `publish_drawn` each frame so the neighbours follow. Meanwhile `Frame::fit_width` may
   be **wider** than the content: lay out to it up to your maximum (media's text column, discord's
@@ -72,7 +72,7 @@ with, after the strip's redraw, no fade.
 - Block's animations (glide, zoom, switch, panel fade, cover feel: `FRAME_TIMERS` in win.rs) run
   on the display's refresh, not a timer (`frames.rs`: `DwmFlush` on a worker thread, one frame
   message at a time). Content timers (`Ctx::every`) are plain SetTimer (~15.6 ms resolution).
-- Fade in / out (plan step 8, every widget): a new strip (start, Explorer restart, Show on
+- Fade in / out (every widget): a new strip (start, Explorer restart, Show on
   taskbar on, `visible()` turning true) fades in over `glide_ms`; one switched off or with
   nothing to show fades out first and keeps its slot meanwhile (the others close up after), then
   is removed; wanted again mid-fade, it turns back from where it is (`anim::Appear`, `T_APPEAR`

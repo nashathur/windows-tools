@@ -6,7 +6,7 @@
 use super::*;
 use std::cell::Cell;
 use windows_sys::Win32::Graphics::Dwm::*;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU};
 use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 
 thread_local! {
@@ -174,11 +174,11 @@ unsafe extern "system" fn panel_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             0
         }
         WM_KEYDOWN if ours() => {
-            super::dispatch_panel_vk(wp as u32, GetKeyState(VK_CONTROL as i32) < 0, GetKeyState(VK_MENU as i32) < 0, GetKeyState(VK_SHIFT as i32) < 0);
+            super::dispatch_panel_vk(wp as u32, GetKeyState(VK_CONTROL as i32) < 0, GetKeyState(VK_MENU as i32) < 0);
             0
         }
         WM_SYSKEYDOWN if ours() => {
-            let key = super::panel_key_from_vk(wp as u32, GetKeyState(VK_CONTROL as i32) < 0, GetKeyState(VK_MENU as i32) < 0, GetKeyState(VK_SHIFT as i32) < 0);
+            let key = super::panel_key_from_vk(wp as u32, GetKeyState(VK_CONTROL as i32) < 0, GetKeyState(VK_MENU as i32) < 0);
             if super::dispatch_panel_key_with_fallback(key) { 0 } else { DefWindowProcW(h, msg, wp, lp) }
         }
         WM_CHAR if ours() => { super::dispatch_panel_utf16(wp as u16); 0 }

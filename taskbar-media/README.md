@@ -2,7 +2,7 @@
 
 A "now playing" widget in the Windows 11 taskbar, written in Rust (Win32 + GDI, no web view;
 about 600 KB). It docks next to the other taskbar widgets (bus, weather) through the shared
-library in `..\taskbar-dock`, and looks and behaves like them. Design notes and history: PLAN.md.
+library in `..\taskbar-dock`, and looks and behaves like them.
 
 ## What it shows
 
@@ -40,7 +40,7 @@ Windows' media controls should work. Discord doesn't report to Windows, so it is
 | `media_brands.txt` | brand colours and logos for apps and sites; edits apply within a second (format in its header) |
 | `progress.txt` | learned per app: does it report its position while playing? |
 | `logos\` | downloaded site logos (refreshed after 30 days) |
-| `tests\*.ps1` | probes for manual checks (geometry, clicks on the widget only, seeking, volume) |
+| `tests\*.ps1` | read-only probes for manual checks: media sessions (`probe`), Volume Mixer matching (`audiotest`), Firefox tabs (`tabtest`) |
 
 ## Settings
 

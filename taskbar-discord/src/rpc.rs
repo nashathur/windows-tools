@@ -497,7 +497,7 @@ impl Session {
 
 /// TASKBAR_DISCORD_TEST=<n>: a made-up call with n people, someone speaking in turn, so the
 /// strip and panel can be checked without Discord. Mute/deafen/leave work on it. Every 10 ticks
-/// (~9 s) people leave or join: n, 1, about half, n, … (the strip's width follows, plan step 9).
+/// (~9 s) people leave or join: n, 1, about half, n, … (the strip's width follows).
 fn fake(n: usize, rx: &Receiver<Cmd>, post: &Post) {
     let names = ["Amy", "Bob", "Chandra", "Dewi", "Eko", "Fatima", "Gus", "Hana"];
     let mut v = Voice { status: Status::Ready, me: Some("1".into()), ..Default::default() };

@@ -37,7 +37,7 @@ pub(crate) struct Core {
 /// Px at 100% a measured width may differ from the held one without counting as a change.
 pub(crate) const WIDTH_SLACK: f32 = 4.0;
 
-/// A strip's content width, held steady ([`Spec::glide_width`], plan step 9): a width narrower
+/// A strip's content width, held steady ([`Spec::glide_width`]): a width narrower
 /// than the held one by no more than the slack is ignored (some room to spare); any other
 /// change is taken at once (a wider one, or the content is cut off: a title ending in "…" that
 /// fits). The first width, and any width in a new `key` (mode, height, scale), is taken at once.
@@ -596,16 +596,6 @@ mod tests {
         assert!(out[5] >> 24 < 0xFF, "the last column fades");
         assert_eq!(cut(&px, w, h, 10, 3), px, "not cut: unchanged");
         assert_eq!(cut(&px, w, h, 99, 3).len(), 20);
-    }
-
-    #[test]
-    fn the_widgets_own_type_is_found_behind_dyn_content() {
-        // what `block::with` does
-        let mut boxed: Box<dyn Content> = Box::new(Fake { switch_on: true, ..Default::default() });
-        let any = <dyn Content as AsAny>::as_any(boxed.as_mut());
-        assert!(any.downcast_mut::<Fake>().is_some_and(|f| f.switch_on));
-        struct Other;
-        assert!(<dyn Content as AsAny>::as_any(boxed.as_mut()).downcast_mut::<Other>().is_none());
     }
 
     #[test]

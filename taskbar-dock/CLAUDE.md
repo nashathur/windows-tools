@@ -8,10 +8,8 @@ this file. Reference, read by section when the task reaches it:
 - **UI-RULES.md**: corners, button highlights and hitboxes, cover/logo click and feel. Read before
   changing any drawing, hit box, highlight, radius or cover behaviour.
 - README.md: the recipe for a new widget (a `Spec` + a `Content`), the shared `dock` settings,
-  corner design reasoning, dockctl ("Testing"). plan\PLAN.md: the Block rebuild (steps 0–10 done)
-  and later ideas. NOTES-2026-10-09.md:
-  build-time measurements, the drag-slot fix, the icons-as-obstacles fit (test aid
-  `TASKBAR_DOCK_TEST_ICONS_RIGHT`), what was taken from TaskbarWidgets.
+  corner design reasoning, dockctl ("Testing"). plan\PLAN.md: open ideas (the Block rebuild, steps 0–11, is
+  done; its notes are in git history).
 
 ## Library modules (windows-sys 0.52, handles are isize; `windows` 0.58 only for UI Automation in icons)
 **A widget is a `Spec` + a `Content` handed to `block::run`; Block does the rest** (BLOCK.md).

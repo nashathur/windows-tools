@@ -197,25 +197,6 @@ pub fn run<C: Content>(spec: Spec, content: C) {
     }
 }
 
-/// The widget's Content, from outside its callbacks (its own windows, worker posts handled
-/// elsewhere): a short borrow, then the requests are carried out. None while Block is busy
-/// further up the stack (e.g. a message sent during a Content callback), or for the wrong type.
-pub fn with<C: Content, R>(f: impl FnOnce(&mut C, &mut Ctx) -> R) -> Option<R> {
-    let (r, reqs) = st(|s| {
-        let c = <dyn Content as AsAny>::as_any(s.content.as_mut()).downcast_mut::<C>()?;
-        let mut ctx = Ctx::new(s.main);
-        let r = f(c, &mut ctx);
-        Some((r, ctx.reqs))
-    })
-    .flatten()?;
-    apply(reqs);
-    Some(r)
-}
-
-/// The strip window (0: none right now), e.g. to place a tray-opened panel.
-pub fn strip_window() -> isize {
-    st(|s| s.strip).unwrap_or(0)
-}
 
 /// The main panel closes for a reason of its own (it lost focus, Esc; or a right click, another
 /// panel): the behaviour is told why, the window destroyed.
@@ -776,12 +757,12 @@ pub(super) fn dispatch_panel_wheel(delta: i32) {
     }
 }
 
-pub(super) fn dispatch_panel_vk(vk: u32, ctrl: bool, alt: bool, shift: bool) {
-    dispatch_panel_key_with_fallback(panel_key_from_vk(vk, ctrl, alt, shift));
+pub(super) fn dispatch_panel_vk(vk: u32, ctrl: bool, alt: bool) {
+    dispatch_panel_key_with_fallback(panel_key_from_vk(vk, ctrl, alt));
 }
 
 /// Converts a Win32 virtual key into Block's normalized panel key.
-pub(super) fn panel_key_from_vk(vk: u32, ctrl: bool, alt: bool, shift: bool) -> PanelKey {
+pub(super) fn panel_key_from_vk(vk: u32, ctrl: bool, alt: bool) -> PanelKey {
     let key = match vk {
         0x0D => PanelKeyCode::Enter, 0x1B => PanelKeyCode::Escape, 0x26 => PanelKeyCode::Up,
         0x28 => PanelKeyCode::Down, 0x21 => PanelKeyCode::PageUp, 0x22 => PanelKeyCode::PageDown,
@@ -790,7 +771,7 @@ pub(super) fn panel_key_from_vk(vk: u32, ctrl: bool, alt: bool, shift: bool) -> 
         0x09 => PanelKeyCode::Tab, 0x41 => PanelKeyCode::A, 0x43 => PanelKeyCode::C,
         0x56 => PanelKeyCode::V, 0x58 => PanelKeyCode::X, n => PanelKeyCode::Other(n),
     };
-    PanelKey { key, ctrl, alt, shift }
+    PanelKey { key, ctrl, alt }
 }
 
 /// Dispatches a key and closes the panel when its Content declines Escape.
@@ -1244,20 +1225,8 @@ unsafe extern "system" fn on_win_event(_: isize, _event: u32, hwnd: isize, id_ob
 
 // ---------------------------------------------------------------- drawing and placing
 
-fn frame<'a>(look: &'a Look, core: &Core, floating: bool, height: i32, dpi: f32, zoom: f32, compact: bool) -> Frame<'a> {
-    Frame {
-        look,
-        height,
-        dpi,
-        zoom,
-        scale: dpi * zoom,
-        compact,
-        hover: core.hover,
-        hot: core.hot,
-        pressed: core.motion.pressed(),
-        floating,
-        fit_width: None,
-    }
+fn frame(look: &Look, height: i32, scale: f32, compact: bool) -> Frame<'_> {
+    Frame { look, height, scale, compact, fit_width: None }
 }
 
 /// Measures, draws and places the strip; creates it when it's missing and wanted, destroys it
@@ -1317,7 +1286,7 @@ fn redraw() {
         // its widths for the dock's fit: in the chosen mode (a gliding width held steady first),
         // and compact (unzoomed)
         let Some((size, raw, compact_w, side, zoom, dragging, look, stretch, glide)) = st(|s| {
-            let f = frame(&s.look, &s.core, floating, height, dpi, 1.0, s.core.compact);
+            let f = frame(&s.look, height, dpi, s.core.compact);
             let chosen = s.content.measure(&f, s.core.compact);
             let compact = s.content.measure(&f, true);
             let held = if s.spec.glide_width {
@@ -1358,7 +1327,7 @@ fn redraw() {
         let shown_compact = compact && resize_w.is_none();
         let fit_w = core::fit_width(resize_w, target, natural_w, zoom);
         let Some(Some((mut cv, feel, cover, hover, dragging_now, hot, tint))) = st(|s| {
-            let mut f = frame(&s.look, &s.core, floating, height, dpi, zoom, shown_compact);
+            let mut f = frame(&s.look, height, dpi * zoom, shown_compact);
             // crowded, held or animating: the width it's drawn at (a Content that can narrow or
             // widen lays out to it, so its right end isn't cut off)
             f.fit_width = fit_w;

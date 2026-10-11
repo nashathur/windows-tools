@@ -88,35 +88,14 @@ impl Config {
         serde_json::Value::Object(fields)
     }
 
-    /// The old data\config.txt (key = value lines), migrated into the shared file once.
-    fn load_old(dir: &Path) -> Option<Self> {
-        let text = fs::read_to_string(dir.join("config.txt")).ok()?;
-        let mut c = Self::default();
-        for l in text.lines().filter(|l| !l.trim_start().starts_with('#')) {
-            if let Some((k, v)) = l.split_once('=') {
-                c.set(k.trim(), v.trim().to_string());
-            }
-        }
-        Some(c)
-    }
-
-    /// Loads the bus section. On first run it moves data\config.txt in (kept as
-    /// config.txt.migrated) or writes the defaults.
-    pub fn load(dir: &Path) -> Self {
+    /// Loads the bus section; on first run it writes the defaults.
+    pub fn load() -> Self {
         let Some(root) = settings::read() else { return Self::default() };
         let mut c = Self::default();
-        match root.get("bus").and_then(|b| b.as_object()) {
-            Some(bus) => {
-                for k in FIELDS {
-                    if let Some(v) = bus.get(k).and_then(|v| v.as_str()) {
-                        c.set(k, v.to_string());
-                    }
-                }
-            }
-            None => {
-                if let Some(old) = Self::load_old(dir) {
-                    c = old;
-                    let _ = fs::rename(dir.join("config.txt"), dir.join("config.txt.migrated"));
+        if let Some(bus) = root.get("bus").and_then(|b| b.as_object()) {
+            for k in FIELDS {
+                if let Some(v) = bus.get(k).and_then(|v| v.as_str()) {
+                    c.set(k, v.to_string());
                 }
             }
         }
@@ -126,7 +105,7 @@ impl Config {
     }
 
     /// Saves the bus section only; the other sections are left as they are.
-    pub fn save(&self, _dir: &Path) -> io::Result<()> {
+    pub fn save(&self) -> io::Result<()> {
         self.merge()
     }
     /// What the cached schedule depends on.

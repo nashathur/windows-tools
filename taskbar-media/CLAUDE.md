@@ -2,8 +2,7 @@
 
 @../taskbar-dock/CLAUDE.md
 
-Rust, `windows` 0.58 crate (WinRT GSMTC + Win32). Design and status: PLAN.md (long; read the
-section you need). Built in 5 stages; the user checks each on screen before saying go.
+Rust, `windows` 0.58 crate (WinRT GSMTC + Win32). User docs: README.md.
 Runs from a copy: `taskbar-media.exe` here (dev.ps1 stops, copies, restarts). Log:
 `taskbar-media.log` (also panics). Learned real-time table: `progress.txt`. Logo cache: `logos\`.
 
@@ -26,7 +25,7 @@ Everything about the strip window, dock, panels, tray icon and the standard menu
 - render.rs: strip drawing into Block's canvas (`geo`, `strip_layout` incl. `Frame::fit_width`,
   `draw_strip`: text, buttons, cover/badge, ring, `text_width`), `tray_logo`, GDI helpers ·
   layout.rs: strip geometry (`at_width`: the text column narrows first, or widens up to
-  `max_width`; `BUTTON_GAP` after the text). The text column follows the track (`App::text_column`, plan step 9;
+  `max_width`; `BUTTON_GAP` after the text). The text column follows the track (`App::text_column`;
   `fixed_width`: always `max_width`); Block glides the width (`Spec::glide_width`). A line
   longer than its column scrolls (`panel_view::paint_line`, shared with the panel; content timer
   `TIMER_SCROLL` 33 ms while one is too long, started / stopped in `sync`).
@@ -37,7 +36,7 @@ Everything about the strip window, dock, panels, tray icon and the standard menu
   sites.rs (browser tab title via UI Automation) · brands.rs (`media_brands.txt`) ·
   logos.rs (logo download/cache, app icons) · iconurl.rs · cover.rs (square, dominant colour) ·
   config.rs (settings section `media`).
-- tests/*.ps1: geometry/click probes (clicks only inside our own windows).
+- tests/*.ps1: read-only probes (media sessions, Volume Mixer, Firefox tabs).
 
 ## Firefox / GSMTC quirks (don't re-diagnose)
 - While playing, Firefox reports position 0 (or tiny) and no length; real values only when

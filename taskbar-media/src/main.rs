@@ -1,8 +1,8 @@
 #![windows_subsystem = "windows"]
 
-//! Now playing on the Windows 11 taskbar, on the taskbar-dock library's Block (plan step 8): Block
+//! Now playing on the Windows 11 taskbar, on the taskbar-dock library's Block: Block
 //! owns the strip window, the dock, the panels' windows, the right-click panel's standard rows,
-//! the tray icon, floating and following the settings; this is its Content. See PLAN.md.
+//! the tray icon, floating and following the settings; this is its Content.
 
 mod apps;
 mod audio;
@@ -130,30 +130,6 @@ pub fn log(line: &str) {
     }
 }
 
-/// Puts text on the clipboard (`owner`: our main window).
-fn copy_text(owner: isize, text: &str) {
-    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
-    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-    const CF_UNICODETEXT: u32 = 13;
-    let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
-    unsafe {
-        if OpenClipboard(HWND(owner as *mut c_void)).is_err() {
-            return;
-        }
-        let _ = EmptyClipboard();
-        if let Ok(mem) = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2) {
-            let p = GlobalLock(mem) as *mut u16;
-            if !p.is_null() {
-                std::ptr::copy_nonoverlapping(wide.as_ptr(), p, wide.len());
-                let _ = GlobalUnlock(mem);
-                // the clipboard owns the memory from here
-                let _ = SetClipboardData(CF_UNICODETEXT, HANDLE(mem.0));
-            }
-        }
-        let _ = CloseClipboard();
-    }
-}
-
 impl App {
     /// Sends a command to the media worker.
     pub(crate) fn send(&self, cmd: Cmd) {
@@ -177,7 +153,7 @@ impl App {
     }
 
     /// The text column, px at `scale`: as wide as the longer line (the buttons right after it),
-    /// up to `max_width` (plan step 9: Block glides the strip to it); always `max_width` with
+    /// up to `max_width` (Block glides the strip to it); always `max_width` with
     /// `fixed_width`. Measured each time with the call that draws it, so it fits exactly.
     fn text_column(&self, scale: f32, look: &Look) -> (i32, i32) {
         let max = (self.cfg.max_width * scale).round() as i32;
@@ -430,7 +406,7 @@ impl Content for App {
             ID_COPY => {
                 let text = if s.artist.is_empty() { s.title.clone() } else { format!("{} – {}", s.artist, s.title) };
                 let main = self.main;
-                ctx.after(move || copy_text(main, &text));
+                ctx.after(move || taskbar_dock::text_edit::clipboard_write(main, &text));
             }
             _ => {}
         }

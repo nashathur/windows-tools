@@ -248,7 +248,7 @@ fn run(to: ReplyTo, cmd: Command) {
                 CtlPanelKey::CtrlC => (PanelKeyCode::C, true, false), CtlPanelKey::CtrlV => (PanelKeyCode::V, true, false),
                 CtlPanelKey::CtrlX => (PanelKeyCode::X, true, false), CtlPanelKey::CtrlBackspace => (PanelKeyCode::Backspace, true, false),
             };
-            dispatch_panel_key_with_fallback(PanelKey { key, ctrl, alt, shift: false });
+            dispatch_panel_key_with_fallback(PanelKey { key, ctrl, alt });
             ok(json!({ "panel": panel_state() }))
         }
         Command::PanelType(text) => {

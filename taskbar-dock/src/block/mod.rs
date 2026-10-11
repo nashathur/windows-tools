@@ -36,7 +36,7 @@ use crate::menu_panel::{self, Item, Menu, Row};
 use crate::style::Look;
 use crate::theme::Theme;
 
-pub use win::{run, strip_window, with};
+pub use win::run;
 
 /// Content timer ids must be below this ([`Ctx::every`]); Block's own are above.
 pub const CONTENT_TIMERS: usize = 1000;
@@ -97,7 +97,7 @@ pub struct Spec {
     pub compact_when_crowded: bool,
     /// Crowded: may take any width between compact and full ([`crate::dock::Size::stretch`]).
     pub stretch: bool,
-    /// The width follows the content (media, discord; plan step 9): the strip glides to a new
+    /// The width follows the content (media, discord): the strip glides to a new
     /// measured width like a compact switch, its neighbours following; crowded refits glide too.
     /// Meanwhile [`Frame::fit_width`] may be wider than the content: lay out to it. False: a new
     /// width jumps (weather, bus).
@@ -150,11 +150,6 @@ pub struct PanelFrame<'a> {
 }
 
 impl PanelFrame<'_> {
-    /// `v` px at 100%, at this panel's scale, whole px.
-    pub fn px(&self, v: f32) -> i32 {
-        (v * self.scale).round() as i32
-    }
-
     pub fn theme(&self) -> Theme {
         Theme::new(self.look)
     }
@@ -180,7 +175,6 @@ pub struct PanelKey {
     pub key: PanelKeyCode,
     pub ctrl: bool,
     pub alt: bool,
-    pub shift: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -235,22 +229,11 @@ pub struct Frame<'a> {
     pub look: &'a Look,
     /// The strip's height (the taskbar's), px.
     pub height: i32,
-    /// Display scale (1.0 = 100%).
-    pub dpi: f32,
-    /// Drag zoom (1.0 at rest).
-    pub zoom: f32,
-    /// `dpi × zoom`: multiply sizes at 100% by this (the content grows while dragged).
+    /// Display scale × drag zoom: multiply sizes at 100% by this (the content grows while
+    /// dragged).
     pub scale: f32,
     /// Draw the compact mode.
     pub compact: bool,
-    /// The mouse is on the strip.
-    pub hover: bool,
-    /// What it's over ([`Content::hit`]); meaningful while `hover`.
-    pub hot: Hit,
-    /// The button is down on the strip.
-    pub pressed: bool,
-    /// Floating rather than in the taskbar.
-    pub floating: bool,
     /// The width the strip is drawn at, px at this frame's zoom: crowded, for a stretchable strip
     /// ([`Spec::stretch`]), while a compact switch animates the width (the full content, at
     /// every width between compact and full), or with [`Spec::glide_width`] while the width
@@ -265,10 +248,6 @@ impl Frame<'_> {
     /// `v` px at 100%, at this frame's scale, whole px.
     pub fn px(&self, v: f32) -> i32 {
         (v * self.scale).round() as i32
-    }
-
-    pub fn theme(&self) -> Theme {
-        Theme::new(self.look)
     }
 }
 
@@ -514,21 +493,10 @@ impl Ctx {
     }
 }
 
-/// Lets [`with`] find the widget's own type behind `dyn Content`.
-pub trait AsAny {
-    fn as_any(&mut self) -> &mut dyn std::any::Any;
-}
-
-impl<T: std::any::Any> AsAny for T {
-    fn as_any(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-}
-
 /// What the widget supplies: what the strip shows and what its clicks do. Only `measure` and
 /// `draw` are required. Callbacks with a [`Ctx`] record requests; the others must not change
 /// anything outside `self`.
-pub trait Content: AsAny + 'static {
+pub trait Content: 'static {
     /// The widget's available `do` commands and their one-line usage.
     fn commands(&self) -> Vec<(&'static str, &'static str)> { Vec::new() }
 

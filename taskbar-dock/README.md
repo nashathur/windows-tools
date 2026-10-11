@@ -26,7 +26,7 @@ drawing and data code use.
 | `anim` | Easing and animation progress (0 ms when animations are off). `pulse`: a slow, smooth 0 → 1 → 0 every 2.4 s for "alive, nothing else to show"; `pulse_settle`: gliding down to 0 from wherever a pulse stopped. |
 | `marquee` | Scrolling text for a line too long for its fixed-width box: still if it fits; otherwise wait 1.5 s, then scroll left at 30 px/s in a loop (the start follows 40 px after the end) until it's back where it began, and repeat. `fade_edges` softens the cut-off edges. Still (cut with "…") when animations are off. |
 | `block` | The strip window and all its behaviour (dock slot, drag, panels, right-click panel, tray icon, fit, Explorer restarts, floating fallback). A widget gives a `Spec` and a `Content` and calls `block::run`. BLOCK.md. |
-| `theme` | The design code: every colour, font, font size and spacing, light and dark; the `brand` allow-list for brand and data colours. Widgets take all of them from here (`tests\theme_lint.rs` checks it). plan\tokens.md. |
+| `theme` | The design code: every colour, font, font size and spacing, light and dark; the `brand` allow-list for brand and data colours. Widgets take all of them from here (`tests\theme_lint.rs` checks it). |
 | `emoji` | Colour emoji through Direct2D + DirectWrite (GDI draws emoji in one colour). |
 | `window` | `raise`: bring another app's window to the front; `exe_path`, `is_exe`. |
 | `startup`, `crash`, `ctl` | The Start with Windows list, the launcher watchdog's restart rules and panic log, and dockctl's command format. |
@@ -167,7 +167,7 @@ cover, a width that follows its content), `taskbar-discord` (a worker, a width t
    Compact mode, Start with Windows, Edit settings…, Quit), the tray icon, one instance,
    Explorer restarts, the floating fallback and following Windows' theme and settings.
 9. **Done** when it has the five parts in CLAUDE.md ("Every widget has these five parts"), the
-   parity checks in `plan\PLAN.md` pass, and `dockctl <widget> state|panel|menu` answers.
+   behaves like the other widgets (drag, drop, compact, crowding, panels, cover), and `dockctl <widget> state|panel|menu` answers.
 
 ## Building
 
@@ -185,7 +185,7 @@ cargo test --release
 ### dockctl: command-line control of widgets on Block
 
 `taskbar-dock\dockctl.exe [--timeout <s>] <weather|bus|discord|media|all> <command> [args]` talks to a running
-widget and prints JSON. Only widgets on Block answer (all four since plan step 8); one
+widget and prints JSON. Only widgets on Block answer (all four); one
 that isn't is reported as `"absent": "running, not on Block yet"` or `"not running"`.
 For `all` that isn't an error. Exit code: 0 all succeeded, 1 error or timeout, 2 usage error.
 For `all`, 2 takes precedence if any widget reports a usage error. The default deadline is 5

@@ -42,7 +42,7 @@ Everything about the strip window, dock, panels, tray icon and the standard menu
 ## Testing
 - `TASKBAR_DISCORD_TEST=4` in the environment: no Discord needed; someone speaks in turn, the
   buttons work, Leave rejoins after 6 s; every ~9 s people leave or join (n, 1, about half, n, …:
-  the strip's width glides with them, plan step 9). The third person is muted. dev.ps1 passes every `TASKBAR_*` variable on to the
+  the strip's width glides with them). The third person is muted. dev.ps1 passes every `TASKBAR_*` variable on to the
   scheduled task that starts the widget (`$env:TASKBAR_DISCORD_TEST='4'; .\dev.ps1 -Fast`).
 - dockctl: `dockctl discord state|panel open|menu rows|menu click "Leave call"|tray click left|…`.
   Probe (mouse on the strip / panel, put back): `tools\_tmp\discord_probe.ps1 strip|panel x y|shot`;
@@ -51,5 +51,3 @@ Everything about the strip window, dock, panels, tray icon and the standard menu
   avatars, live speaking rings.
   2026-10-11 (on Block): Mute/Deafen/Leave against real Discord (rpc.voice.write) work.
   Not tried yet: token refresh after 7 days.
-- Block port parity (2026-10-11, fake call): strip 258×48 at the same place, panel 320×290 and menu
-  280×380 at the same rects as before; panel pixels identical apart from who speaks.

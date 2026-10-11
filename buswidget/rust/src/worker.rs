@@ -14,7 +14,7 @@ pub(crate) struct Shared {
 pub(crate) fn shared() -> &'static Mutex<Shared> {
     static S: OnceLock<Mutex<Shared>> = OnceLock::new();
     S.get_or_init(|| {
-        let cfg = data::Config::load(data_dir());
+        let cfg = data::Config::load();
         Mutex::new(Shared { cfg, sched: None, live: Arc::default(), ok_at: None, err: None, no_live: false })
     })
 }
@@ -31,7 +31,7 @@ pub(crate) fn current() -> (data::Config, Option<Arc<data::Schedule>>, Arc<Vec<d
 
 /// Switch to another stop/line (from the picker): save it and rebuild from the local timetable.
 pub(crate) fn set_config(cfg: data::Config) -> std::io::Result<()> {
-    if let Err(e) = cfg.save(data_dir()) {
+    if let Err(e) = cfg.save() {
         data::log(data_dir(), &format!("saving config failed: {e}"));
         return Err(e);
     }
