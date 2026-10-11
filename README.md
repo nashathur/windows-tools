@@ -45,3 +45,7 @@ paths over 260 characters.
 
 These are personal tools, built for one machine: some paths, settings and defaults (the bus
 stop, the GPU, conda env names) are specific to it. Each folder's README has the details.
+
+## License
+
+[MIT](LICENSE)
