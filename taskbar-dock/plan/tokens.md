@@ -100,7 +100,7 @@ Scaling: bus popup fonts scale by `look.font_size / 12` (main.rs:370) as well as
 | `m` | 12 | menu_panel padding, separator side inset (menu_panel, media), bus popup padding, strip fade-out width | – |
 | `l` | 16 | discord panel padding, media click padding | – |
 | `xl` | 20 | weather panel padding (render.rs:315) | proposed: weather → `l` 16 (visible) |
-| `panel_padding` | `l` 16 (main panels), `m` 12 (menu panels) | see above | media menu 10 (panel_view.rs:114; goes away in step 7), bus picker 14 |
+| `panel_padding` | `l` 16 (main panels), `m` 12 (menu panels) | see above | media menu 10 (panel_view.rs:114; goes away in step 8), bus picker 14 |
 | `row_height` | 32 | menu_panel ROW_H, media menu rows | bus rows text height + 4 (~21); weather uses fixed y positions |
 | `row_height_large` | 40 | discord member rows (ROW_H) | – |
 | `section_gap` | 8 (4 + 1 px line + 4) | menu_panel separators | – |
@@ -109,7 +109,7 @@ Scaling: bus popup fonts scale by `look.font_size / 12` (main.rs:370) as well as
 
 | Token | Value | Used today by | Deviations |
 |---|---|---|---|
-| `panel_narrow` | 280 | menu_panel WIDTH | media menu 300 (setting `menu_panel_width`; replaced by menu_panel in step 7) |
+| `panel_narrow` | 280 | menu_panel WIDTH | media menu 300 (setting `menu_panel_width`; replaced by menu_panel in step 8) |
 | `panel_standard` | 320 | discord PANEL_W | – |
 | `panel_wide` | 360 | weather POPUP_W, media click (setting `click_panel_width`) | bus popup and picker sized by content (picker 600 × 470 dialog) |
 | `panel_height` | content | discord, menu_panel, bus | weather fixed 494 (POPUP_H), media click 232 / menu 250 |

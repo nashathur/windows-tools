@@ -1,7 +1,7 @@
 # Block: the shared strip window (`src\block`)
 
 A widget gives a `Spec` and a `Content` and calls `block::run`; Block owns the strip window and all
-its behaviour. On Block: weather (since plan step 3), discord (step 5), bus (step 6); media in step 7.
+its behaviour. On Block: weather (since plan step 3), discord (step 5), bus (step 6); media in step 8.
 How it got here: plan\PLAN.md, plan\done.md and the step commits.
 
 Files: `mod.rs` (the API), `core.rs` (pure decisions, tested with a fake Content), `place.rs` (left

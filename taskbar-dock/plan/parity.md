@@ -114,7 +114,7 @@ Explorer restart
 - [ ] Cover / brand logo opens the playing app on release (`window::raise`); cover feel 1.06 / 0.96; drag from cover still drags. Verify: drag_probe (default class), hover.
 - [ ] Strip buttons (prev/play/next): `button_box` hit boxes; unsupported ones dimmed. Verify: hover + hand.
 - [ ] Progress ring around the cover; LIVE in `live_color` (#FF4E45) for live streams (learned per app: `progress.txt`). Verify: hand.
-- [ ] Own right-click panel (`panel_view.rs` Menu mode, 300 wide): header with cover, rows, Compact / Start with Windows switches, two half-width buttons at the bottom. Becomes `menu_panel` in step 7 (user-visible change, planned). Verify: menu.
+- [ ] Own right-click panel (`panel_view.rs` Menu mode, 300 wide): header with cover, rows, Compact / Start with Windows switches, two half-width buttons at the bottom. Becomes `menu_panel` in step 8 (user-visible change, planned). Verify: menu.
 - [ ] Click panel (360 wide): cover, title/artist/album/source, seek bar (click to seek when seekable), times, prev/play/next, volume slider + mute + percent; copy text. Panel colours tinted by the cover (`wash`, accent bar). **(new: tint)** Verify: hand.
 - [ ] Brand file (`brands`) edits reload logos live. **(new)** Verify: hand.
 - [ ] Does not move while the mouse is held on it (check_fit / reposition skip while pressed). Verify: drag_probe (no jump at press).

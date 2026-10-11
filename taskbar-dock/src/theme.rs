@@ -264,7 +264,7 @@ pub const BRANDS: &[(&str, u32, u32)] = &[
 
 /// Named font overrides (see [`BRANDS`]): text that keeps "Segoe UI" instead of `look.font`.
 pub mod font_override {
-    /// The bus "Change stop…" picker (a Win32 dialog until step 9).
+    /// The bus "Change stop…" picker (a Win32 dialog until step 11).
     pub const BUS_PICKER: &str = "Segoe UI";
 }
 
