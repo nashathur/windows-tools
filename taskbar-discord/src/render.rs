@@ -488,9 +488,6 @@ pub fn strip(cv: Option<&mut block::Canvas>, c: &StripContent, compact: bool, fi
     lay
 }
 
-/// The blurple boxes Block draws under the strip (`Content::tint`): the whole strip always (stronger
-/// on hover), a hovered button's box blurple, or red for Leave and switched-on buttons, like
-/// Discord's own.
 /// Puts `layer` (premultiplied 0xAARRGGBB, as `buf`) over `buf` at `opacity`, only within the
 /// columns `xs` (left, right exclusive).
 fn over(buf: &mut [u32], layer: &[u32], width: i32, xs: (i32, i32), opacity: f32) {
@@ -524,8 +521,12 @@ fn fit_column((gap1, column, gap2): (i32, i32, i32), min_gaps: i32, room: Option
     (first, 0, gaps - first)
 }
 
-pub fn tint(v: &Voice, area: block::Hit, look: &Look) -> Option<block::Tint> {
-    let (rest, over) = if look.light { (70.0, 105.0) } else { (85.0, 125.0) };
+/// The blurple boxes Block draws under the strip (`Content::tint`): the whole strip always, a
+/// hovered button's box blurple, or red for Leave and switched-on buttons, like Discord's own. How
+/// strong is Block's (the shared levels): quiet while muted (or deafened, or not in a call),
+/// active while unmuted, hover under the mouse.
+pub fn tint(v: &Voice, area: block::Hit) -> Option<block::Tint> {
+    let live = v.in_call() && !v.self_mute && !v.self_deaf;
     let rgb = match area {
         block::Hit::Button(i, _) => match STRIP_BUTTONS.get(i) {
             Some(&b) if b == Button::Leave || strip_button_on(v, b) => brand24("discord.red"),
@@ -533,7 +534,7 @@ pub fn tint(v: &Voice, area: block::Hit, look: &Look) -> Option<block::Tint> {
         },
         _ => brand24("discord.blurple"),
     };
-    Some(block::Tint { rgb, rest: rest / 255.0, hover: over / 255.0 })
+    Some(block::Tint::new(rgb, live))
 }
 
 /// The tray icon: the headset (Segoe Fluent E95B), mono in the taskbar's text colour, as weather's

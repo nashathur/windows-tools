@@ -34,7 +34,10 @@ A shared Rust library for the taskbar widgets: the bus widget (`C:\Users\thurs\t
   "hover_close_ms": 300,
   "fade_ms": 150, "glide_ms": 300, "zoom_ms": 120,
   "drag_zoom": 1.15,
-  "panel_margin": 12
+  "panel_margin": 12,
+  "tint_dark":  { "quiet": 0.18, "active": 0.333, "hover": 0.49 },
+  "tint_light": { "quiet": 0.149, "active": 0.275, "hover": 0.412 },
+  "tint_fixed": "auto"
 }
 ```
 
@@ -51,6 +54,8 @@ A shared Rust library for the taskbar widgets: the bus widget (`C:\Users\thurs\t
 | `fade_ms`, `glide_ms`, `zoom_ms` | Panel fade-in, slide into place, and drag zoom durations. `glide_ms` also times the compact switch; its default 300 and the slides' easing match the Windows 11 taskbar's own button slide (measured: cubic-bezier(0.5, 0, 0, 1) over 300 ms). A settings.json written before 2026-10-11 has the old 150. |
 | `drag_zoom` | Content size while dragged (1.15 = 115%). |
 | `panel_margin` | Pixels (at 100%) a panel keeps from the taskbar and from the screen edges. Windows 11's own flyouts use 12. |
+| `tint_dark`, `tint_light` | Opacity (0–1) of a widget's brand colour behind its strip (discord's blurple, media's app colour), on a dark / light taskbar: `quiet` while paused or muted, `active` while playing or unmuted, `hover` under the mouse. |
+| `tint_fixed` | `"auto"`: the levels above, by state. A number 0–1: that opacity always, for every state and widget (0 = no tint, 1 = solid colour). |
 
 Missing keys are filled in with the defaults the first time a widget starts, so the file always shows every option. Edits apply within a second, without restarting the widgets.
 
@@ -110,7 +115,7 @@ The steps below follow the bus widget. `buswidget\rust\src\main.rs` uses `window
    5. Call `draw::background` (hover highlight) and `UpdateLayeredWindow`.
 7. **Position**: after drawing, `dock::publish_widths(me, Size { full, min, stretch })` (full: in the chosen mode; min: compact; stretch: any width between, like media's text column). Then `dock::slot(taskbar, me, size, dock::tray_boundary(taskbar, scale), gap_px)` gives `x_for(drawn width)`, `slide` and `fit`. `None` means "stay put": the taskbar's window list is briefly empty while the action center is open. Feed `fit` to a `dock::FitState`: `Redraw` → draw compact or at the narrowed width; `Hide` → close the panel, `set_squeezed(true)`, hide, log; `Show` → `set_squeezed(false)`, draw, show, log. Keep checking once a second while hidden (no events reach a hidden strip). Move there with `strip::Motion::glide_to` (it slides right and jumps left) and its `Glide` answer; see `glide_to` in the bus widget. Re-check once a second.
 8. **React instantly**: keep a `dock::Hooks` and call `hooks.update(taskbar, Some(callback))` every second. In the callback, re-snap when `dock::is_neighbour_event(...)` is true.
-9. **Drag**: keep a `strip::Motion`; the rules and the wiring are at the top of `src/strip.rs` (the media widget's `placement.rs` is the example; widgets on Block get it from `block/win.rs`):
+9. **Drag**: keep a `strip::Motion`; the rules and the wiring are at the top of `src/strip.rs` (`block/win.rs` is the example; widgets on Block get it from there):
    - Mouse-down: capture the mouse and `press`. Mouse move: `mouse_move`; on `Started` call `dock::set_dragging(me, true)`, `panel.drag_started()`, start the zoom timer, `dock::notify(me)`; move to the x it returns, and after every move of the dragged strip call `dock::track_drag(taskbar, me, boundary, gap)` (it decides the sticky drop slot and publishes it; does nothing when not dragged). Pass `strip::Limits` with `max` against the tray and `min` = `dock::icons_right(taskbar) + gap` (not over the taskbar's buttons).
    - Release (or `WM_CAPTURECHANGED`): `release()`. `Click` is the click; on `Drop` call `dock::drop_reorder(...)` and only then `set_dragging(false)` (the others keep the preview until the new order is saved), start the zoom timer, glide into the slot, `dock::notify(me)`.
    - Zoom timer: `zoom_step`, redraw at `zoom()`, then follow `drag_x` or glide to the slot.
@@ -177,7 +182,7 @@ cargo test --release
 ### dockctl: command-line control of widgets on Block
 
 `taskbar-dock\dockctl.exe <weather|bus|discord|media|all> <command> [args]` talks to a running
-widget and prints JSON. Only widgets on Block answer (weather, discord and bus now; media once ported); one
+widget and prints JSON. Only widgets on Block answer (all four since plan step 8); one
 that isn't is reported as `"absent": "running, not on Block yet"` or `"not running"`.
 For `all` that isn't an error. Exit code: 0 ok, 1 error / no reply, 2 usage.
 

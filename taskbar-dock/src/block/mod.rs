@@ -174,6 +174,9 @@ pub enum PanelMouse {
     Up(i32, i32),
     /// It left the panel.
     Leave,
+    /// Pressed, but the panel lost the mouse before the release (Esc, another window took it):
+    /// end a drag without acting.
+    Cancel,
 }
 
 /// What is under the mouse on the strip ([`Content::hit`]).
@@ -191,14 +194,32 @@ pub enum Hit {
 }
 
 /// A brand colour for the strip's highlight boxes ([`Content::tint`]), instead of Block's
-/// neutral one. Drawn under the Content's pixels with the shared highlight shape.
+/// neutral one. Drawn under the Content's pixels with the shared highlight shape. How strong is
+/// Block's, from the shared levels (`Look::tint`, the `dock` section): the Content only says what
+/// state it's in.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Tint {
     /// 0xRRGGBB.
     pub rgb: u32,
-    /// Opacity (0..1) at rest (0: only on hover) and while hovered.
-    pub rest: f32,
-    pub hover: f32,
+    /// 0: paused / muted (the quiet level), 1: playing / unmuted (active); in between while it
+    /// fades from one to the other. Hovered it's the hover level either way.
+    pub active: f32,
+    /// The widget's own multiplier (media's `tint_strength`), 1 by default.
+    pub strength: f32,
+}
+
+impl Tint {
+    /// `rgb` at the active (playing / unmuted: `true`) or quiet level.
+    pub fn new(rgb: u32, active: bool) -> Tint {
+        Tint { rgb, active: if active { 1.0 } else { 0.0 }, strength: 1.0 }
+    }
+
+    /// Its opacities (0..1) at rest and hovered, for the levels `l`.
+    pub fn strengths(&self, l: &crate::theme::TintLevels) -> (f32, f32) {
+        let a = self.active.clamp(0.0, 1.0);
+        let k = self.strength.max(0.0);
+        (((l.quiet + (l.active - l.quiet) * a) * k).min(1.0), (l.hover * k).min(1.0))
+    }
 }
 
 /// Everything [`Content::measure`] and [`Content::draw`] need.
@@ -462,8 +483,9 @@ pub trait Content: AsAny + 'static {
 
     /// The highlight's colour over `area`: [`Hit::Strip`] for the whole strip, a [`Hit::Button`]
     /// for that button's box. None for the strip: Block's neutral highlight (the default). With a
-    /// strip tint, Block draws the hovered button's box (its tint, else the strip's) at `hover`,
-    /// then the whole strip at `rest` or `hover` (discord: always in a blurple box).
+    /// strip tint, Block draws the hovered button's box (its tint, else the strip's) at the hover
+    /// level, then the whole strip at its quiet / active level or hover (discord: always in a
+    /// blurple box; [`Tint`]).
     fn tint(&self, _area: Hit, _look: &Look) -> Option<Tint> {
         None
     }
@@ -506,8 +528,14 @@ pub trait Content: AsAny + 'static {
     /// every paint: after [`Ctx::redraw_panel`], a look change, or Windows uncovering it.
     fn panel_draw(&mut self, _kind: PanelKind, _cv: &mut Canvas, _f: &PanelFrame) {}
 
-    /// The mouse on the open panel (Esc, lost focus and right clicks are Block's).
+    /// The mouse on the open panel (Esc, lost focus and right clicks are Block's). Between `Down`
+    /// and `Up` the panel has the mouse (a slider can be dragged off it); [`PanelMouse::Cancel`]
+    /// if that ends otherwise.
     fn panel_mouse(&mut self, _kind: PanelKind, _ev: PanelMouse, _ctx: &mut Ctx) {}
+
+    /// The panel has just opened (`open`) or closed, for whatever reason: e.g. start or stop a
+    /// timer for what moves in it ([`Ctx::every`] + [`Ctx::redraw_panel`]), forget a hover.
+    fn panel_shown(&mut self, _kind: PanelKind, _open: bool, _ctx: &mut Ctx) {}
 
     /// The right-click panel's own rows; Block adds the standard ones ([`MenuBuilder`]).
     fn menu(&mut self, _m: &mut MenuBuilder) {}

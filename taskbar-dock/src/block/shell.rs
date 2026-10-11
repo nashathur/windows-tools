@@ -13,6 +13,8 @@ const VK_ESCAPE: usize = 0x1B;
 thread_local! {
     /// A TME_LEAVE is pending for the open panel (the mouse is on it).
     static TRACKING: Cell<bool> = const { Cell::new(false) };
+    /// Pressed on the panel: it has the mouse until the release.
+    static PRESSED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn class_name(class: &str) -> Vec<u16> {
@@ -92,6 +94,7 @@ pub(super) fn open(strip: HWND) -> HWND {
         let dark: BOOL = (!look.light).into();
         DwmSetWindowAttribute(p, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, &dark as *const _ as *const _, 4);
         TRACKING.set(false);
+        PRESSED.set(false);
         p
     }
 }
@@ -189,13 +192,30 @@ unsafe extern "system" fn panel_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             0
         }
         WM_LBUTTONDOWN => {
+            // a click in a hover-opened panel pins it (it stays until a click elsewhere), and
+            // still does what it's on
+            if let Some(a) = st(|s| if s.core.panel.by_hover() { s.core.panel.click(Instant::now()) } else { Action::None }) {
+                panel_do(a);
+            }
             let (x, y) = xy(lp);
+            PRESSED.set(true);
+            SetCapture(h); // a slider can be dragged off the panel
             mouse(PanelMouse::Down(x, y));
             0
         }
         WM_LBUTTONUP => {
             let (x, y) = xy(lp);
+            let pressed = PRESSED.replace(false);
+            if pressed {
+                ReleaseCapture(); // its WM_CAPTURECHANGED then finds nothing to cancel
+            }
             mouse(PanelMouse::Up(x, y));
+            0
+        }
+        WM_CAPTURECHANGED => {
+            if PRESSED.replace(false) {
+                mouse(PanelMouse::Cancel);
+            }
             0
         }
         WM_MOUSELEAVE => {

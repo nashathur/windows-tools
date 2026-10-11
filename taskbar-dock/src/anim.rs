@@ -162,9 +162,115 @@ pub fn pulse_settle(from: f32, t: f32) -> f32 {
     if angle >= TAU { 0.0 } else { (1.0 - angle.max(PI).cos()) / 2.0 }
 }
 
+use std::time::Instant;
+
+/// A value fading between 0 and 1 in a straight line (a strip appearing and going away, media's
+/// tint following playback). A fade can turn round half-way: it goes back from where it is, at
+/// the same speed. `ms` 0 (Windows' animations off) jumps.
+#[derive(Clone, Copy, Debug)]
+pub struct Appear {
+    from: f32,
+    to: f32,
+    start: Instant,
+    /// Time for a whole 0 → 1 fade.
+    ms: f32,
+}
+
+impl Appear {
+    /// Fully hidden (0).
+    pub fn hidden(now: Instant) -> Appear {
+        Appear { from: 0.0, to: 0.0, start: now, ms: 0.0 }
+    }
+
+    /// Fully shown (1).
+    pub fn shown(now: Instant) -> Appear {
+        Appear { from: 1.0, to: 1.0, start: now, ms: 0.0 }
+    }
+
+    /// The value now, 0..1.
+    pub fn value(&self, now: Instant) -> f32 {
+        let span = (self.to - self.from).abs();
+        if self.ms <= 0.0 || span <= 0.0 {
+            return self.to;
+        }
+        let t = (now.saturating_duration_since(self.start).as_secs_f32() * 1000.0 / (self.ms * span)).min(1.0);
+        self.from + (self.to - self.from) * t
+    }
+
+    pub fn target(&self) -> f32 {
+        self.to
+    }
+
+    /// Still changing?
+    pub fn running(&self, now: Instant) -> bool {
+        self.value(now) != self.to
+    }
+
+    /// Fades to `to` (0..1) from wherever it is now, over `ms` for a whole 0 → 1 fade (a shorter
+    /// way takes less).
+    pub fn go(&mut self, to: f32, now: Instant, ms: f32) {
+        if to == self.to {
+            return;
+        }
+        *self = Appear { from: self.value(now), to, start: now, ms };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    fn at(t0: Instant, n: u64) -> Instant {
+        t0 + Duration::from_millis(n)
+    }
+
+    #[test]
+    fn appear_fades_in_and_out() {
+        let t0 = Instant::now();
+        let mut a = Appear::hidden(t0);
+        assert_eq!(a.value(t0), 0.0);
+        a.go(1.0, t0, 300.0);
+        assert!((a.value(at(t0, 150)) - 0.5).abs() < 0.01);
+        assert_eq!(a.value(at(t0, 300)), 1.0);
+        assert!(!a.running(at(t0, 300)));
+        a.go(0.0, at(t0, 400), 300.0);
+        assert!((a.value(at(t0, 475)) - 0.75).abs() < 0.01);
+        assert_eq!(a.value(at(t0, 700)), 0.0);
+    }
+
+    #[test]
+    fn appear_turning_round_half_way_goes_back_from_there() {
+        let t0 = Instant::now();
+        let mut a = Appear::hidden(t0);
+        a.go(1.0, t0, 300.0);
+        a.go(0.0, at(t0, 300), 300.0);
+        a.go(1.0, at(t0, 390), 300.0); // faded out to 0.7, then back in
+        assert!((a.value(at(t0, 390)) - 0.7).abs() < 0.01);
+        assert_eq!(a.value(at(t0, 480)), 1.0); // 0.3 to go takes 90 ms
+    }
+
+    #[test]
+    fn appear_fades_to_a_partial_level_at_the_same_speed() {
+        let t0 = Instant::now();
+        let mut a = Appear::shown(t0);
+        a.go(0.5, t0, 300.0); // half the way: half the time
+        assert!((a.value(at(t0, 75)) - 0.75).abs() < 0.01);
+        assert_eq!(a.value(at(t0, 150)), 0.5);
+        assert!(!a.running(at(t0, 150)));
+        a.go(1.0, at(t0, 200), 300.0);
+        assert_eq!(a.value(at(t0, 350)), 1.0);
+    }
+
+    #[test]
+    fn appear_is_instant_without_animations() {
+        let t0 = Instant::now();
+        let mut a = Appear::hidden(t0);
+        a.go(1.0, t0, 0.0);
+        assert_eq!(a.value(t0), 1.0);
+        assert!(!a.running(t0));
+        assert_eq!(Appear::shown(t0).value(t0), 1.0);
+    }
 
     #[test]
     fn feel_grows_on_hover_dips_on_press_and_settles() {

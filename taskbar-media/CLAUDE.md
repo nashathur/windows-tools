@@ -8,19 +8,28 @@ Runs from a copy: `taskbar-media.exe` here (dev.ps1 stops, copies, restarts). Lo
 `taskbar-media.log` (also panics). Learned real-time table: `progress.txt`. Logo cache: `logos\`.
 
 ## Files (src/)
-- main.rs: `App` state, `on_media`, strip fade, `create_strip` (attached, or the floating
-  fallback; `--float` forces it), `redraw_strip`, `watch` (every second: look, config, brand file
-  reload, Explorer restart, re-attach, full-screen hide), window procs, `main`. README.md: user docs.
+The strip window, dock, drag/zoom/glide, the strip's fade in/out, floating (`--float` or
+`TASKBAR_MEDIA_FLOAT=1`), the panel's window (hover/click/pin, fade, placement, mouse capture),
+the right-click panel with its standard rows, the tray icon and following the settings file are
+the library's `block` (plan step 8); media supplies the `Content`.
+- main.rs: `App` (the `block::Content`: strip `measure`/`draw` (cached `Geo`), `hit` (buttons,
+  cover), `cover`, `tint` (brand colour, fading with playback), `visible` (a session shown),
+  worker posts in `on_message` (`WM_MEDIA` → `on_media` → `reselect`; `WM_LOGO`), content timers
+  (`watch` every second: live confirm, brand file reload, hide after pause; ring pulse; tint fade;
+  panel frames), right-click rows (Open app, Copy), tray logo + tooltip), the `Spec`, `main`.
+  README.md: user docs.
 - track.rs: what the strip shows: `identity` (source, picture, badge, tint colour),
-  `strip_content`, live rule (`is_live`/`live_now`, `LIVE_SITES`), `buttons`, `button_cmd`.
-- placement.rs: dock position, WinEvent hooks, and the wiring of the shared `taskbar_dock::strip::Motion` (glide, drag, zoom; screen x).
+  `strip_content`, `strip_tint`, `ring`, live rule (`is_live`, `LIVE_SITES`), `buttons`, `button_cmd`.
 - media.rs: worker thread (MTA) over GSMTC: sessions, `one_per_app`, snapshots, per-object
   event hooks, cover cache with rechecks, commands (play/pause with Firefox retry, ±skip).
 - timeline.rs (`Progress`, skip maths) · learned.rs (real-time yes/no per app) · select.rs
-  (which session shows; hide after pause) · appear.rs (fade value).
-- render.rs: strip drawing (text, ring, cover, tint) · layout.rs: strip geometry.
-- popup.rs: the panel window (click panel and menu panel), hover/pin, volume, menu rows.
-- panel_view.rs: panel layout and painting.
+  (which session shows; hide after pause).
+- render.rs: strip drawing into Block's canvas (`geo`, `strip_layout` incl. `Frame::fit_width`,
+  `draw_strip`: text, buttons, cover/badge, ring), `tray_logo`, GDI helpers · layout.rs: strip
+  geometry (`at_width`: the text column narrows first).
+- panel.rs: the click panel's content on Block's panel: size ("Nothing playing" without a
+  session), mouse (buttons, seek drag, volume drag, mute), volume kept current, frame timer.
+- panel_view.rs: click panel layout and painting, and the "Nothing playing" panel.
 - audio.rs (per-app volume via WASAPI) · apps.rs (AUMID → name, window, activate) ·
   sites.rs (browser tab title via UI Automation) · brands.rs (`media_brands.txt`) ·
   logos.rs (logo download/cache, app icons) · iconurl.rs · cover.rs (square, dominant colour) ·

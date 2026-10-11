@@ -164,12 +164,27 @@ pub(crate) fn highlight(hover: bool, dragging: bool, hot: Hit, width: i32, heigh
     }
 }
 
+/// A [`Tint`] resolved for drawing: its colour and opacities at rest and hovered.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct Shade {
+    pub rgb: u32,
+    pub rest: f32,
+    pub hover: f32,
+}
+
+impl Shade {
+    pub(crate) fn of(t: Tint, levels: &crate::theme::TintLevels) -> Shade {
+        let (rest, hover) = t.strengths(levels);
+        Shade { rgb: t.rgb, rest, hover }
+    }
+}
+
 /// The tinted boxes under a strip with a brand tint ([`Content::tint`]), in drawing order (each
 /// goes under what is there, so the first one shows on top): the hovered button's box (its own
 /// tint, else the strip's) at hover strength, then the whole strip (inset) at rest or hover
 /// strength. As [`highlight`], no hover while dragged. (box, 0xRRGGBB, opacity); boxes with
 /// opacity 0 are left out.
-pub(crate) fn tints(strip: Tint, button: Option<Tint>, hover: bool, dragging: bool, hot: Hit, width: i32, height: i32, inset: i32) -> Vec<(Box4, u32, f32)> {
+pub(crate) fn tints(strip: Shade, button: Option<Shade>, hover: bool, dragging: bool, hot: Hit, width: i32, height: i32, inset: i32) -> Vec<(Box4, u32, f32)> {
     let hover = hover && !dragging;
     let mut out = Vec::new();
     if let (true, Hit::Button(_, b)) = (hover, hot) {
@@ -510,8 +525,8 @@ mod tests {
 
     #[test]
     fn tinted_boxes() {
-        let blurple = Tint { rgb: 0x5865F2, rest: 0.3, hover: 0.5 };
-        let red = Tint { rgb: 0xED4245, rest: 0.0, hover: 0.6 };
+        let blurple = Shade { rgb: 0x5865F2, rest: 0.3, hover: 0.5 };
+        let red = Shade { rgb: 0xED4245, rest: 0.0, hover: 0.6 };
         let whole = (0, 4, 100, 44);
         // at rest: the whole strip, rest strength
         assert_eq!(tints(blurple, None, false, false, Hit::Strip, 100, 48, 4), vec![(whole, 0x5865F2, 0.3)]);
@@ -525,6 +540,27 @@ mod tests {
         assert_eq!(tints(blurple, Some(red), true, true, BTN, 100, 48, 4), vec![(whole, 0x5865F2, 0.3)]);
         // a tint only on hover leaves nothing at rest
         assert!(tints(red, None, false, false, Hit::Strip, 100, 48, 4).is_empty());
+    }
+
+    #[test]
+    fn tint_strength_comes_from_the_levels_by_state() {
+        use crate::theme::TintLevels;
+        let l = TintLevels { quiet: 0.2, active: 0.4, hover: 0.6 };
+        let at = |t: Tint| Shade::of(t, &l);
+        assert_eq!(at(Tint::new(0x123456, false)), Shade { rgb: 0x123456, rest: 0.2, hover: 0.6 }, "paused / muted");
+        assert_eq!(at(Tint::new(0x123456, true)), Shade { rgb: 0x123456, rest: 0.4, hover: 0.6 }, "playing / unmuted");
+        // fading between them, and the widget's own multiplier (media's tint_strength)
+        let half = at(Tint { rgb: 1, active: 0.5, strength: 2.0 });
+        assert!((half.rest - 0.6).abs() < 1e-6 && (half.hover - 1.0).abs() < 1e-6, "{half:?}");
+        assert_eq!(at(Tint { rgb: 1, active: 1.0, strength: 0.0 }), Shade { rgb: 1, rest: 0.0, hover: 0.0 });
+        // tint_fixed: one strength for every state, 0 = none, 1 = solid
+        for v in [0.0, 1.0] {
+            let f = TintLevels { quiet: v, active: v, hover: v };
+            assert_eq!(Shade::of(Tint::new(1, false), &f), Shade { rgb: 1, rest: v, hover: v });
+            assert_eq!(Shade::of(Tint::new(1, true), &f), Shade { rgb: 1, rest: v, hover: v });
+        }
+        // no tint at all leaves no boxes (Block's base highlight only)
+        assert!(tints(Shade::of(Tint::new(1, true), &TintLevels { quiet: 0.0, active: 0.0, hover: 0.0 }), None, true, false, Hit::Strip, 100, 48, 4).is_empty());
     }
 
     #[test]

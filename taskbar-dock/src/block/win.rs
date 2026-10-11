@@ -32,8 +32,10 @@ const T_HOVER: usize = CONTENT_TIMERS + 4;
 const T_FADE: usize = CONTENT_TIMERS + 5;
 const T_FEEL: usize = CONTENT_TIMERS + 6;
 const T_WATCH: usize = CONTENT_TIMERS + 7;
+/// The strip fading in (new) or out (before it's removed).
+const T_APPEAR: usize = CONTENT_TIMERS + 8;
 /// The animations, run on the display's refresh ([`frames`]) instead of a timer.
-const FRAME_TIMERS: [usize; 5] = [T_GLIDE, T_ZOOM, T_RESIZE, T_FADE, T_FEEL];
+const FRAME_TIMERS: [usize; 6] = [T_GLIDE, T_ZOOM, T_RESIZE, T_FADE, T_FEEL, T_APPEAR];
 /// Hover-open / hover-close checks ([`crate::panel`]).
 const HOVER_MS: u32 = 50;
 /// Keeping the strip alive and in place, following settings and Windows (backup for the hooks).
@@ -44,6 +46,8 @@ const FLOAT_AFTER: Duration = Duration::from_secs(10);
 const ATTACH_RETRY: Duration = Duration::from_secs(60);
 /// Floating without a taskbar: the strip's height at 100%.
 const FLOAT_HEIGHT: f32 = 48.0;
+/// Floating: the backdrop's opacity.
+const FLOAT_BACKDROP: f32 = 0.96;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
 struct State {
@@ -57,6 +61,11 @@ struct State {
     floating: bool,
     /// Put in place once since it was created (the first placement jumps, never slides).
     placed: bool,
+    /// The strip's opacity: fading in when it's new, out before it's removed.
+    appear: crate::anim::Appear,
+    /// Fading out: switched off or nothing to show; removed when the fade ends. It keeps its
+    /// slot meanwhile (the others close up after).
+    leaving: bool,
     /// Floating and hidden for a full-screen app.
     fs_hidden: bool,
     /// The main panel's window while open (0: none; [`shell`]).
@@ -144,6 +153,8 @@ pub fn run<C: Content>(spec: Spec, content: C) {
                 strip: 0,
                 floating: false,
                 placed: false,
+                appear: crate::anim::Appear::hidden(Instant::now()),
+                leaving: false,
                 fs_hidden: false,
                 panel: 0,
                 fade: Fade::default(),
@@ -372,6 +383,10 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 }
 
 unsafe extern "system" fn strip_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    // fading out: it's going, clicks do nothing
+    if matches!(msg, WM_LBUTTONDOWN | WM_RBUTTONUP) && st(|s| s.leaving) == Some(true) {
+        return 0;
+    }
     match msg {
         WM_MOUSEACTIVATE => MA_NOACTIVATE as LRESULT,
         WM_LBUTTONDOWN => {
@@ -435,6 +450,7 @@ fn on_timer(id: usize) {
         T_HOVER => hover_step(),
         T_FADE => fade_step(),
         T_FEEL => feel_step(),
+        T_APPEAR => appear_step(),
         T_WATCH => watch(),
         id if id < CONTENT_TIMERS => {
             call(|c, ctx| c.timer(id, ctx));
@@ -700,6 +716,7 @@ fn open_panel(activate: bool) {
         }
     }
     timer(T_FADE, true);
+    call(|c, ctx| c.panel_shown(PanelKind::Main, true, ctx));
 }
 
 /// Forgets the panel window and destroys it. Callers tell the behaviour why (or it decided it).
@@ -710,6 +727,7 @@ fn close_panel_window() {
     }) else { return };
     if p != 0 {
         shell::destroy(p);
+        call(|c, ctx| c.panel_shown(PanelKind::Main, false, ctx));
     }
 }
 
@@ -724,7 +742,14 @@ fn hover_step() {
     let Some((strip, panel, look)) = st(|s| (s.strip, s.panel, s.look.clone())) else { return };
     let pt = unsafe { dock::cursor() };
     let on = |h: HWND| h != 0 && contains(unsafe { dock::rect(h) }, pt);
-    if let Some(a) = st(|s| s.core.panel.tick(Instant::now(), on(strip), on(panel), &look)) {
+    if let Some(a) = st(|s| {
+        let now = Instant::now();
+        // on one of the strip's buttons: no hover-open from there (the delay starts over off it)
+        if s.core.hover && matches!(s.core.hot, Hit::Button(..)) {
+            s.core.panel.over_button(now);
+        }
+        s.core.panel.tick(now, on(strip), on(panel), &look)
+    }) {
         panel_do(a);
     }
 }
@@ -1012,12 +1037,14 @@ fn destroy_strip() {
 /// Destroys the strip (it leaves the dock stack); the panels are the caller's business.
 fn remove_strip() {
     let Some(h) = st(|s| std::mem::replace(&mut s.strip, 0)).filter(|h| *h != 0) else { return };
-    for t in [T_GLIDE, T_ZOOM, T_RESIZE, T_FEEL] {
+    for t in [T_GLIDE, T_ZOOM, T_RESIZE, T_FEEL, T_APPEAR] {
         timer(t, false);
     }
     st(|s| {
         s.core.motion = Motion::default();
         s.core.hover = false;
+        s.leaving = false;
+        s.appear = crate::anim::Appear::hidden(Instant::now());
     });
     unsafe {
         dock::leave(h);
@@ -1164,21 +1191,27 @@ fn redraw() {
         return;
     }
     if !visible {
-        if strip != 0 {
+        if strip != 0 && st(|s| !std::mem::replace(&mut s.leaving, true)) == Some(true) {
             if flipping {
                 // a switch in the open right-click panel did this (Show on taskbar): that panel
                 // stays open, as switches do
                 panel_closed(false);
-                remove_strip();
             } else {
-                destroy_strip(); // hidden by state (discord, media): every panel closes
+                close_panels(); // hidden by state (discord, media): every panel closes
             }
-            log("switched off or nothing to show: strip removed");
+            // fades out where it is, then goes (appear_step); the others close up after
+            st(|s| s.appear.go(0.0, Instant::now(), s.look.glide_ms));
+            appear_step();
         }
         return;
     }
     if strip == 0 {
         return create_strip(); // draws it once made
+    }
+    // fading out and wanted again: fades back in from where it is
+    if st(|s| std::mem::replace(&mut s.leaving, false)) == Some(true) {
+        st(|s| s.appear.go(1.0, Instant::now(), s.look.glide_ms));
+        timer(T_APPEAR, true);
     }
     unsafe {
         if IsWindow(strip) == 0 {
@@ -1250,7 +1283,9 @@ fn redraw() {
             s.content.draw(&mut cv, &f);
             let hot = s.core.hot;
             // a brand tint for the strip (and the hovered button's own)
-            let tint = s.content.tint(Hit::Strip, &s.look).map(|t| (t, matches!(hot, Hit::Button(..)).then(|| s.content.tint(hot, &s.look)).flatten()));
+            // at the shared levels (Look::tint) for the state the Content says it's in
+            let shade = |t: Tint| core::Shade::of(t, &s.look.tint);
+            let tint = s.content.tint(Hit::Strip, &s.look).map(|t| (shade(t), matches!(hot, Hit::Button(..)).then(|| s.content.tint(hot, &s.look)).flatten().map(shade)));
             Some((cv, s.core.feel.value(), s.content.cover(), s.core.hover, s.core.motion.dragging(), hot, tint))
         }) else { return };
         let natural = cv.w;
@@ -1275,6 +1310,12 @@ fn redraw() {
                 }
             }
         }
+        if floating {
+            // over other windows: a backdrop in the panels' background keeps it readable, in the
+            // highlight's shape, under everything
+            let bg = Theme::new(&look).color.bg.tuple();
+            draw::tint_box(&mut px, width, (0, inset, width, height - inset), bg, FLOAT_BACKDROP, radius);
+        }
         drop(cv);
         let Some(mut out) = Canvas::new(width, height) else { return };
         out.pixels().copy_from_slice(&px);
@@ -1284,7 +1325,19 @@ fn redraw() {
         let drawn_cleared = right && dock::publish_drawn(strip, resize_w.map(|_| width)) && resize_w.is_none();
         let sz = SIZE { cx: width, cy: height };
         let src = POINT { x: 0, y: 0 };
-        let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };
+        // a new strip fades in (appear_step), from its first drawing
+        let Some((alpha, appearing)) = st(|s| {
+            let now = Instant::now();
+            if !s.placed {
+                s.appear = crate::anim::Appear::hidden(now);
+                s.appear.go(1.0, now, s.look.glide_ms);
+            }
+            (s.appear.value(now), s.appear.running(now))
+        }) else { return };
+        if appearing {
+            timer(T_APPEAR, true);
+        }
+        let blend = blend_at(alpha);
         let settled = st(|s| s.core.motion.settled()).unwrap_or(true);
         // docked against the tray: a new width keeps the right edge, moved in the same step
         let dst = if right && settled && !dragging && IsWindowVisible(strip) != 0 { strip::right_anchored(strip, before, width) } else { None };
@@ -1337,6 +1390,32 @@ fn redraw() {
             // after a drop (zooming back) or while another member is dragged: slide, so it flows
             move_to(strip, tb, target(width), !settled || slot.is_some_and(|s| s.slide));
         }
+    }
+}
+
+fn blend_at(alpha: f32) -> BLENDFUNCTION {
+    let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+    BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: a, AlphaFormat: AC_SRC_ALPHA as u8 }
+}
+
+/// One frame of the strip fading in or out: only its opacity changes (the picture stays, so a
+/// Content with nothing to show any more needn't draw). At the end of a fade-out it's removed.
+fn appear_step() {
+    let Some((strip, alpha, running, leaving)) = st(|s| {
+        let now = Instant::now();
+        (s.strip, s.appear.value(now), s.appear.running(now), s.leaving)
+    }) else { return };
+    timer(T_APPEAR, running && strip != 0);
+    if strip == 0 {
+        return;
+    }
+    if leaving && !running {
+        remove_strip();
+        return log("switched off or nothing to show: strip removed");
+    }
+    let blend = blend_at(alpha);
+    unsafe {
+        UpdateLayeredWindow(strip, 0, std::ptr::null(), std::ptr::null(), 0, std::ptr::null(), 0, &blend, ULW_ALPHA);
     }
 }
 

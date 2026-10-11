@@ -158,6 +158,13 @@ impl PanelBehaviour {
         }
     }
 
+    /// The mouse rests on a button on the strip (call before every `tick` while it does): the
+    /// panel doesn't hover-open from a button; the delay starts over once the mouse moves off it
+    /// onto the strip. An open panel is left as it is.
+    pub fn over_button(&mut self, now: Instant) {
+        self.button_click(now);
+    }
+
     /// Before showing the context menu. `on_panel`: the right-click was on the panel itself.
     pub fn right_click(&mut self, on_panel: bool) -> Action {
         self.menu_open = true;
@@ -358,6 +365,25 @@ mod tests {
         assert_eq!(q.click(t0), Action::OpenByClick);
         q.button_click(ms(t0, 100));
         assert!(q.is_open() && !q.by_hover());
+    }
+
+    #[test]
+    fn resting_on_a_button_does_not_hover_open_the_panel() {
+        let (lk, t0) = (look(), Instant::now());
+        let mut p = PanelBehaviour::default();
+        p.mouse_entered(t0);
+        // on a button from 100 ms to 1000 ms: each tick there restarts the delay
+        for t in (100..=1000).step_by(50) {
+            p.over_button(ms(t0, t));
+            assert_eq!(p.tick(ms(t0, t), true, false, &lk), Action::None, "{t} ms");
+        }
+        // off the button onto the strip: the whole delay from there
+        assert_eq!(p.tick(ms(t0, 1300), true, false, &lk), Action::None);
+        assert_eq!(p.tick(ms(t0, 1400), true, false, &lk), Action::OpenByHover);
+        // open: a button leaves it as it is
+        p.over_button(ms(t0, 1500));
+        assert_eq!(p.tick(ms(t0, 1500), true, false, &lk), Action::None);
+        assert!(p.is_open() && p.by_hover());
     }
 
     #[test]

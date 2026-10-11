@@ -14,7 +14,12 @@
 //!   "fade_ms": 150, "zoom_ms": 120,
 //!   "glide_ms": 300,                   slides and the compact switch (as the taskbar's buttons)
 //!   "drag_zoom": 1.15,                 content size while dragged
-//!   "panel_margin": 12                 px a panel keeps from the taskbar and the screen edges
+//!   "panel_margin": 12,                px a panel keeps from the taskbar and the screen edges
+//!   "tint_dark":  { "quiet": 0.18, "active": 0.333, "hover": 0.49 },   brand colour behind a
+//!   "tint_light": { "quiet": 0.149, "active": 0.275, "hover": 0.412 }, strip (discord, media):
+//!                                      paused / muted, playing / unmuted, under the mouse
+//!   "tint_fixed": "auto"               "auto": the levels above by state; a number 0..1: that
+//!                                      strength always (0 = no tint, 1 = solid colour)
 //! }
 //! ```
 //! Missing keys are filled in with these defaults, so the file always shows every option.
@@ -22,6 +27,7 @@
 
 use crate::settings;
 use crate::system::{self, System};
+use crate::theme::{tint_levels, TintLevels};
 use serde_json::{json, Map, Value};
 
 /// A setting that can follow Windows ("system") or be fixed.
@@ -54,6 +60,10 @@ pub struct Style {
     pub zoom_ms: f32,
     pub drag_zoom: f32,
     pub panel_margin: f32,
+    /// Brand tint strengths on a dark / light taskbar, and one strength for every state instead.
+    pub tint_dark: TintLevels,
+    pub tint_light: TintLevels,
+    pub tint_fixed: Option<f32>,
 }
 
 impl Default for Style {
@@ -75,8 +85,21 @@ impl Default for Style {
             drag_zoom: 1.15,
             // Windows 11's own flyouts (calendar, quick settings) sit 12 px from the taskbar
             panel_margin: 12.0,
+            tint_dark: tint_levels(false),
+            tint_light: tint_levels(true),
+            tint_fixed: None,
         }
     }
+}
+
+fn levels_json(t: TintLevels) -> Value {
+    json!({ "quiet": num(t.quiet), "active": num(t.active), "hover": num(t.hover) })
+}
+
+/// A `{ "quiet", "active", "hover" }` object (each 0..1; a missing or broken one keeps `d`'s).
+fn levels_from(v: Option<&Value>, d: TintLevels) -> TintLevels {
+    let get = |k: &str, def: f32| v.and_then(|v| v.get(k)).and_then(|x| x.as_f64()).map_or(def, |x| (x as f32).clamp(0.0, 1.0));
+    TintLevels { quiet: get("quiet", d.quiet), active: get("active", d.active), hover: get("hover", d.hover) }
 }
 
 /// Baselines of the taskbar clock's two lines (time, date), measured on screen: 4 px above and
@@ -127,6 +150,9 @@ impl Style {
         m.insert("zoom_ms".into(), num(self.zoom_ms));
         m.insert("drag_zoom".into(), num(self.drag_zoom));
         m.insert("panel_margin".into(), num(self.panel_margin));
+        m.insert("tint_dark".into(), levels_json(self.tint_dark));
+        m.insert("tint_light".into(), levels_json(self.tint_light));
+        m.insert("tint_fixed".into(), self.tint_fixed.map_or(json!("auto"), num));
         m
     }
 
@@ -164,6 +190,9 @@ impl Style {
             zoom_ms: num("zoom_ms", d.zoom_ms, 0.0, 2000.0),
             drag_zoom: num("drag_zoom", d.drag_zoom, 1.0, 2.0),
             panel_margin: num("panel_margin", d.panel_margin, 0.0, 64.0),
+            tint_dark: levels_from(dock.get("tint_dark"), d.tint_dark),
+            tint_light: levels_from(dock.get("tint_light"), d.tint_light),
+            tint_fixed: dock.get("tint_fixed").and_then(|v| v.as_f64()).map(|v| (v as f32).clamp(0.0, 1.0)),
         }
     }
 
@@ -221,6 +250,11 @@ impl Style {
             zoom_ms: anim(self.zoom_ms),
             drag_zoom: if animations { self.drag_zoom } else { 1.0 },
             panel_margin: self.panel_margin,
+            tint: match self.tint_fixed {
+                Some(v) => TintLevels { quiet: v, active: v, hover: v },
+                None if sys.light => self.tint_light,
+                None => self.tint_dark,
+            },
             time_pattern: pattern,
             am,
             pm,
@@ -249,6 +283,8 @@ pub struct Look {
     pub drag_zoom: f32,
     /// Gap between a panel and the taskbar / screen edges.
     pub panel_margin: f32,
+    /// Brand tint strengths for this taskbar (light or dark; all one with `tint_fixed`).
+    pub tint: TintLevels,
     pub time_pattern: String,
     pub am: String,
     pub pm: String,
@@ -289,5 +325,47 @@ impl Look {
         } else {
             ((0xff, 0xff, 0xff), (0xc8, 0xc8, 0xc8))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn look(dock: Value, light: bool) -> Look {
+        let mut sys = system::read();
+        sys.light = light;
+        Style::from_json(&dock).resolve(&sys)
+    }
+
+    #[test]
+    fn tint_levels_default_and_follow_the_taskbar() {
+        assert_eq!(look(json!({}), false).tint, tint_levels(false));
+        assert_eq!(look(json!({}), true).tint, tint_levels(true));
+        // written to the file in full, "auto" for the fixed level
+        let m = Style::default().to_json();
+        assert_eq!(m["tint_fixed"], json!("auto"));
+        assert_eq!(m["tint_dark"]["active"], json!(0.333));
+        assert_eq!(Style::from_json(&Value::Object(m)).tint_dark.hover, (tint_levels(false).hover * 1000.0).round() / 1000.0);
+    }
+
+    #[test]
+    fn tint_levels_are_configurable() {
+        let dock = json!({ "tint_dark": { "quiet": 0.1, "active": 0.5, "hover": 0.9 }, "tint_light": { "active": 0.4 } });
+        assert_eq!(look(dock.clone(), false).tint, TintLevels { quiet: 0.1, active: 0.5, hover: 0.9 });
+        // a missing key keeps its default; out of range is clamped; nonsense is ignored
+        let l = look(dock, true).tint;
+        assert_eq!((l.quiet, l.active, l.hover), (tint_levels(true).quiet, 0.4, tint_levels(true).hover));
+        let odd = look(json!({ "tint_dark": { "quiet": -1, "active": 7, "hover": "x" } }), false).tint;
+        assert_eq!((odd.quiet, odd.active, odd.hover), (0.0, 1.0, tint_levels(false).hover));
+    }
+
+    #[test]
+    fn a_fixed_tint_is_one_strength_for_every_state() {
+        for (v, want) in [(json!(0), 0.0), (json!(1), 1.0), (json!(0.25), 0.25), (json!(3), 1.0)] {
+            let t = look(json!({ "tint_fixed": v }), false).tint;
+            assert_eq!((t.quiet, t.active, t.hover), (want, want, want));
+        }
+        assert_eq!(look(json!({ "tint_fixed": "auto" }), false).tint, tint_levels(false));
     }
 }

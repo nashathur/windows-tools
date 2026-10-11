@@ -181,6 +181,24 @@ pub mod size {
 /// Windows' default accent text shades (blue), used when the registry has none.
 const ACCENT_FALLBACK: (Rgb, Rgb) = (Rgb::hex(0x0067C0), Rgb::hex(0x60CDFF));
 
+/// Opacity (0..1) of a brand colour behind a strip ([`crate::block::Tint`]), three levels shared
+/// by every widget with one (discord, media): `quiet` while paused / muted, `active` while
+/// playing / unmuted, `hover` under the mouse.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct TintLevels {
+    pub quiet: f32,
+    pub active: f32,
+    pub hover: f32,
+}
+
+/// The three tint levels by default (the `dock` section's `tint_dark` / `tint_light` change them:
+/// [`crate::style`]): a light taskbar needs a little less (the colour shows more on it).
+pub fn tint_levels(light: bool) -> TintLevels {
+    // in 255ths: active and hover are discord's blurple boxes before the three levels
+    let (quiet, active, hover) = if light { (38.0, 70.0, 105.0) } else { (46.0, 85.0, 125.0) };
+    TintLevels { quiet: quiet / 255.0, active: active / 255.0, hover: hover / 255.0 }
+}
+
 /// Everything a widget colours and sets text with, for light or dark.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Theme {
@@ -189,12 +207,14 @@ pub struct Theme {
     pub strip: StripColors,
     pub status: Status,
     pub font: Fonts,
+    /// Brand tint strengths behind a strip: the look's (settings), else [`tint_levels`].
+    pub tint: TintLevels,
 }
 
 impl Theme {
     /// The theme for `look` (light/dark, font), with the live Windows accent colour.
     pub fn new(look: &Look) -> Theme {
-        Theme::with(look.light, &look.font, windows_accent(look.light))
+        Theme { tint: look.tint, ..Theme::with(look.light, &look.font, windows_accent(look.light)) }
     }
 
     /// The theme for light or dark, font family `text` and accent (None: Windows' default blue).
@@ -231,7 +251,7 @@ impl Theme {
             ok: pick(0x0F7B0F, 0x6CCB5F),
             warn: pick(0x9D5D00, 0xFCE100),
         };
-        Theme { light, color, strip, status, font: Fonts { text: text.to_string(), icon: ICON_FONT, emoji: EMOJI_FONT } }
+        Theme { light, color, strip, status, font: Fonts { text: text.to_string(), icon: ICON_FONT, emoji: EMOJI_FONT }, tint: tint_levels(light) }
     }
 
     /// The allow-listed widget colour `name` for this theme (see [`brand`]).
@@ -301,6 +321,19 @@ fn windows_accent(light: bool) -> Option<Rgb> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tint_has_three_rising_levels_and_discords_strengths_stay() {
+        for light in [true, false] {
+            let t = tint_levels(light);
+            assert!(0.0 < t.quiet && t.quiet < t.active && t.active < t.hover && t.hover < 1.0);
+            assert_eq!(Theme::with(light, "x", None).tint, t);
+        }
+        // discord's boxes before the three levels (2026-10-11): 85 / 125 dark, 70 / 105 light
+        let (d, l) = (tint_levels(false), tint_levels(true));
+        assert_eq!(((d.active * 255.0).round(), (d.hover * 255.0).round()), (85.0, 125.0));
+        assert_eq!(((l.active * 255.0).round(), (l.hover * 255.0).round()), (70.0, 105.0));
+    }
 
     fn light() -> Theme {
         Theme::with(true, "Segoe UI Variable Text", None)

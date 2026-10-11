@@ -1,7 +1,7 @@
 # Block: the shared strip window (`src\block`)
 
 A widget gives a `Spec` and a `Content` and calls `block::run`; Block owns the strip window and all
-its behaviour. On Block: weather (since plan step 3), discord (step 5), bus (step 6); media in step 8.
+its behaviour. On Block: weather (since plan step 3), discord (step 5), bus (step 6), media (step 8).
 How it got here: plan\PLAN.md, plan\done.md and the step commits.
 
 Files: `mod.rs` (the API), `core.rs` (pure decisions, tested with a fake Content), `place.rs` (left
@@ -20,11 +20,24 @@ Content gives `panel_size(kind, scale)` (px; None: no panel), `panel_draw(kind, 
 (theme bg already filled, opaque GDI) and optionally `panel_mouse`; no `Spec::panel` hook any more.
 `Ctx::resize_panel()`: the open panel takes a new `panel_size`, re-placed by the rule it opened
 with, after the strip's redraw, no fade.
+- `Content::panel_shown(kind, open, ctx)`: after it opens / closes (start or stop a frame timer
+  for what moves in it; media's scrolling text and volume).
+- The panel has the mouse from a press to its release (a slider dragged off the panel keeps
+  following): `PanelMouse::Down` … `Up`, or `PanelMouse::Cancel` if the capture is lost.
+- No hover-open from a strip button (`Hit::Button`): while the mouse rests on one, each hover
+  tick restarts the delay (`PanelBehaviour::over_button`); off it, onto the strip, the whole delay
+  runs from there. An open panel is left as it is.
+- A click inside a hover-opened panel pins it (`PanelBehaviour::click` → Pin), for every widget;
+  the click still reaches `panel_mouse`.
 
 ## Strip
 - `Content::tint(area, look) -> Option<Tint>`: a brand colour for the strip's highlight boxes
   instead of the neutral one: whole strip at rest/hover strength, the hovered button's box on top;
-  order in `core::tints`, tested.
+  order in `core::tints`, tested. How strong is Block's: the Content gives `Tint { rgb, active,
+  strength }` (`active` 0 = paused / muted … 1 = playing / unmuted; `Tint::new(rgb, bool)`), Block
+  takes the opacities from `Look::tint` (`core::Shade::of`): the `dock` section's `tint_dark` /
+  `tint_light` levels quiet / active / hover, or `tint_fixed` (one opacity for every state:
+  0 none, 1 solid). Defaults `theme::tint_levels`. Used by discord and media.
 - During a compact switch `Frame::fit_width` is the animated width (`core::fit_width`), so a
   Content that keeps things at its right end lays out to it instead of being cut off (discord: the
   avatar column narrows, its avatars fading with it).
@@ -37,6 +50,15 @@ with, after the strip's redraw, no fade.
 - Block's animations (glide, zoom, switch, panel fade, cover feel: `FRAME_TIMERS` in win.rs) run
   on the display's refresh, not a timer (`frames.rs`: `DwmFlush` on a worker thread, one frame
   message at a time). Content timers (`Ctx::every`) are plain SetTimer (~15.6 ms resolution).
+- Fade in / out (plan step 8, every widget): a new strip (start, Explorer restart, Show on
+  taskbar on, `visible()` turning true) fades in over `glide_ms`; one switched off or with
+  nothing to show fades out first and keeps its slot meanwhile (the others close up after), then
+  is removed; wanted again mid-fade, it turns back from where it is (`anim::Appear`, `T_APPEAR`
+  on the frames). Only the window's opacity changes (`UpdateLayeredWindow` blend only), so the
+  Content needn't draw while it goes; clicks on a fading-out strip do nothing. Instant: Quit,
+  hiding for lack of room, Windows' animations off.
+- Floating strips get a backdrop in the panels' background (`theme.color.bg`, 96 %), in the
+  highlight's shape, under everything (readable over other windows).
 - `badge::font_px(look, scale)` for badge text.
 - Cover feel and click: return the box from `Content::cover` (UI-RULES.md "Cover").
 

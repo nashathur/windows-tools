@@ -36,12 +36,12 @@ all its behaviour: BLOCK.md).
    leaves (`panel::PanelBehaviour`). It may be the left-click panel shown unpinned.
 4. **Left-click panel**: the main panel, pinned (stays until clicked away or clicked again).
 5. **Right-click panel**: a panel in the same look as the others (not a Windows menu): the
-   widget's actions, then Show on taskbar (widgets on Block with a tray icon; the others from
-   their ports), Compact mode and Start with Windows as on/off switches, Edit settings…, Quit.
+   widget's actions, then Show on taskbar, Compact mode and Start with Windows as on/off
+   switches, Edit settings…, Quit (Block's `menu_panel` with its standard rows).
    Right click while the left-click panel is open switches to it, and back.
 A new widget isn't done until it has all five. **Shared rule:** a change to one widget's part, or
-to a rule in UI-RULES.md, is mirrored in every widget. Bus, weather and discord use the shared
-`menu_panel` for the right-click panel; media has its own (panel_view.rs, same look).
+to a rule in UI-RULES.md, is mirrored in every widget. All four widgets are on Block (media since
+plan step 8), so most of these parts live in Block.
 
 ## Working on any widget
 - Build/test/restart with the widget's `dev.ps1` (wraps `scripts\dev.ps1`): prints only errors,
@@ -74,7 +74,7 @@ to a rule in UI-RULES.md, is mirrored in every widget. Bus, weather and discord 
 
 ## Testing (prefer in this order)
 1. Unit tests (pure logic in the library: `block/core.rs`, `ctl.rs`, `panel.rs`, …).
-2. **dockctl** for widgets on Block (weather, discord, bus; media after its port):
+2. **dockctl** for widgets on Block (weather, discord, bus, media):
    `taskbar-dock\dockctl.exe <widget|all> state|panel …|menu …|tray click …|set|get|log|redraw|quit|simulate …`
    (README.md "Testing"). It runs commands through Block's own paths in the running widget, so
    settings, logs and state are the REAL `%APPDATA%`. Use it instead of `_tmp\real.ps1` for the

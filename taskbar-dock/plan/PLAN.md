@@ -1,7 +1,7 @@
 # Plan: Block (bottom-up strip) + one design code
 
-Status: steps 0-7 done (2026-10-11): weather, discord and bus run on Block; animations match the
-taskbar's. Next: step 8 (media; it then gets `Slot::follow`), 9 (dynamic width). Renumbered 2026-10-11 (old 7→8, 8→10, 9→11,
+Status: steps 0-8 done (2026-10-11): all four widgets run on Block; animations match the
+taskbar's. Next: step 9 (dynamic width), then 10 (delete old wiring). Renumbered 2026-10-11 (old 7→8, 8→10, 9→11,
 10→12, 11→9, 12→7); commits before that use the old numbers.
 Spec gaps found in step 0 (not yet in section 1; decide before step 2): weather's "Show on
 taskbar" switch + tray icon (strip off, widget keeps running); media floats too (attach
@@ -144,7 +144,7 @@ its full notes go to `done.md`.
 | 5 | **Done 2026-10-11** (6c367ad). Port **discord**; `Ctx::resize_panel`, `Content::tint` | discord gets the tray icon; Show when not in a call goes |
 | 6 | **Done 2026-10-11** (8b92874). Port **bus**; `Spec::dialog`, `Ctx::redraw_tray`. Hand checks passed 2026-10-11 | none |
 | 7 | **Done 2026-10-11.** Animations: glides and the compact switch 300 ms on the taskbar's measured curve (`anim::ease_dock`, `glide_ms` 300); neighbours follow a switching strip frame by frame (`dock::publish_drawn`, `Slot::follow`). Media follows from step 8 | the switch and glides take 300 ms on the taskbar's curve; neighbours follow a switching strip |
-| 8 | Port **media** (`max_width`, its own right-click panel → `menu_panel`, LIVE brand colour). Its own wiring today stalls behind a shrinking neighbour during a compact switch (`glide_to` restarts each frame on the slow-start curve; done.md 7); on Block it follows (`Slot::follow`) | right-click panel becomes the shared one |
+| 8 | **Done 2026-10-11.** Port **media**; Block: strip fade in/out for every widget, `Content::panel_shown`, panel mouse capture, click pins a hover-opened panel, floating backdrop. Hand checks pending (done.md 8) | right-click panel is the shared one; strips fade in/out; click pins a hover panel; no hover-open from a strip button |
 | 9 | **Dynamic width for wide strips (idea, 2026-10-11).** After 7 (neighbours follow width changes) and 8 (media on Block). Media and discord have a fixed width today (discord's avatar column `text_w` = media's text column, media's `max_width`): wide even with one person / a short title. The user wants their width to follow the content instead. To decide: how far (content width up to a max), how the dock reacts to width changes while playing/talking (glide, not jump; no restack storm via the WinEvent hooks), and whether media and discord stay the same width as each other. Related: step 6's follow-up made Block pass the animated width as `Frame::fit_width` during a compact switch (discord narrows its avatar column, avatars fade) | media and discord change width with their content |
 | 10 | Delete old wiring and unused library parts; rewrite README recipe ("a new widget = Spec + Content") and CLAUDE.md rules ("mirror in every widget" → "it's in Block/theme") | none |
 | 11 | Optional: bus picker as a themed panel instead of a Win32 dialog | picker looks like the others |

@@ -84,42 +84,39 @@ pub(crate) fn identity(a: &App, s: &Session) -> Identity {
     Identity { source, picture, badge, color }
 }
 
-pub(crate) fn strip_content(a: &App) -> Option<StripContent> {
+/// The strip's brand tint now: its colour, how far it is from paused (quiet) to playing (active)
+/// as playback fades it, and tint_strength as its multiplier; Block makes the strength from the
+/// shared levels (hover under the mouse). None: no tint (off, high contrast).
+pub(crate) fn strip_tint(a: &App) -> Option<taskbar_dock::block::Tint> {
     let s = current(a)?;
-    let id = identity(a, s);
-    // the tint: 20 % on a dark taskbar, 15 % on a light one, times tint_strength, fading in
-    // while playing and out when paused
-    let tint = id.color.and_then(|rgb| {
-        let base = if a.look.light { 0.15 } else { 0.20 };
-        let alpha = base * a.cfg.tint_strength.clamp(0.0, 3.0) * a.tint.value(Instant::now());
-        (alpha > 0.0).then_some((rgb, alpha))
-    });
-    let buttons = buttons(a, s);
+    let (r, g, b) = identity(a, s).color?;
+    let active = a.tint.value(Instant::now());
+    Some(taskbar_dock::block::Tint { rgb: r << 16 | g << 8 | b, active, strength: a.cfg.tint_strength.clamp(0.0, 3.0) })
+}
+
+/// The ring for the shown session: its position, or full (pulsing at `ring_level`; red live).
+pub(crate) fn ring(a: &App, s: &Session) -> Ring {
     let level = ring_level(a, s);
-    let ring = match s.progress() {
+    match s.progress() {
         _ if is_live(a, s) => Ring::Full { level, live: true },
         Progress::Live => Ring::Full { level, live: true },
         p @ Progress::At { .. } if realtime(a, s) => Ring::At(p.fraction().unwrap_or(0.0)),
         // no live position: full ring
         _ => Ring::Full { level, live: false },
-    };
+    }
+}
+
+pub(crate) fn strip_content(a: &App) -> Option<StripContent> {
+    let s = current(a)?;
+    let id = identity(a, s);
     Some(StripContent {
         title: if s.title.is_empty() { apps::display_name(&s.id) } else { s.title.clone() },
         artist: s.artist.clone(),
         cover: id.picture,
         badge: id.badge,
-        buttons,
-        ring,
-        tint,
+        buttons: buttons(a, s),
+        ring: ring(a, s),
     })
-}
-
-/// A button was clicked.
-pub(crate) fn press(i: usize) {
-    let Some(Some(cmd)) = with(|a| button_cmd(a, i)) else { return };
-    with(|a| {
-        let _ = a.media.send(Msg::Cmd(cmd));
-    });
 }
 
 /// A track's identity, for remembering things about it while it plays.

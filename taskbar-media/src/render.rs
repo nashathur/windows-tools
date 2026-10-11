@@ -1,14 +1,14 @@
-//! Drawing the taskbar strip into its layered window (per-pixel alpha), with the shared drawing
-//! rules from taskbar_dock::draw: text on the clock's baselines, icons in the tray-icon box.
+//! Drawing the taskbar strip's content for Block (text on the clock's baselines, icons in the
+//! tray-icon box, the cover with its progress ring), the tray logo, and the GDI helpers the panel
+//! shares. Block puts the background, hover highlight, brand tint and cover feel under it.
 
 use crate::cover::{self, Cover};
-use crate::layout::{self, Part, Strip};
+use crate::layout::{self, Strip};
 use std::ffi::c_void;
 use taskbar_dock::draw;
 use taskbar_dock::style::Look;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::UI::WindowsAndMessaging::{UpdateLayeredWindow, ULW_ALPHA};
 
 pub fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -98,6 +98,16 @@ impl Drop for Canvas {
     }
 }
 
+/// Copies `src` (`sw` wide) into Block's canvas `dst` (`dw` wide), top left, as far as both reach.
+pub fn copy_into(dst: &mut [u32], dw: i32, src: &[u32], sw: i32) {
+    let (dh, sh) = (dst.len() as i32 / dw.max(1), src.len() as i32 / sw.max(1));
+    let w = dw.min(sw).max(0) as usize;
+    for y in 0..dh.min(sh) {
+        let (d, s) = ((y * dw) as usize, (y * sw) as usize);
+        dst[d..d + w].copy_from_slice(&src[s..s + w]);
+    }
+}
+
 pub fn text_size(dc: HDC, font: &Font, s: &str) -> (i32, i32) {
     if s.is_empty() {
         return (0, 0); // never hand Windows an empty text (see draw_text)
@@ -171,8 +181,6 @@ pub struct StripContent {
     /// The three buttons: glyph, and whether the app supports it.
     pub buttons: [(char, bool); 3],
     pub ring: Ring,
-    /// The brand colour behind the strip and how strong (0..1 opacity), fading with playback.
-    pub tint: Option<((u32, u32, u32), f32)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -213,13 +221,6 @@ pub fn badge_tile(color: (u32, u32, u32), label: &str, size: i32, look: &Look, s
     cv.pixels().iter().map(|p| p | 0xff00_0000).collect()
 }
 
-/// Paints a colour at `alpha` (0..1) under what's in the strip's buffer, over the whole strip in
-/// the hover highlight's shape (`radius`, `inset` from top and bottom), so text and icons stay
-/// on top.
-fn tint_under(buf: &mut [u32], width: i32, height: i32, rgb: (u32, u32, u32), alpha: f32, radius: f32, inset: i32) {
-    draw::tint_box(buf, width, (0, inset, width, height - inset), rgb, alpha, radius);
-}
-
 /// Copies `c` scaled to `size` into the premultiplied buffer at (x, y), opaque.
 fn paint_cover(buf: &mut [u32], width: i32, c: &Cover, x: i32, y: i32, size: i32) {
     let px = cover::resample(&c.pixels, c.size, (0, 0, c.size), size);
@@ -234,84 +235,101 @@ fn paint_cover(buf: &mut [u32], width: i32, c: &Cover, x: i32, y: i32, size: i32
     }
 }
 
-/// Draws the strip: `height` is the taskbar's, `scale` = display scale × drag zoom, `opacity` 0..1
-/// for fading in and out, `floating`: not in the taskbar, so it brings its own backdrop.
-/// `width`: draw the full strip narrowed to this many px (collapse/expand animation; see
-/// `layout::at_width`). `grow`: the cover's hover / press factor (`anim::Feel`, 1.0 = at rest).
-/// Returns the layout (for its size and for hit testing).
-#[allow(clippy::too_many_arguments)]
-pub fn update_strip(hwnd: HWND, c: &StripContent, height: i32, scale: f32, look: &Look, hover: Option<Part>,
-                    compact: bool, max_width: f32, width: Option<i32>, live: (u32, u32, u32), opacity: f32, floating: bool, grow: f32) -> Strip {
+/// The strip's vertical geometry for a taskbar `height` px tall at `scale` (display × drag
+/// zoom), from the shared font's ink: the cover, its ring's margin, the text lines.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Geo {
+    pub height: i32,
+    pub scale: f32,
+    /// The cover's size, and the even margin around its ring inside the hover highlight (also
+    /// the ring's distance from the strip's left edge).
+    pub cover: i32,
+    pub margin: i32,
+    pub cover_top: i32,
+    /// Tops of the title and artist lines (on the taskbar clock's baselines), and a line's height.
+    pub top1: i32,
+    pub top2: i32,
+    pub line_h: i32,
+}
+
+pub fn geo(height: i32, scale: f32, look: &Look) -> Geo {
     let s = |v: f32| (v * scale).round() as i32;
     // the shared style: the taskbar clock's font and size
     let text_font = Font::new(s(look.font_size), 400, &look.font);
-    let (icon_top, icon) = draw::icon_box(height, scale);
-    let icon_font = Font::new(icon, 400, ICON_FONT);
-
     let measure = unsafe { CreateCompatibleDC(None) };
-    let (title, _) = fit(measure, &text_font, &c.title, s(max_width));
-    let (artist, _) = fit(measure, &text_font, &c.artist, s(max_width));
-    let (_, h1) = text_size(measure, &text_font, "Ag");
-    let h2 = h1;
+    let (_, line_h) = text_size(measure, &text_font, "Ag");
     let asc = ascent(measure, &text_font);
     unsafe { let _ = DeleteDC(measure); }
-
-    // on the taskbar clock's baselines: title on the time's, artist on the date's
     let (top1, top2) = draw::two_line_tops(height, scale, asc, asc);
     // the cover is as tall as both lines (the top of the title's capitals to the bottom of the
     // artist's descenders); its ring sits in the middle of the hover highlight, as far from
     // its left edge as from its top and bottom
     let (cap_top, _) = ink_rows(&text_font, "H");
     let (_, desc_bottom) = ink_rows(&text_font, "g");
-    let (hl_radius, inset) = draw::highlight_shape(look, scale);
+    let (_, inset) = draw::highlight_shape(look, scale);
     let (cover, margin) = layout::margin((top2 + desc_bottom) - (top1 + cap_top), height - 2 * inset, scale);
     let cover_top = inset + margin + layout::ring_around(scale);
+    Geo { height, scale, cover, margin, cover_top, top1, top2, line_h }
+}
 
-    // a static strip: the text column is always the full maximum width, so the strip (and the
-    // buttons, and the widgets next to it) never move when the track changes
-    let text_w = s(max_width);
-    let mut l = match width {
-        Some(w) if !compact => layout::at_width(scale, cover, margin, text_w, w),
-        _ => layout::strip(scale, cover, margin, compact, text_w),
+/// The layout: full (the text column `max_width` px at 100%, always that wide, so the buttons
+/// and the widgets beside it don't move when the track changes) or `compact`; `fit` (Block's
+/// [`taskbar_dock::block::Frame::fit_width`]): the full strip narrowed to that width, the text
+/// column first.
+pub fn strip_layout(g: &Geo, compact: bool, max_width: f32, fit: Option<i32>) -> Strip {
+    let text_w = (max_width * g.scale).round() as i32;
+    let mut l = match fit {
+        Some(w) if !compact => layout::at_width(g.scale, g.cover, g.margin, text_w, w),
+        _ => layout::strip(g.scale, g.cover, g.margin, compact, text_w),
     };
-    l.height = height; // for hit testing: a button is hit inside its highlight box
-    l.scale = scale;
-    // narrowed (collapse/expand): the lines end with "…" at the narrower column
-    let (title, artist) = if l.text_w > 0 && l.text_w < text_w {
-        let dc = unsafe { CreateCompatibleDC(None) };
-        let cut = (fit(dc, &text_font, &c.title, l.text_w).0, fit(dc, &text_font, &c.artist, l.text_w).0);
-        unsafe { let _ = DeleteDC(dc); }
-        cut
-    } else {
-        (title, artist)
-    };
-    let Some(mut cv) = Canvas::new(l.width, height) else { return l };
+    l.height = g.height; // for hit testing: a button is hit inside its highlight box
+    l.scale = g.scale;
+    l
+}
+
+/// The cover with its ring, as drawn (Block's cover box: it grows on hover, dips on press).
+pub fn ring_box(l: &Strip, g: &Geo) -> (i32, i32, i32, i32) {
+    let top = g.cover_top - (l.cover_x - l.ring_x);
+    (l.ring_x, top, l.ring_x + l.ring, top + l.ring)
+}
+
+/// Draws the strip's content laid out as `l` into Block's canvas `out` (`l.width` wide):
+/// text, buttons, the cover (or badge, or a note) and the progress ring; `live` is the ring's
+/// colour for a live stream.
+pub fn draw_strip(out: &mut [u32], out_w: i32, c: &StripContent, l: &Strip, g: &Geo, look: &Look, live: (u32, u32, u32)) {
+    let (height, scale) = (g.height, g.scale);
+    let s = |v: f32| (v * scale).round() as i32;
+    let text_font = Font::new(s(look.font_size), 400, &look.font);
+    let (icon_top, icon) = draw::icon_box(height, scale);
+    let icon_font = Font::new(icon, 400, ICON_FONT);
+    let Some(mut cv) = Canvas::new(l.width, height) else { return };
     let white = rgb(255, 255, 255);
 
     if l.text_w > 0 {
+        let (title, artist) = (fit(cv.dc, &text_font, &c.title, l.text_w).0, fit(cv.dc, &text_font, &c.artist, l.text_w).0);
         let flags = DT_LEFT | DT_TOP;
         // no artist: the title alone, centred between the two lines
-        let t1 = if artist.trim().is_empty() { (top1 + top2) / 2 } else { top1 };
-        draw_text(cv.dc, &text_font, &title, white, RECT { left: l.text_x, top: t1, right: l.text_x + l.text_w, bottom: t1 + h1 }, flags);
+        let t1 = if artist.trim().is_empty() { (g.top1 + g.top2) / 2 } else { g.top1 };
+        draw_text(cv.dc, &text_font, &title, white, RECT { left: l.text_x, top: t1, right: l.text_x + l.text_w, bottom: t1 + g.line_h }, flags);
         // the artist line dimmer (78%, like the shared second-line colour), to set it apart
-        draw_text(cv.dc, &text_font, &artist, rgb(199, 199, 199), RECT { left: l.text_x, top: top2, right: l.text_x + l.text_w, bottom: top2 + h2 }, flags);
+        draw_text(cv.dc, &text_font, &artist, rgb(199, 199, 199), RECT { left: l.text_x, top: g.top2, right: l.text_x + l.text_w, bottom: g.top2 + g.line_h }, flags);
     }
     // buttons: tray-icon sized glyphs centred in their columns; unsupported ones dimmed
-    for (i, (g, enabled)) in c.buttons.iter().enumerate() {
+    let off = (taskbar_dock::theme::Theme::new(look).strip.disabled * 255.0).round() as u8;
+    for (i, (gl, enabled)) in c.buttons.iter().enumerate() {
         let (bl, br) = l.button(i);
-        let off = (taskbar_dock::theme::Theme::new(look).strip.disabled * 255.0).round() as u8;
         let col = if *enabled { white } else { rgb(off, off, off) };
-        draw_text(cv.dc, &icon_font, &g.to_string(), col, RECT { left: bl, top: icon_top, right: br, bottom: icon_top + icon }, DT_CENTER | DT_VCENTER);
+        draw_text(cv.dc, &icon_font, &gl.to_string(), col, RECT { left: bl, top: icon_top, right: br, bottom: icon_top + icon }, DT_CENTER | DT_VCENTER);
     }
+    let (cover, cover_top) = (g.cover, g.cover_top);
     if c.cover.is_none() && c.badge.is_none() {
         // no picture and no brand: a tray-icon sized note in the middle of the cover's place
-        let note = glyph::MUSIC.to_string();
         let t = cover_top + (cover - icon) / 2;
-        draw_text(cv.dc, &icon_font, &note, white, RECT { left: l.cover_x, top: t, right: l.cover_x + cover, bottom: t + icon }, DT_CENTER | DT_VCENTER);
+        draw_text(cv.dc, &icon_font, &glyph::MUSIC.to_string(), white, RECT { left: l.cover_x, top: t, right: l.cover_x + cover, bottom: t + icon }, DT_CENTER | DT_VCENTER);
     }
 
     let (fg, _) = look.text_rgb();
-    let width = l.width;
+    let (width, hl_radius) = (l.width, draw::highlight_shape(look, scale).0);
     let corner = hl_radius as i32; // same corner as the hover highlight
     let px = cv.pixels();
     draw::text_to_color(px, width, height, |_| fg);
@@ -320,8 +338,7 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, height: i32, scale: f32, look:
         draw::round_rect(px, width, (l.cover_x, cover_top, l.cover_x + cover, cover_top + cover), corner as f32);
     } else if let Some((color, label)) = &c.badge {
         let tile = badge_tile(*color, label, cover, look, scale);
-        let pic = Cover { size: cover, pixels: tile };
-        paint_cover(px, width, &pic, l.cover_x, cover_top, cover);
+        paint_cover(px, width, &Cover { size: cover, pixels: tile }, l.cover_x, cover_top, cover);
         draw::round_rect(px, width, (l.cover_x, cover_top, l.cover_x + cover, cover_top + cover), corner as f32);
     }
     // the progress ring around the cover: taskbar text colour (white on a dark taskbar), its
@@ -339,31 +356,19 @@ pub fn update_strip(hwnd: HWND, c: &StripContent, height: i32, scale: f32, look:
             draw::progress_ring(px, width, ring_rc, thick, radius, 1.0, (r, g, b, a), (0, 0, 0, 0));
         }
     }
-    // hovered / pressed: the cover and its ring grow / dip about their centre
-    draw::grow_pixels(px, width, (l.ring_x, cover_top - around, l.ring_x + l.ring, cover_top - around + l.ring), grow);
-    // the brand tint behind everything, in the highlight's shape
-    if let Some((rgb, alpha)) = c.tint {
-        tint_under(px, width, height, rgb, alpha, hl_radius, inset);
-    }
-    // hover highlight like the taskbar's buttons: one button, or the whole strip
-    let hl = match hover {
-        Some(Part::Button(i)) => Some(draw::button_box(l.button(i), height, scale)),
-        Some(Part::Body | Part::Cover) => Some((0, inset, width, height - inset)),
-        None => None,
-    };
-    draw::background_rect(px, width, height, hl, look.light, hl_radius);
-    // floating over other windows: a taskbar-coloured backdrop keeps the text readable, in the
-    // highlight's shape (inset, so it leaves the taskbar's top border alone)
-    if floating {
-        let bg = if look.light { (238, 238, 238) } else { (32, 32, 32) };
-        tint_under(px, width, height, bg, 0.96, hl_radius, inset);
-    }
+    copy_into(out, out_w, px, width);
+}
 
-    let size = SIZE { cx: width, cy: height };
-    let src = POINT::default();
-    let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: (opacity.clamp(0.0, 1.0) * 255.0).round() as u8, AlphaFormat: AC_SRC_ALPHA as u8 };
-    unsafe {
-        let _ = UpdateLayeredWindow(hwnd, None, None, Some(&size), cv.dc, Some(&src), COLORREF(0), Some(&blend), ULW_ALPHA);
-    }
-    l
+/// The tray icon: the play glyph (Segoe Fluent), mono in the taskbar's text colour, as weather's
+/// cloud and discord's headset: a static logo, not the track.
+pub fn tray_logo(out: &mut [u32], w: i32, h: i32, look: &Look) -> bool {
+    let n = 96;
+    let Some(mut big) = Canvas::new(n, n) else { return false };
+    let font = Font::new(taskbar_dock::theme::GLYPH_RASTER_PX, 400, ICON_FONT);
+    draw_text(big.dc, &font, &glyph::PLAY.to_string(), rgb(255, 255, 255), RECT { left: 0, top: 0, right: n, bottom: n }, DT_CENTER | DT_VCENTER);
+    let src = big.pixels().to_vec();
+    draw::fit_icon(out, w, 0, 0, w.min(h), &src, n, n);
+    let (fg, _) = look.text_rgb();
+    draw::text_to_color(out, w, h, |_| fg);
+    true
 }

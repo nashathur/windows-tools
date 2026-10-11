@@ -183,8 +183,8 @@ impl Content for App {
         self.strip.and_then(|l| l.cover())
     }
 
-    fn tint(&self, area: Hit, look: &Look) -> Option<Tint> {
-        render::tint(&self.voice, area, look)
+    fn tint(&self, area: Hit, _look: &Look) -> Option<Tint> {
+        render::tint(&self.voice, area)
     }
 
     /// During a call, or when the user must act (setup, sign-in, an error).
@@ -269,7 +269,7 @@ impl Content for App {
                     self.press(b);
                 }
             }
-            PanelMouse::Down(..) => {}
+            PanelMouse::Down(..) | PanelMouse::Cancel => {}
         }
     }
 

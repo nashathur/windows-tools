@@ -1,26 +1,22 @@
 //! The media widget's settings: the "media" section of the settings file shared with the other
 //! taskbar widgets, %APPDATA%\TaskbarDock\settings.json (see the taskbar-dock library). The
 //! shared look and behaviour (gap, font, timings, "follow Windows" switches) is its "dock"
-//! section, read through taskbar_dock::style.
+//! section, read through taskbar_dock::style. Block owns the section's `compact` and
+//! `show_on_taskbar` keys, and Start with Windows is the shared `startup` list.
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use taskbar_dock::settings;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct Config {
-    /// Cover and buttons only, no text.
-    pub compact: bool,
     /// Widest the title/artist text gets on the strip (px at 100%); longer is cut with "…".
     pub max_width: f32,
-    /// Fixed widths of the click panel (left click) and the menu panel (right click), px at 100%.
-    pub menu_panel_width: f32,
+    /// Fixed width of the click panel (left click), px at 100%.
     pub click_panel_width: f32,
     /// Nothing playing: the paused session stays shown this long, then the strip hides.
     pub hide_after_pause_s: u32,
-    /// The strip fading in when it appears and out when it hides (0 with Windows' animations off).
-    pub fade_ms: f32,
     /// The −/+ buttons for apps without previous/next (single videos).
     pub skip_seconds: u32,
     /// Strip and panel tint: "brand", "cover" or "off".
@@ -28,30 +24,30 @@ pub struct Config {
     pub tint_strength: f32,
     /// The progress ring for a live stream.
     pub live_color: String,
-    pub start_with_windows: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
-            compact: false,
             max_width: 136.0,
-            menu_panel_width: 300.0,
             click_panel_width: 360.0,
             hide_after_pause_s: 120,
-            fade_ms: 300.0,
             skip_seconds: 15,
             tint: "brand".into(),
             tint_strength: 1.0,
             live_color: format!("#{:06X}", taskbar_dock::theme::brand("media.live", true).rgb24()),
-            start_with_windows: false,
         }
     }
 }
 
+/// Keys of older versions, removed from the file once (plan step 8, media on Block): the menu
+/// panel is Block's shared one, the strip's fade is Block's (`glide_ms`), Start with Windows is
+/// the `startup` list.
+const GONE: [&str; 3] = ["menu_panel_width", "fade_ms", "start_with_windows"];
+
 impl Config {
-    /// Loads the media section and writes it back in full, which adds settings introduced by
-    /// newer versions (no write if nothing changed). A broken file is left as-is.
+    /// Loads the media section and writes it back, which adds settings introduced by newer
+    /// versions. A broken file is left as-is.
     pub fn load() -> Config {
         let Some(root) = settings::read() else { return Config::default() };
         let cfg: Config = root.get("media").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
@@ -59,10 +55,27 @@ impl Config {
         cfg
     }
 
-    /// Saves the media section only; the other sections are left as they are.
+    /// Saves these settings into the media section; other keys there (Block's `compact` and
+    /// `show_on_taskbar`) and the other sections are left as they are.
     pub fn save(&self) {
-        let value = serde_json::to_value(self).unwrap_or_else(|_| json!({}));
-        let _ = settings::save_section("media", value);
+        let Ok(Value::Object(mine)) = serde_json::to_value(self) else { return };
+        let _ = settings::update(|root| {
+            if !root.is_object() {
+                *root = json!({});
+            }
+            let sec = &mut root["media"];
+            if !sec.is_object() {
+                *sec = json!({});
+            }
+            for (k, v) in mine {
+                sec[k.as_str()] = v;
+            }
+            if let Some(sec) = sec.as_object_mut() {
+                for k in GONE {
+                    sec.remove(k);
+                }
+            }
+        });
     }
 
     /// `live_color` as RGB; the default if it isn't "#RRGGBB".
@@ -87,8 +100,8 @@ mod tests {
 
     #[test]
     fn missing_keys_get_defaults() {
-        let c: Config = serde_json::from_value(json!({ "compact": true })).unwrap();
-        assert!(c.compact);
+        let c: Config = serde_json::from_value(json!({ "max_width": 120.0, "compact": true })).unwrap();
+        assert_eq!(c.max_width, 120.0);
         assert_eq!(c.hide_after_pause_s, 120);
         assert_eq!(c.live_color, "#FF4E45");
     }
