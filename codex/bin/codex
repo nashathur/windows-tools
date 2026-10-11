@@ -1,0 +1,5 @@
+#!/bin/sh
+# `codex` for Git Bash (it ignores .cmd): runs the newest codex.exe bundled with the Codex desktop app.
+cx=$(ls -t "$(cygpath -u "$LOCALAPPDATA")"/OpenAI/Codex/bin/*/codex.exe 2>/dev/null | head -n 1)
+[ -n "$cx" ] || { echo 'codex.exe not found under $LOCALAPPDATA/OpenAI/Codex/bin (is the Codex app installed?)' >&2; exit 1; }
+exec "$cx" "$@"
