@@ -91,3 +91,107 @@ a one-line usage each. Bad arguments: `{"ok":false,"error":…}` with the usage,
   `menu click`.
 
 README's dockctl table gets the new commands and a `do` section per widget.
+
+## Contracts (after Codex's plan critique, 2026-10-11, `codex\runs\step11-plan.md.answer.md`)
+
+**Panel kinds (11a).** Block keeps one panel HWND and one fade, plus the active kind; every shell
+callback (`panel_size`, `panel_draw`, `panel_mouse`, `panel_shown`, keys) passes that kind
+instead of the hard-coded `Main`. Widgets return `None` / ignore kinds they don't have (all four
+are checked: today they ignore the argument), so `panel open picker` on weather is an error, not
+its main panel. Opening the picker is its own transition: pinned, hover timers cancelled, any
+open panel or menu (this widget's and the others', tray and floating ones included) closed first,
+exactly one `panel_shown(.., false)` / `(.., true)` pair. The strip's click toggle and its
+focus-loss guard (panel.rs) stay as they are. Anchoring uses the strip's effective visibility
+(a strip hidden for room counts as none: open above the tray icon). Height shrinks to the work
+area if it doesn't fit (fewer list rows), never off-screen.
+
+**Keyboard (11a).** The picker takes focus when it opens (`SetFocus` after activation, outside the
+Content borrow); the hover-opened main panel stays non-activating. Block dispatches normalised
+events to the Content: key + modifiers (`WM_KEYDOWN` and `WM_SYSKEYDOWN`, for Alt+Left), text
+(`WM_CHAR`, surrogate pairs joined, control characters from Enter / Backspace / Tab / Ctrl+letter
+dropped), wheel. Esc goes to the Content first; Block closes only if the Content doesn't take it.
+The message loop keeps `TranslateMessage` / `DispatchMessage` (only `IsDialogMessageW` goes).
+`CS_DBLCLKS` on the panel class and a `PanelMouse::DoubleClick`. dockctl's `panel key` / `type`
+call the same dispatch functions with explicit modifiers (not the physical keyboard state). No
+Tab order: Tab does nothing. No Shift-selection.
+
+**Text box (11a).** A generic edit model in the library (text, caret, select-all, the editing
+keys in 11a, clipboard), with unit tests, plus its draw helper; the caret blinks at the system
+caret rate and the text scrolls to keep the caret visible.
+
+**Picker state (11a).** It lives in bus's `App`, not in a window: results are posted to Block's
+main window with a message number of its own (bus's `WM_DATA` is already `WM_APP + 2`), tagged
+with a job generation; a result whose generation is stale (Back, another stop, reopened and
+searched again) is dropped. The chosen stop is kept as code + name, not an index into the stop
+list. Eviction: 60 s after the picker closed with no job running, the stop list is freed; the
+step, search text and chosen stop stay, and reopening reloads the list in the background and
+refilters (status "Loading stops…" meanwhile). Line colours: `LineOpt` gets the route colour
+from the timetable, resolved by the same helper as the strip's badge.
+
+**Reply protocol (11b).** Requests carry a protocol version and a request id; replies echo the id
+and dockctl accepts only a reply with its id from the window it asked. dockctl pumps messages
+until the reply or the deadline (`--timeout`, default 5 s, `do` 120 s), accepting a reply that
+arrives during the send or after it. The widget copies the request out of `WM_COPYDATA` before
+returning. A late reply to a dockctl that's gone fails to deliver and is dropped (no crash, no
+block). Content's command API: `Content::command(name, args, ctx) -> Done(Value) |
+Pending(ReplyToken)`; a worker finishes by posting to the main window, and the UI thread sends the
+reply (workers never touch Block state). Mutations are applied on the UI thread before the reply.
+Old commands keep replying inline; a new dockctl talking to an old widget gets a prompt "unknown
+command" error. A mutation is never retried after a timeout. Exit codes: a remote error tagged
+`"kind": "usage"` gives exit code 2.
+
+**Settings (11b).** `keys` shows the effective defaults: the widget's `Spec::defaults` merged
+with Block's own keys (`compact` false, `show_on_taskbar` true); `--dock` uses the dock section's
+JSON form (`"system"`, `"auto"`), exposed from `style.rs`. Secrets are masked by setting name in
+`current` and `default`. **The dockctl command log masks secrets too** (today `remote.rs:43` logs
+`set` values in plain text). `unset` writes the default value (the loaders reinsert keys anyway);
+an unknown key is an error listing the known ones; a widget without `Spec::defaults` says so.
+`set --dock` / `unset --dock` re-read the look and redraw before replying. Bus gets a real
+`Default` for its config.
+
+**Widget commands (11b).**
+- Bus: commands never download: with no timetable on disk they say so. Timetable reads for
+  commands and the picker go through one queue (no two scans at once, no competing download).
+  `choose` builds and saves the config through the same code as the picker's Select and reports
+  a save failure (today `set_config` applies even when saving fails).
+- Weather: `places` asks Open-Meteo for 5 results; the four location fields are written in one
+  `settings::update`; a fetch for an old location is dropped; the reply says "saved" and, once
+  the fetch ends, the weather or the fetch error.
+- Media: explicit play / pause (not a toggle of a cached state); `sessions` is one entry per app
+  (as the snapshots are), each with a stable app id; `--app` matches the id or a case-insensitive
+  name prefix, an ambiguous match is an error listing them; volume is read on demand, not from the
+  panel's cache; a missing session or a refused operation is an error; unknown position / length
+  are null.
+- Discord: commands wait for Discord's answer (matched by RPC nonce) and fail on disconnect,
+  error or 10 s; `mute on` when already muted succeeds at once.
+
+**Picker memory (Q16).** Closing by Cancel, Esc in the stop step or a click outside keeps the
+search text, step and chosen stop. A successful Select clears it all: the next "Change stop…"
+starts empty. Back while lines are loading cancels that job (its result is dropped on arrival).
+
+**Bus `choose` with several directions (Q17).** It fails and lists the candidates, numbered, each
+with "next stop · headsign"; `--to <number | text>` picks one (text matches headsign or next stop,
+case-insensitive; still ambiguous = the same error). It never guesses.
+
+**Weather `place <n>` (Q18).** `n` is from the last `places` reply (numbered from 1), kept in
+memory 10 minutes; after that `place <n>` fails with "run places again". `place "lat,lon"` and
+`place auto` always work.
+
+**Network (user, 2026-10-11: be careful with the timetable download and the live times).**
+- Picker reads and bus commands open the timetable read-only: no zip on disk = the error "timetable
+  not downloaded yet (it downloads once a day; `menu click \"Update timetable\"` starts it)" (Q19).
+  `open_timetable`'s download stays only on the worker's daily/forced path.
+- Nothing new polls OVapi: the picker and `do` commands never call `fetch_live`; `do now` reports the
+  live data the worker already has (with its age). The worker's poll rate and 429 back-offs are
+  unchanged.
+- Builders (Codex) run `cargo build` / `cargo test` only: never `dev.ps1`, never a widget, no
+  network calls in tests.
+- Live checks: Select is tested by choosing the current stop and line again (UOV line 3, stop
+  59150850, label "Rhonedreef → Utrecht CS"), so the config is unchanged and nothing is fetched;
+  keep restarts few; `bus do choose` is tested the same way.
+
+**Acceptance checks.** 11a: real typing and focus loss by hand (dockctl can't prove physical
+focus), Esc in both steps, close and reopen during a line search, Back then a stale result,
+eviction and reload, `panel open picker` on the other widgets fails, main panels unchanged
+(hover, click, pin). 11b: inline and slow replies, `all` with one slow widget, dockctl killed
+before a late reply, concurrent `set`s, Discord disconnected, media app closed mid-command.
