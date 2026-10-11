@@ -100,6 +100,24 @@ impl Config {
         });
     }
 
+    /// Saves only the four location keys (city, latitude, longitude, location_name), in one
+    /// update: the other keys keep what the file has, even if this copy of them is older.
+    pub fn save_location(&self) -> std::io::Result<()> {
+        settings::update(|root| {
+            if !root.is_object() {
+                *root = json!({});
+            }
+            let sec = &mut root["weather"];
+            if !sec.is_object() {
+                *sec = json!({});
+            }
+            sec["city"] = json!(self.city);
+            sec["latitude"] = json!(self.latitude);
+            sec["longitude"] = json!(self.longitude);
+            sec["location_name"] = json!(self.location_name);
+        })
+    }
+
     pub fn fahrenheit(&self) -> bool {
         self.units.eq_ignore_ascii_case("fahrenheit") || self.units.eq_ignore_ascii_case("f")
     }

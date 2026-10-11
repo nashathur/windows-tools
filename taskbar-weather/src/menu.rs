@@ -36,8 +36,7 @@ pub(crate) fn switch(a: &mut App, id: usize, _ctx: &mut Ctx) -> bool {
 pub(crate) fn action(a: &mut App, id: usize, _ctx: &mut Ctx) {
     if id == ID_REFRESH {
         a.cfg = Config::load();
-        a.loc = None; // re-detect location too
-        fetch::start_fetch(a);
+        fetch::restart(a);
     }
 }
 
@@ -55,6 +54,10 @@ pub(crate) fn settings_changed(a: &mut App, ctx: &mut Ctx) {
         ctx.redraw();
     }
     if data(&old) != data(&cfg) {
-        fetch::start_fetch(a);
+        if old.location_key() != cfg.location_key() {
+            fetch::restart(a);
+        } else {
+            fetch::start_fetch(a);
+        }
     }
 }

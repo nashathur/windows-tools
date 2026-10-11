@@ -103,25 +103,70 @@ fn encode(s: &str) -> String {
         .collect()
 }
 
+#[derive(Deserialize)]
+struct Geo {
+    results: Option<Vec<GeoResult>>,
+}
+
+#[derive(Deserialize)]
+struct GeoResult {
+    name: String,
+    #[serde(default)]
+    admin1: Option<String>,
+    latitude: f64,
+    longitude: f64,
+    country: Option<String>,
+}
+
+/// A place returned by Open-Meteo's geocoding service.
+#[derive(Clone, Debug)]
+pub struct Place {
+    pub name: String,
+    pub region: Option<String>,
+    pub country: Option<String>,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+impl Place {
+    /// Builds the display name used by the weather forecast.
+    pub fn label(&self) -> String {
+        match &self.country {
+            Some(country) if !country.is_empty() => format!("{}, {}", self.name, country),
+            _ => self.name.clone(),
+        }
+    }
+}
+
+/// Searches Open-Meteo for places matching a name.
+pub fn geocode(query: &str, count: u32) -> Result<Vec<Place>, String> {
+    let agent = agent()?;
+    let url = format!(
+        "https://geocoding-api.open-meteo.com/v1/search?count={count}&format=json&name={}",
+        encode(query)
+    );
+    let geo: Geo = get(&agent, &url)?;
+    Ok(geo.results.unwrap_or_default().into_iter().map(|r| Place {
+        name: r.name,
+        region: r.admin1,
+        country: r.country,
+        lat: r.latitude,
+        lon: r.longitude,
+    }).collect())
+}
+
 /// Coordinates from config, else geocode the city, else approximate location from the IP address.
 pub fn resolve_location(cfg: &Config) -> Result<Location, String> {
     if let (Some(lat), Some(lon)) = (cfg.latitude, cfg.longitude) {
         let name = if cfg.location_name.is_empty() { format!("{lat:.2}, {lon:.2}") } else { cfg.location_name.clone() };
         return Ok(Location { lat, lon, name });
     }
-    let agent = agent()?;
     let city = cfg.city.trim();
     if !city.is_empty() {
-        #[derive(Deserialize)]
-        struct Geo { results: Option<Vec<GeoResult>> }
-        #[derive(Deserialize)]
-        struct GeoResult { name: String, latitude: f64, longitude: f64, country: Option<String> }
-        let url = format!("https://geocoding-api.open-meteo.com/v1/search?count=1&format=json&name={}", encode(city));
-        let geo: Geo = get(&agent, &url)?;
-        let r = geo.results.and_then(|v| v.into_iter().next()).ok_or_else(|| format!("city \"{city}\" not found"))?;
-        let name = match r.country { Some(c) => format!("{}, {}", r.name, c), None => r.name };
-        return Ok(Location { lat: r.latitude, lon: r.longitude, name });
+        let place = geocode(city, 1)?.into_iter().next().ok_or_else(|| format!("city \"{city}\" not found"))?;
+        return Ok(Location { lat: place.lat, lon: place.lon, name: place.label() });
     }
+    let agent = agent()?;
     #[derive(Deserialize)]
     struct Ip { status: String, lat: Option<f64>, lon: Option<f64>, city: Option<String>, country: Option<String> }
     let ip: Ip = get(&agent, "http://ip-api.com/json/?fields=status,lat,lon,city,country")?;
@@ -279,5 +324,13 @@ mod tests {
     #[test]
     fn encoding() {
         assert_eq!(encode("São Paulo"), "S%C3%A3o%20Paulo");
+    }
+
+    #[test]
+    fn place_label_includes_country_when_present() {
+        let place = Place { name: "Bandung".into(), region: Some("West Java".into()), country: Some("Indonesia".into()), lat: -6.9, lon: 107.6 };
+        assert_eq!(place.label(), "Bandung, Indonesia");
+        let without_country = Place { country: None, ..place };
+        assert_eq!(without_country.label(), "Bandung");
     }
 }

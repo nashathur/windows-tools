@@ -221,12 +221,39 @@ before returning from the message. The widget does the reading and writing, so i
 `%APPDATA%` even from a Claude session. Build: `cargo build --release --bin dockctl`, then copy
 `target\release\dockctl.exe` to `taskbar-dock\`.
 
+#### `do` commands per widget
+
+`dockctl <widget> do help` prints each command's usage. Bad arguments give
+`{"ok":false,"kind":"usage",…}` with the usage line and exit code 2. Commands that wait on a
+worker (timetable, network, Discord, the media session) reply when it finishes; nothing blocks
+the widget meanwhile.
+
+- **bus**: `now` (line, stop, the next six departures, live or scheduled, and the age of the live
+  data the widget already has: no new OVapi request); `stops <query>` (up to 20 matching stops);
+  `lines <stop_code>` (lines and directions, numbered); `choose <stop_code> <line> [agency]
+  [--to <n|text>]` (saves the stop and line as the picker's Select does; a line with several
+  directions fails and lists them until `--to` picks one). Timetable reads go through one queue
+  shared with the picker and never download: without a timetable on disk they say so.
+- **weather**: `now` (place, temperature, conditions, last update); `places <query>` (up to 5
+  Open-Meteo geocoding matches, numbered); `place <n | lat,lon | auto>` (`n` from the last
+  `places` reply, valid 10 minutes; `auto` = by IP). `place` saves the location, then replies
+  once the new weather (or the fetch error) is in.
+- **media**: `now`, `sessions` (one per app, with its id); `play`, `pause`, `toggle`, `next`,
+  `prev`, `skip <±s>`, `seek <s>`, `volume <0-100>`, `mute on|off`, each with `--app <id or
+  name prefix>` (default: the session the strip shows). Unknown position or length is null.
+- **discord**: `now` (status, channel, members speaking / muted); `mute on|off`, `deafen on|off`
+  (set, not toggle: already in that state replies `"changed": false` at once); `leave`. These
+  wait for Discord's answer and fail on an error, a disconnect or after 10 s. Sign in and
+  Reconnect stay `menu click`.
+
 Examples:
 ```
 dockctl weather state
 dockctl weather menu click "Compact mode"
 dockctl weather set show_on_taskbar false
 dockctl all state
+dockctl bus do choose 59150850 3 --to "Utrecht CS"
+dockctl media do pause --app spotify
 ```
 
 `scripts\restart_explorer.ps1` restarts Explorer without keystrokes (the taskbar's own Exit

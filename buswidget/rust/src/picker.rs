@@ -1,6 +1,9 @@
 //! The bus stop and line picker, drawn inside Block's focused panel.
 
 use crate::{data, data_dir};
+use crate::ttqueue;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 use taskbar_dock::block::{Canvas, Ctx, PanelFrame, PanelKey, PanelKeyCode, PanelMouse};
 use taskbar_dock::text_edit::{self, TextEdit};
@@ -101,6 +104,7 @@ pub(crate) struct Picker {
     loading: bool,
     loading_lines: bool,
     generation: usize,
+    live_generation: Arc<AtomicUsize>,
     closed_at: Option<Instant>,
     pressed: Option<Target>,
     double_clicked: bool,
@@ -128,6 +132,7 @@ impl Default for Picker {
             loading: false,
             loading_lines: false,
             generation: 0,
+            live_generation: Arc::new(AtomicUsize::new(0)),
             closed_at: None,
             pressed: None,
             double_clicked: false,
@@ -142,6 +147,13 @@ impl Default for Picker {
 }
 
 impl Picker {
+    /// Advances the picker generation and publishes it to queued worker jobs.
+    fn next_generation(&mut self) -> usize {
+        self.generation = self.generation.wrapping_add(1);
+        self.live_generation.store(self.generation, Ordering::Release);
+        self.generation
+    }
+
     /// Reports the picker's current step, search, rows, status and job state to dockctl.
     pub(crate) fn state(&self) -> serde_json::Value {
         serde_json::json!({
@@ -201,17 +213,14 @@ impl Picker {
 
     /// Starts loading the stop list on a worker and invalidates older jobs.
     fn start_stops(&mut self, main: isize) {
-        self.generation = self.generation.wrapping_add(1);
-        let generation = self.generation;
+        let generation = self.next_generation();
         self.loading = true;
         self.loading_lines = false;
         self.status = "Loading stops…".into();
-        std::thread::spawn(move || {
-            post(
-                main,
-                generation,
-                ResultData::Stops(data::all_stops(data_dir()).map_err(|e| e.to_string())),
-            )
+        let live_generation = self.live_generation.clone();
+        ttqueue::submit(move || {
+            if live_generation.load(Ordering::Acquire) != generation { return; }
+            post(main, generation, ResultData::Stops(data::all_stops(data_dir()).map_err(|e| e.to_string())))
         });
     }
 
@@ -348,13 +357,7 @@ impl Picker {
             self.first = 0;
             return;
         }
-        let hits: Vec<usize> = self
-            .stops
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.code == query || terms.iter().all(|t| s.folded.contains(t)))
-            .map(|(i, _)| i)
-            .collect();
+        let hits = matching_stops(&self.stops, &query);
         let total = hits.len();
         self.filtered = hits.into_iter().take(MAX_SHOWN).collect();
         self.highlight = 0;
@@ -375,18 +378,15 @@ impl Picker {
 
     /// Starts a line lookup for a chosen stop on a worker thread.
     fn start_lines(&mut self, main: isize, code: String) {
-        self.generation = self.generation.wrapping_add(1);
-        let generation = self.generation;
+        let generation = self.next_generation();
         self.loading = true;
         self.loading_lines = true;
         let name = self.chosen.as_ref().map_or("", |x| x.1.as_str()).to_string();
         self.status = format!("Finding the lines at {name} ({code})… this reads the whole timetable, up to a minute.");
-        std::thread::spawn(move || {
-            post(
-                main,
-                generation,
-                ResultData::Lines(data::lines_at_stop(data_dir(), &code).map_err(|e| e.to_string())),
-            )
+        let live_generation = self.live_generation.clone();
+        ttqueue::submit(move || {
+            if live_generation.load(Ordering::Acquire) != generation { return; }
+            post(main, generation, ResultData::Lines(data::lines_at_stop(data_dir(), &code).map_err(|e| e.to_string())))
         });
     }
 
@@ -555,7 +555,7 @@ impl Picker {
     /// Invalidates a running line lookup so its eventual result is ignored.
     fn cancel_line_lookup(&mut self) {
         if self.loading_lines {
-            self.generation = self.generation.wrapping_add(1);
+            self.next_generation();
             self.loading = false;
             self.loading_lines = false;
         }
@@ -574,20 +574,13 @@ impl Picker {
             }
             Mode::Lines => {
                 if let (Some(line), Some((code, name))) = (self.lines.get(self.highlight), self.chosen.clone()) {
-                    let short = name.split_once(", ").map_or(name.as_str(), |x| x.1);
-                    let towards = if line.headsign.is_empty() { &line.next } else { &line.headsign };
-                    let cfg = data::Config {
-                        agency: line.agency.clone(),
-                        line: line.line.clone(),
-                        stop_code: code,
-                        label: format!("{short} → {towards}"),
-                        dest: String::new(),
-                        badge_color: String::new(),
-                        badge_text: String::new(),
-                    };
-                    crate::set_config(cfg);
-                    self.reset_after_select();
-                    ctx.close_panel();
+                    let cfg = chosen_config(&name, &code, line);
+                    if let Err(e) = crate::worker::set_config(cfg) {
+                        self.status = format!("Saving failed: {e}");
+                    } else {
+                        self.reset_after_select();
+                        ctx.close_panel();
+                    }
                 }
             }
             _ => {}
@@ -598,9 +591,14 @@ impl Picker {
 
     /// Resets picker state while preserving a strictly newer job generation.
     fn reset_after_select(&mut self) {
-        let generation = self.generation.wrapping_add(1);
-        *self = Self::default();
-        self.generation = generation;
+        let generation = self.generation;
+        let live_generation = self.live_generation.clone();
+        *self = Self {
+            generation,
+            live_generation,
+            ..Self::default()
+        };
+        self.next_generation();
     }
 
     /// Tracks hover, presses, clicks and double clicks against the shared layout.
@@ -974,6 +972,31 @@ fn post(main: isize, generation: usize, data: ResultData) {
     }
 }
 
+/// Builds the saved config for a selected line direction.
+pub(crate) fn chosen_config(stop_name: &str, stop_code: &str, line: &data::LineOpt) -> data::Config {
+    let short = stop_name.split_once(", ").map_or(stop_name, |x| x.1);
+    let towards = if line.headsign.is_empty() { &line.next } else { &line.headsign };
+    data::Config {
+        agency: line.agency.clone(),
+        line: line.line.clone(),
+        stop_code: stop_code.to_string(),
+        label: format!("{short} → {towards}"),
+        dest: String::new(),
+        badge_color: String::new(),
+        badge_text: String::new(),
+    }
+}
+
+/// Returns every stop matching the picker's folded word and exact-code search.
+pub(crate) fn matching_stops(stops: &[data::StopHit], query: &str) -> Vec<usize> {
+    let query = query.trim();
+    let terms: Vec<String> = data::fold(query).split_whitespace().map(str::to_string).collect();
+    stops.iter().enumerate()
+        .filter(|(_, stop)| stop.code == query || (!terms.is_empty() && terms.iter().all(|term| stop.folded.contains(term))))
+        .map(|(index, _)| index)
+        .collect()
+}
+
 /// Checks whether a result still belongs to the current picker job generation.
 fn result_is_current(current: usize, result: usize) -> bool {
     current == result
@@ -990,6 +1013,26 @@ mod tests {
             name: name.into(),
             folded: data::fold(name),
         }
+    }
+
+    /// Verifies shared stop matching handles folded words, exact codes and empty queries.
+    #[test]
+    fn matching_stops_uses_folded_words_and_stop_codes() {
+        let stops = vec![stop("123", "Utrecht, Rhonedreef"), stop("456", "Utrecht Central")];
+        assert_eq!(matching_stops(&stops, "rhone utrecht"), vec![0]);
+        assert_eq!(matching_stops(&stops, "123"), vec![0]);
+        assert!(matching_stops(&stops, " ").is_empty());
+    }
+
+    /// Verifies the shared config builder retains the picker's display label.
+    #[test]
+    fn chosen_config_builds_picker_label_and_clears_overrides() {
+        let line = data::LineOpt { agency: "UOV".into(), line: "3".into(), headsign: "Utrecht CS".into(), next: "Central".into(), trips: 1, color: "".into(), text_color: "".into() };
+        let config = chosen_config("Utrecht, Rhonedreef", "59150850", &line);
+        assert_eq!(config.label, "Rhonedreef → Utrecht CS");
+        assert_eq!(config.dest, "");
+        assert_eq!(config.badge_color, "");
+        assert_eq!(config.badge_text, "");
     }
 
     /// Verifies stop filtering still caps matches at the documented limit.

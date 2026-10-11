@@ -30,11 +30,13 @@ pub(crate) fn current() -> (data::Config, Option<Arc<data::Schedule>>, Arc<Vec<d
 }
 
 /// Switch to another stop/line (from the picker): save it and rebuild from the local timetable.
-pub(crate) fn set_config(cfg: data::Config) {
+pub(crate) fn set_config(cfg: data::Config) -> std::io::Result<()> {
     if let Err(e) = cfg.save(data_dir()) {
         data::log(data_dir(), &format!("saving config failed: {e}"));
+        return Err(e);
     }
     apply_config(cfg);
+    Ok(())
 }
 
 /// Use new settings: a different stop or line means a new timetable and fresh live data.

@@ -490,6 +490,7 @@ pub fn all_stops(dir: &Path) -> io::Result<Vec<StopHit>> {
     Ok(v)
 }
 
+#[derive(Clone)]
 pub struct LineOpt {
     pub agency: String,
     pub line: String,
@@ -559,8 +560,10 @@ pub fn lines_at_stop(dir: &Path, stop_code: &str) -> io::Result<Vec<LineOpt>> {
         .into_iter()
         .map(|((agency, line, headsign, next, color, text_color), trips)| LineOpt { agency, line, headsign, next, trips, color, text_color })
         .collect();
-    // numeric line order (3 before 28), busiest direction first
-    let key = |l: &LineOpt| (l.line.parse::<u32>().unwrap_or(u32::MAX), l.line.clone(), usize::MAX - l.trips);
+    // numeric line order (3 before 28), busiest direction first; the rest only makes the order
+    // the same on every run (the counts come out of a HashMap), so `choose --to <n>` is stable
+    let key = |l: &LineOpt| (l.line.parse::<u32>().unwrap_or(u32::MAX), l.line.clone(), usize::MAX - l.trips,
+        l.agency.clone(), l.headsign.clone(), l.next.clone());
     v.sort_by_key(key);
     Ok(v)
 }

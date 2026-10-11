@@ -6,6 +6,7 @@ use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 pub(crate) struct Fetched {
+    generation: u64,
     key: String,
     loc: Option<Location>,
     station: Option<(String, knmi::Station)>,
@@ -17,7 +18,7 @@ pub(crate) fn start_fetch(a: &mut App) {
         return;
     }
     a.fetching = true;
-    let (main, cfg, cached, cached_station) = (a.main as usize, a.cfg.clone(), a.loc.clone(), a.station.clone());
+    let (main, generation, cfg, cached, cached_station) = (a.main as usize, a.generation, a.cfg.clone(), a.loc.clone(), a.station.clone());
     std::thread::spawn(move || {
         let key = cfg.location_key();
         let loc = match cached {
@@ -29,13 +30,24 @@ pub(crate) fn start_fetch(a: &mut App) {
         if let (Ok(w), Ok(l)) = (&mut result, &loc) {
             station = add_observation(w, l, &cfg, cached_station);
         }
-        let msg = Box::into_raw(Box::new(Fetched { key, loc: loc.ok(), station, result }));
+        let msg = Box::into_raw(Box::new(Fetched { generation, key, loc: loc.ok(), station, result }));
         unsafe {
             if PostMessageW(hwnd(main as isize), WM_DATA, WPARAM(0), LPARAM(msg as isize)).is_err() {
                 drop(Box::from_raw(msg));
             }
         }
     });
+}
+
+/// Starts a fetch for the latest location settings and invalidates any older result.
+pub(crate) fn restart(a: &mut App) {
+    a.generation = a.generation.wrapping_add(1);
+    a.loc = None;
+    if a.fetching {
+        a.refetch = true;
+    } else {
+        start_fetch(a);
+    }
 }
 
 /// With a KNMI key, swaps the model's current values for the latest station measurement.
@@ -77,21 +89,32 @@ pub(crate) fn add_observation(w: &mut Weather, loc: &Location, cfg: &Config, cac
 
 /// A fetch finished: new data (or the error) for the strip, the tray icon and an open flyout.
 pub(crate) fn on_data(a: &mut App, f: Box<Fetched>, ctx: &mut Ctx) {
-    let Fetched { key, loc, station, result } = *f;
+    let Fetched { generation, key, loc, station, result } = *f;
     a.fetching = false;
+    if generation != a.generation {
+        if a.refetch {
+            a.refetch = false;
+            start_fetch(a);
+        }
+        return;
+    }
     if let Some(l) = loc {
-        a.loc = Some((key, l));
+        a.loc = Some((key.clone(), l));
     }
     if station.is_some() {
         a.station = station;
     }
+    let fetch_error = result.as_ref().err().cloned();
     match result {
         Ok(w) => {
             a.weather = Some(w);
+            a.weather_for = key;
             a.error = None;
+            a.fetched_at = Some(SystemTime::now());
         }
         Err(e) => a.error = Some(e),
     }
+    crate::commands::place_fetched(a, generation, fetch_error);
     // retry sooner after an error
     let ms = if a.error.is_some() { 2 * 60_000 } else { a.cfg.refresh_minutes.max(5) * 60_000 };
     ctx.every(TIMER_REFRESH, ms);

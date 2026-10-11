@@ -7,6 +7,7 @@ mod weather;
 mod fetch;
 mod menu;
 mod tray;
+mod commands;
 
 use config::Config;
 use fetch::Fetched;
@@ -15,11 +16,14 @@ use std::ffi::c_void;
 use taskbar_dock::block::{self, Canvas, Content, Ctx, Float, Frame, MenuBuilder, PanelFrame, PanelKind, Side, Spec};
 use taskbar_dock::dock;
 use taskbar_dock::style::Look;
-use weather::{deg, describe, Location, Weather};
+use weather::{deg, describe, Location, Place, Weather};
+use std::time::{Instant, SystemTime};
+use taskbar_dock::block::{CommandReply, ReplyToken};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::WM_APP;
 
 pub(crate) const WM_DATA: u32 = WM_APP + 2;
+pub(crate) const WM_PLACES: u32 = WM_APP + 3;
 /// Content timer: the next fetch.
 pub(crate) const TIMER_REFRESH: usize = 1;
 
@@ -31,8 +35,31 @@ pub(crate) struct App {
     loc: Option<(String, Location)>,
     station: Option<(String, knmi::Station)>,
     weather: Option<Weather>,
+    /// `Config::location_key` the weather was fetched for (dockctl `now` shows it only for the
+    /// current place).
+    weather_for: String,
     error: Option<String>,
     fetching: bool,
+    generation: u64,
+    refetch: bool,
+    fetched_at: Option<SystemTime>,
+    place_reply: Option<PlaceReply>,
+    places: Option<Places>,
+}
+
+/// A place change waiting for its matching forecast fetch to finish.
+pub(crate) struct PlaceReply {
+    pub generation: u64,
+    /// `Config::location_key` of the place it saved: a later change of place fails it.
+    pub location: String,
+    pub token: ReplyToken,
+    pub saved: serde_json::Value,
+}
+
+/// The latest place search, retained so `place <n>` can use its numbered results.
+pub(crate) struct Places {
+    pub at: Instant,
+    pub list: Vec<Place>,
 }
 
 fn log_file() -> std::path::PathBuf {
@@ -91,6 +118,14 @@ impl App {
 }
 
 impl Content for App {
+    fn commands(&self) -> Vec<(&'static str, &'static str)> {
+        commands::commands()
+    }
+
+    fn command(&mut self, name: &str, args: &[String], token: ReplyToken, ctx: &mut Ctx) -> CommandReply {
+        commands::command(self, name, args, token, ctx)
+    }
+
     fn measure(&mut self, f: &Frame, compact: bool) -> i32 {
         render::measure_label(&self.content(compact), f.height, f.scale, f.look)
     }
@@ -117,6 +152,7 @@ impl Content for App {
     fn on_message(&mut self, msg: u32, _wp: usize, lp: isize, ctx: &mut Ctx) -> Option<isize> {
         match msg {
             WM_DATA => fetch::on_data(self, unsafe { Box::from_raw(lp as *mut Fetched) }, ctx),
+            WM_PLACES => commands::on_places(self, unsafe { Box::from_raw(lp as *mut commands::PlacesResult) }),
             _ => return None,
         }
         Some(0)
@@ -168,8 +204,14 @@ fn main() {
         loc: None,
         station: None,
         weather: None,
+        weather_for: String::new(),
         error: None,
         fetching: false,
+        generation: 0,
+        refetch: false,
+        fetched_at: None,
+        place_reply: None,
+        places: None,
     };
     block::run(spec, app);
 }

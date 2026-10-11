@@ -8,6 +8,7 @@ mod apps;
 mod audio;
 mod brands;
 mod config;
+mod commands;
 mod cover;
 mod iconurl;
 mod layout;
@@ -33,7 +34,7 @@ use std::ffi::c_void;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant, SystemTime};
 use taskbar_dock::anim::{self, Appear};
-use taskbar_dock::block::{self, Box4, Canvas, Content, Ctx, Float, FloatAt, Frame, Hit, MenuBuilder, PanelFrame, PanelKind, PanelMouse, Spec, Tint};
+use taskbar_dock::block::{self, Box4, Canvas, CommandReply, Content, Ctx, Float, FloatAt, Frame, Hit, MenuBuilder, PanelFrame, PanelKind, PanelMouse, ReplyToken, Spec, Tint};
 use taskbar_dock::menu_panel::Row;
 use taskbar_dock::style::Look;
 use taskbar_dock::draw;
@@ -66,11 +67,11 @@ pub(crate) struct App {
     cfg: Config,
     /// Shared style + Windows settings, kept current.
     look: Look,
-    media: Option<Sender<Msg>>,
-    sessions: Vec<Session>,
+    pub(crate) media: Option<Sender<Msg>>,
+    pub(crate) sessions: Vec<Session>,
     selector: select::Selector,
     /// The session shown, None = nothing to show (the strip goes).
-    shown: Option<String>,
+    pub(crate) shown: Option<String>,
     /// The strip as last drawn (hit tests, the cover box) and its tint then.
     strip: Option<(Strip, Geo)>,
     drawn_tint: Option<Tint>,
@@ -270,6 +271,14 @@ impl App {
 }
 
 impl Content for App {
+    fn commands(&self) -> Vec<(&'static str, &'static str)> {
+        commands::commands()
+    }
+
+    fn command(&mut self, name: &str, args: &[String], token: ReplyToken, _ctx: &mut Ctx) -> CommandReply {
+        commands::run(self, name, args, token)
+    }
+
     fn measure(&mut self, f: &Frame, compact: bool) -> i32 {
         let g = self.geo(f.height, f.scale, f.look);
         let (text_w, max_w) = self.text_column(f.scale, f.look);

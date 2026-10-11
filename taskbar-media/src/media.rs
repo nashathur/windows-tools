@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
+use taskbar_dock::block::{CommandError, ReplyToken};
+use serde_json::{json, Value};
 use windows::core::Interface;
 use windows::Foundation::{EventRegistrationToken, TypedEventHandler};
 use windows::Graphics::Imaging::*;
@@ -71,6 +73,54 @@ pub enum Msg {
     /// This session's title, artist or picture changed: look at its picture again.
     Props(String),
     Cmd(Cmd),
+    /// A dockctl command whose reply is completed by the media worker.
+    Do(DoCmd),
+}
+
+/// A media action requested by dockctl.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Action {
+    /// Start playback.
+    Play,
+    /// Pause playback.
+    Pause,
+    /// Toggle the current playback state.
+    Toggle,
+    /// Skip to the next track.
+    Next,
+    /// Skip to the previous track.
+    Prev,
+    /// Move the playhead by this many seconds.
+    Skip(f64),
+    /// Move the playhead to this many seconds from the start.
+    Seek(f64),
+}
+
+impl Action {
+    /// The dockctl command name used in its reply.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Play => "play",
+            Self::Pause => "pause",
+            Self::Toggle => "toggle",
+            Self::Next => "next",
+            Self::Prev => "prev",
+            Self::Skip(_) => "skip",
+            Self::Seek(_) => "seek",
+        }
+    }
+}
+
+/// A dockctl action and its reply route, carried to the MTA worker.
+pub(crate) struct DoCmd {
+    /// The app's stable media session id.
+    pub id: String,
+    /// The requested playback action.
+    pub action: Action,
+    /// Whether the app's reported playback position is trusted.
+    pub realtime: bool,
+    /// The reply route that the worker completes.
+    pub token: ReplyToken,
 }
 
 pub fn unix_now() -> f64 {
@@ -119,12 +169,15 @@ fn run(rx: Receiver<Msg>, events: Sender<Msg>, post: impl Fn(Snapshot)) {
     // sessions whose properties changed since the last look
     let mut props: std::collections::HashSet<String> = std::collections::HashSet::new();
     loop {
+        // dockctl answers, sent once this pass's snapshot is posted
+        let mut answers = Vec::new();
         match rx.recv_timeout(Duration::from_secs(1)) {
             Ok(Msg::Cmd(c)) => {
                 if let Err(e) = command(&mgr, &c) {
                     crate::log(&format!("{c:?} failed: {e}"));
                 }
             }
+            Ok(Msg::Do(c)) => answers.push(do_command(&mgr, c)),
             Ok(Msg::Props(id)) => {
                 props.insert(id);
             }
@@ -139,6 +192,7 @@ fn run(rx: Receiver<Msg>, events: Sender<Msg>, post: impl Fn(Snapshot)) {
                         crate::log(&format!("{c:?} failed: {e}"));
                     }
                 }
+                Msg::Do(c) => answers.push(do_command(&mgr, c)),
                 Msg::Props(id) => {
                     props.insert(id);
                 }
@@ -149,6 +203,10 @@ fn run(rx: Receiver<Msg>, events: Sender<Msg>, post: impl Fn(Snapshot)) {
         if last.as_ref() != Some(&snap) {
             post(snap.clone());
             last = Some(snap);
+        }
+        // both go to Block's main window, in order: the UI has the snapshot before the answer
+        for (token, result) in answers {
+            token.finish(result);
         }
     }
 }
@@ -378,29 +436,91 @@ fn decode_as(stream: &IRandomAccessStream, trim: bool) -> windows::core::Result<
 }
 
 fn command(mgr: &Mgr, c: &Cmd) -> windows::core::Result<()> {
-    let id = match c {
-        Cmd::PlayPause(id) | Cmd::Next(id) | Cmd::Prev(id) | Cmd::Skip(id, _, _) | Cmd::Seek(id, _) => id,
+    let (id, action, realtime) = match c {
+        Cmd::PlayPause(id) => (id, Action::Toggle, false),
+        Cmd::Next(id) => (id, Action::Next, false),
+        Cmd::Prev(id) => (id, Action::Prev, false),
+        Cmd::Skip(id, by, realtime) => (id, Action::Skip(*by), *realtime),
+        Cmd::Seek(id, to) => (id, Action::Seek(*to), false),
     };
     let Some(s) = find(mgr, id) else {
         crate::log(&format!("{c:?}: no such session"));
         return Ok(());
     };
     let t0 = Instant::now();
-    let ok = match c {
-        Cmd::PlayPause(_) => play_pause(&s)?,
-        Cmd::Next(_) => s.TrySkipNextAsync()?.get()?,
-        Cmd::Prev(_) => s.TrySkipPreviousAsync()?.get()?,
-        Cmd::Skip(_, by, realtime) => skip(&s, *by, *realtime)?,
-        Cmd::Seek(_, to) => {
-            let r = reported(&s)?;
-            let t = timeline::target(*to, r.end - r.start, 0.0);
-            s.TryChangePlaybackPositionAsync(ticks(r.start + t))?.get()?
-        }
-    };
+    let ok = perform(&s, action, realtime)?;
     if !ok {
         crate::log(&format!("{c:?}: refused by the app ({} ms)", t0.elapsed().as_millis()));
     }
     Ok(())
+}
+
+/// Runs a dockctl command and returns its answer; the loop sends it after the snapshot that shows
+/// the change, so a `now` right after a `pause` already sees it paused.
+fn do_command(mgr: &Mgr, c: DoCmd) -> (ReplyToken, Result<Value, CommandError>) {
+    let result = act(mgr, &c).map_err(|message| CommandError { usage: false, message });
+    (c.token, result)
+}
+
+/// Runs one dockctl media command on the MTA worker and returns a reply about the app.
+fn act(mgr: &Mgr, c: &DoCmd) -> Result<Value, String> {
+    let name = crate::apps::display_name(&c.id);
+    let Some(s) = find(mgr, &c.id) else {
+        return Err(format!("{name} has no media session any more"));
+    };
+    let asked = match c.action {
+        Action::Play => Some(true),
+        Action::Pause => Some(false),
+        _ => None,
+    };
+    if let Some(playing) = asked {
+        let current = is_playing(&s).map_err(|e| format!("{name}: {e}"))?;
+        if current == playing {
+            return Ok(json!({ "ok": true, "app": name, "id": c.id, "action": c.action.name(), "changed": false, "playing": current }));
+        }
+    }
+    let toggle_was_playing = if matches!(c.action, Action::Toggle) {
+        Some(is_playing(&s).map_err(|e| format!("{name}: {e}"))?)
+    } else {
+        None
+    };
+    if matches!(c.action, Action::Seek(_)) {
+        let r = reported(&s).map_err(|e| format!("{name}: {e}"))?;
+        if r.end - r.start <= 0.0 {
+            return Err(format!("{name} doesn't report the track length"));
+        }
+    }
+    let changed = perform(&s, c.action, c.realtime).map_err(|e| format!("{name}: {e}"))?;
+    if !changed {
+        return Err(match c.action {
+            Action::Play => format!("{name} refused to play"),
+            Action::Pause => format!("{name} refused to pause"),
+            Action::Toggle => format!("{name} refused to {}", if toggle_was_playing == Some(true) { "pause" } else { "play" }),
+            Action::Next => format!("{name} refused next track"),
+            Action::Prev => format!("{name} refused previous track"),
+            Action::Skip(_) => format!("{name} refused the skip"),
+            Action::Seek(_) => format!("{name} refused the seek"),
+        });
+    }
+    let playing = is_playing(&s).map_err(|e| format!("{name}: {e}"))?;
+    Ok(json!({ "ok": true, "app": name, "id": c.id, "action": c.action.name(), "changed": true, "playing": playing }))
+}
+
+/// Performs one playback operation on a session on the MTA worker.
+fn perform(s: &Sess, action: Action, realtime: bool) -> windows::core::Result<bool> {
+    match action {
+        Action::Play => play_to(s, true),
+        Action::Pause => play_to(s, false),
+        Action::Toggle => play_pause(s),
+        Action::Next => s.TrySkipNextAsync()?.get(),
+        Action::Prev => s.TrySkipPreviousAsync()?.get(),
+        Action::Skip(by) => skip(s, by, realtime),
+        Action::Seek(to) => {
+            let r = reported(s)?;
+            let target = timeline::target(to, r.end - r.start, 0.0);
+            s.TryChangePlaybackPositionAsync(ticks(r.start + target))?.get()
+        }
+    }
 }
 
 fn is_playing(s: &Sess) -> windows::core::Result<bool> {
@@ -429,9 +549,20 @@ fn wait_for(s: &Sess, playing: bool, limit: Duration) -> windows::core::Result<b
 /// again. Only for play, and only when it didn't happen; pausing never moves any window.
 fn play_pause(s: &Sess) -> windows::core::Result<bool> {
     let was = is_playing(s)?;
-    if was {
+    play_to(s, !was)
+}
+
+/// Asks for a specific playback state and preserves the Firefox activation retry for play.
+fn play_to(s: &Sess, playing: bool) -> windows::core::Result<bool> {
+    if !playing {
+        if !is_playing(s)? {
+            return Ok(true);
+        }
         s.TryPauseAsync()?.get()?;
         return wait_for(s, false, Duration::from_secs(2));
+    }
+    if is_playing(s)? {
+        return Ok(true);
     }
     s.TryPlayAsync()?.get()?;
     if wait_for(s, true, Duration::from_secs(2))? {
@@ -439,7 +570,8 @@ fn play_pause(s: &Sess) -> windows::core::Result<bool> {
     }
     let id = s.SourceAppUserModelId()?.to_string();
     crate::apps::activate(&id);
-    std::thread::sleep(Duration::from_millis(300)); // let the page notice it's visible
+    // let the page notice it's visible
+    std::thread::sleep(Duration::from_millis(300));
     s.TryPlayAsync()?.get()?;
     let worked = wait_for(s, true, Duration::from_secs(2))?;
     crate::log(&format!("play didn't take, so {} was brought up and asked again: {}", crate::apps::display_name(&id),

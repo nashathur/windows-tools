@@ -3,6 +3,7 @@
 mod auth;
 mod avatars;
 mod config;
+mod commands;
 mod menu;
 mod open;
 mod render;
@@ -14,7 +15,7 @@ use render::{Button, Ring, StripContent};
 use std::ffi::c_void;
 use std::sync::mpsc::Sender;
 use std::time::Instant;
-use taskbar_dock::block::{self, Box4, Canvas, Content, Ctx, Float, Frame, Hit, MenuBuilder, PanelFrame, PanelKind, PanelMouse, Spec, Tint};
+use taskbar_dock::block::{self, Box4, Canvas, CommandReply, Content, Ctx, Float, Frame, Hit, MenuBuilder, PanelFrame, PanelKind, PanelMouse, ReplyToken, Spec, Tint};
 use taskbar_dock::style::Look;
 use voice::{Status, Voice};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
@@ -97,6 +98,11 @@ impl App {
         }
     }
 
+    /// Sends a command whose caller needs to know whether the worker is still running.
+    fn try_send(&self, cmd: rpc::Cmd) -> bool {
+        self.rpc.as_ref().is_some_and(|tx| tx.send(cmd).is_ok())
+    }
+
     /// Mute, Deafen or Leave, from the strip or the panel: Discord does it and reports back.
     fn press(&self, b: Button) {
         match b {
@@ -150,6 +156,14 @@ impl App {
 }
 
 impl Content for App {
+    fn commands(&self) -> Vec<(&'static str, &'static str)> {
+        commands::commands()
+    }
+
+    fn command(&mut self, name: &str, args: &[String], token: ReplyToken, _ctx: &mut Ctx) -> CommandReply {
+        commands::command(self, name, args, token)
+    }
+
     fn measure(&mut self, f: &Frame, compact: bool) -> i32 {
         let (people, avatars, logo, ring) = self.content(Ring::Dim, false);
         let c = StripContent { voice: &self.voice, people, avatars, max_avatars: self.cfg.max_avatars, logo, ring, text_w: self.media_w, fixed: self.cfg.fixed_width };

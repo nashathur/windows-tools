@@ -9,6 +9,8 @@
 use crate::auth::{self, Token};
 use crate::voice::{Status, Voice};
 use serde_json::{json, Value};
+use taskbar_dock::block::{CommandError, ReplyToken};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::windows::io::AsRawHandle;
@@ -22,10 +24,72 @@ pub enum Cmd {
     Mute(bool),
     Deaf(bool),
     Leave,
+    /// A dockctl command that waits for Discord's RPC response.
+    Request(Op, ReplyToken),
     /// Show Discord's Authorize popup again (menu: Sign in to Discord).
     SignIn,
     /// The settings changed (client id, secret, redirect), or the menu's Reconnect.
     Reconnect(Key),
+}
+
+/// A voice action requested by dockctl.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Op {
+    Mute(bool),
+    Deaf(bool),
+    Leave,
+}
+
+/// Requests awaiting their matching Discord nonce reply and deadline.
+type Pending = HashMap<String, (Op, ReplyToken, Instant)>;
+
+/// True when Discord's current worker state already matches the requested action.
+fn already_in_state(voice: &Voice, op: Op) -> bool {
+    match op {
+        Op::Mute(on) => voice.self_mute == on,
+        Op::Deaf(on) => voice.self_deaf == on,
+        Op::Leave => voice.channel.is_none(),
+    }
+}
+
+/// Completes a request with the resulting voice state.
+fn finish_ok(token: ReplyToken, op: Op, changed: bool, voice: &Voice) {
+    let action = match op {
+        Op::Mute(_) => "mute",
+        Op::Deaf(_) => "deafen",
+        Op::Leave => "leave",
+    };
+    token.finish(Ok(json!({
+        "ok": true,
+        "action": action,
+        "changed": changed,
+        "self_mute": voice.self_mute,
+        "self_deaf": voice.self_deaf,
+    })));
+}
+
+/// Completes a request with a user-facing RPC error.
+fn finish_error(token: ReplyToken, message: String) {
+    token.finish(Err(CommandError { usage: false, message }));
+}
+
+/// Removes and fails requests whose deadlines have passed.
+fn expire_pending(pending: &mut Pending, now: Instant) {
+    let expired: Vec<String> = pending.iter().filter_map(|(nonce, (_, _, deadline))| {
+        (*deadline <= now).then(|| nonce.clone())
+    }).collect();
+    for nonce in expired {
+        if let Some((_, token, _)) = pending.remove(&nonce) {
+            finish_error(token, "Discord didn't answer within 10 s".into());
+        }
+    }
+}
+
+/// Removes and fails every request when a Discord session ends.
+fn drain_pending(pending: &mut Pending) {
+    for (_, (_, token, _)) in pending.drain() {
+        finish_error(token, "Discord disconnected".into());
+    }
 }
 
 /// client_id, client_secret, redirect_uri.
@@ -105,7 +169,7 @@ fn run(mut key: Key, rx: &Receiver<Cmd>, post: &Post) {
                     logged = "connected".into();
                 }
                 let mut s = Session { pipe, key: key.clone(), nonce: 0, voice: Voice { status: Status::Connecting, ..Default::default() },
-                    channel_subs: None, tried_refresh: false, token: None };
+                    channel_subs: None, tried_refresh: false, token: None, pending: HashMap::new() };
                 send(&s.voice);
                 let end = s.run(rx, &mut prompt, &mut send);
                 match end {
@@ -120,8 +184,9 @@ fn run(mut key: Key, rx: &Receiver<Cmd>, post: &Post) {
                         }
                         if !why.is_empty() && s.voice.status != Status::Ready {
                             // e.g. an invalid client id: show it rather than "not running"
-                            send(&Voice { status: Status::Error(why), ..Default::default() });
-                            if let Some(k) = wait(rx, Duration::from_secs(15), &mut prompt) {
+                            let status = Status::Error(why);
+                            send(&Voice { status: status.clone(), ..Default::default() });
+                            if let Some(k) = wait(rx, Duration::from_secs(15), &mut prompt, &status) {
                                 key = k;
                             }
                             continue;
@@ -133,22 +198,23 @@ fn run(mut key: Key, rx: &Receiver<Cmd>, post: &Post) {
                 logged = "no discord".into();
             }
         }
-        send(&Voice { status, ..Default::default() });
+        send(&Voice { status: status.clone(), ..Default::default() });
         // not configured: nothing to do until the settings change
         let pause = if configured { Duration::from_secs(3) } else { Duration::from_secs(3600) };
-        if let Some(k) = wait(rx, pause, &mut prompt) {
+        if let Some(k) = wait(rx, pause, &mut prompt, &status) {
             key = k;
         }
     }
 }
 
 /// Waits up to `d` for the next try, handling commands meanwhile; Some(new key) to reconnect now.
-fn wait(rx: &Receiver<Cmd>, d: Duration, prompt: &mut bool) -> Option<Key> {
+fn wait(rx: &Receiver<Cmd>, d: Duration, prompt: &mut bool, status: &Status) -> Option<Key> {
     let until = Instant::now() + d;
     loop {
         match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
             Ok(Cmd::Reconnect(k)) => return Some(k),
             Ok(Cmd::SignIn) => *prompt = true,
+            Ok(Cmd::Request(_, token)) => finish_error(token, format!("not connected to Discord: {}", status.text())),
             Ok(_) => {}
             Err(RecvTimeoutError::Timeout) => return None,
             Err(RecvTimeoutError::Disconnected) => std::thread::sleep(d),
@@ -171,10 +237,17 @@ struct Session {
     channel_subs: Option<String>,
     tried_refresh: bool,
     token: Option<Token>,
+    pending: Pending,
 }
 
 impl Session {
     fn run(&mut self, rx: &Receiver<Cmd>, prompt: &mut bool, send: &mut impl FnMut(&Voice)) -> End {
+        let end = self.serve(rx, prompt, send);
+        drain_pending(&mut self.pending);
+        end
+    }
+
+    fn serve(&mut self, rx: &Receiver<Cmd>, prompt: &mut bool, send: &mut impl FnMut(&Voice)) -> End {
         if let Err(e) = self.pipe.write_all(&encode(0, &json!({ "v": 1, "client_id": self.key.0 }))) {
             return End::Closed(format!("handshake failed: {e}"));
         }
@@ -189,7 +262,7 @@ impl Session {
             match available(&self.pipe) {
                 Err(_) => return End::Closed(String::new()),
                 Ok(n) if n >= 8 => match read_frame(&mut self.pipe) {
-                    Ok((1, msg)) => self.message(&msg, prompt),
+                    Ok((1, msg)) => self.message(&msg, prompt, send),
                     Ok((2, msg)) => {
                         let why = msg.get("message").and_then(Value::as_str).unwrap_or("closed by Discord");
                         return End::Closed(why.to_string());
@@ -200,6 +273,7 @@ impl Session {
                 },
                 Ok(_) => std::thread::sleep(Duration::from_millis(15)),
             }
+            expire_pending(&mut self.pending, Instant::now());
             send(&self.voice);
         }
     }
@@ -208,21 +282,24 @@ impl Session {
         let _ = self.pipe.write_all(&encode(op, v));
     }
 
-    fn cmd(&mut self, cmd: &str, args: Value, evt: Option<&str>) {
+    fn cmd(&mut self, cmd: &str, args: Value, evt: Option<&str>) -> io::Result<String> {
         self.nonce += 1;
         let mut msg = json!({ "cmd": cmd, "args": args, "nonce": self.nonce.to_string() });
         if let Some(e) = evt {
             msg["evt"] = json!(e);
         }
-        self.write(1, &msg);
+        let nonce = self.nonce.to_string();
+        self.pipe.write_all(&encode(1, &msg))?;
+        Ok(nonce)
     }
 
     fn command(&mut self, cmd: Cmd, prompt: &mut bool) {
         let ready = self.voice.status == Status::Ready;
         match cmd {
-            Cmd::Mute(on) if ready => self.cmd("SET_VOICE_SETTINGS", json!({ "mute": on }), None),
-            Cmd::Deaf(on) if ready => self.cmd("SET_VOICE_SETTINGS", json!({ "deaf": on }), None),
-            Cmd::Leave if ready => self.cmd("SELECT_VOICE_CHANNEL", json!({ "channel_id": null }), None),
+            Cmd::Mute(on) if ready => { let _ = self.cmd("SET_VOICE_SETTINGS", json!({ "mute": on }), None); }
+            Cmd::Deaf(on) if ready => { let _ = self.cmd("SET_VOICE_SETTINGS", json!({ "deaf": on }), None); }
+            Cmd::Leave if ready => { let _ = self.cmd("SELECT_VOICE_CHANNEL", json!({ "channel_id": null }), None); }
+            Cmd::Request(op, token) => self.request(op, token),
             Cmd::SignIn => {
                 auth::forget();
                 self.token = None;
@@ -232,6 +309,30 @@ impl Session {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Sends an acknowledged command or completes it immediately when no change is needed.
+    fn request(&mut self, op: Op, token: ReplyToken) {
+        if self.voice.status != Status::Ready {
+            finish_error(token, format!("not connected to Discord: {}", self.voice.status.text()));
+            return;
+        }
+        // only while nothing is in flight: a pending `mute off` would undo an instant `mute on`
+        if self.pending.is_empty() && already_in_state(&self.voice, op) {
+            finish_ok(token, op, false, &self.voice);
+            return;
+        }
+        let (cmd, args) = match op {
+            Op::Mute(on) => ("SET_VOICE_SETTINGS", json!({ "mute": on })),
+            Op::Deaf(on) => ("SET_VOICE_SETTINGS", json!({ "deaf": on })),
+            Op::Leave => ("SELECT_VOICE_CHANNEL", json!({ "channel_id": null })),
+        };
+        match self.cmd(cmd, args, None) {
+            Ok(nonce) => {
+                self.pending.insert(nonce, (op, token, Instant::now() + Duration::from_secs(10)));
+            }
+            Err(e) => finish_error(token, format!("writing to Discord failed: {e}")),
         }
     }
 
@@ -255,23 +356,37 @@ impl Session {
         }
         match token {
             Some(t) => {
-                self.cmd("AUTHENTICATE", json!({ "access_token": t.access_token }), None);
+                let _ = self.cmd("AUTHENTICATE", json!({ "access_token": t.access_token }), None);
                 self.token = Some(t);
             }
             None if *prompt => {
                 *prompt = false;
                 self.voice.status = Status::Authorizing;
-                self.cmd("AUTHORIZE", json!({ "client_id": id, "scopes": auth::SCOPES }), None);
+                let _ = self.cmd("AUTHORIZE", json!({ "client_id": id, "scopes": auth::SCOPES }), None);
             }
             None => self.voice.status = Status::NeedsSignIn("right-click → Sign in to Discord".into()),
         }
     }
 
-    fn message(&mut self, msg: &Value, prompt: &mut bool) {
+    fn message(&mut self, msg: &Value, prompt: &mut bool, send: &mut impl FnMut(&Voice)) {
         let cmd = msg.get("cmd").and_then(Value::as_str).unwrap_or("");
         let evt = msg.get("evt").and_then(Value::as_str).unwrap_or("");
         let data = msg.get("data").cloned().unwrap_or(Value::Null);
         let error = (evt == "ERROR").then(|| data.get("message").and_then(Value::as_str).unwrap_or("error").to_string());
+        if let Some(nonce) = msg.get("nonce").and_then(Value::as_str) {
+            if let Some((op, token, _)) = self.pending.remove(nonce) {
+                if evt == "ERROR" {
+                    finish_error(token, data.get("message").and_then(Value::as_str).unwrap_or("Discord refused the command").to_string());
+                } else {
+                    if cmd == "SET_VOICE_SETTINGS" {
+                        self.voice.settings(&data);
+                    }
+                    send(&self.voice);
+                    finish_ok(token, op, true, &self.voice);
+                }
+                return;
+            }
+        }
         match (cmd, evt) {
             ("DISPATCH", "READY") => self.sign_in(prompt),
             ("AUTHORIZE", _) => match error {
@@ -286,7 +401,7 @@ impl Session {
                         Ok(t) => {
                             auth::save(&t);
                             crate::log("signed in to Discord");
-                            self.cmd("AUTHENTICATE", json!({ "access_token": t.access_token }), None);
+                            let _ = self.cmd("AUTHENTICATE", json!({ "access_token": t.access_token }), None);
                             self.token = Some(t);
                         }
                         Err(e) => {
@@ -318,10 +433,10 @@ impl Session {
                 None => {
                     self.voice.me = data.pointer("/user/id").and_then(Value::as_str).map(str::to_string);
                     self.voice.status = Status::Ready;
-                    self.cmd("SUBSCRIBE", json!({}), Some("VOICE_CHANNEL_SELECT"));
-                    self.cmd("SUBSCRIBE", json!({}), Some("VOICE_SETTINGS_UPDATE"));
-                    self.cmd("GET_VOICE_SETTINGS", json!({}), None);
-                    self.cmd("GET_SELECTED_VOICE_CHANNEL", json!({}), None);
+                    let _ = self.cmd("SUBSCRIBE", json!({}), Some("VOICE_CHANNEL_SELECT"));
+                    let _ = self.cmd("SUBSCRIBE", json!({}), Some("VOICE_SETTINGS_UPDATE"));
+                    let _ = self.cmd("GET_VOICE_SETTINGS", json!({}), None);
+                    let _ = self.cmd("GET_SELECTED_VOICE_CHANNEL", json!({}), None);
                 }
             },
             _ if error.is_some() => crate::log(&format!("{cmd} failed: {}", error.unwrap_or_default())),
@@ -329,7 +444,7 @@ impl Session {
                 self.voice.set_channel(&data);
                 self.follow_channel();
                 if let Some(g) = self.voice.channel.as_ref().filter(|c| c.guild.is_none()).and_then(|c| c.guild_id.clone()) {
-                    self.cmd("GET_GUILD", json!({ "guild_id": g, "timeout": 5 }), None);
+                    let _ = self.cmd("GET_GUILD", json!({ "guild_id": g, "timeout": 5 }), None);
                 }
             }
             ("GET_GUILD", _) => {
@@ -347,7 +462,7 @@ impl Session {
                     self.voice.set_channel(&Value::Null);
                     self.follow_channel();
                 } else {
-                    self.cmd("GET_SELECTED_VOICE_CHANNEL", json!({}), None);
+                    let _ = self.cmd("GET_SELECTED_VOICE_CHANNEL", json!({}), None);
                 }
             }
             ("DISPATCH", "VOICE_STATE_CREATE") | ("DISPATCH", "VOICE_STATE_UPDATE") => self.voice.upsert(&data),
@@ -366,12 +481,12 @@ impl Session {
         }
         if let Some(old) = self.channel_subs.take() {
             for e in EVENTS_IN_CHANNEL {
-                self.cmd("UNSUBSCRIBE", json!({ "channel_id": old }), Some(e));
+                let _ = self.cmd("UNSUBSCRIBE", json!({ "channel_id": old }), Some(e));
             }
         }
         if let Some(id) = now {
             for e in EVENTS_IN_CHANNEL {
-                self.cmd("SUBSCRIBE", json!({ "channel_id": id }), Some(e));
+                let _ = self.cmd("SUBSCRIBE", json!({ "channel_id": id }), Some(e));
             }
             self.channel_subs = Some(id);
         }
@@ -406,6 +521,19 @@ fn fake(n: usize, rx: &Receiver<Cmd>, post: &Post) {
             Ok(Cmd::Leave) => {
                 v.channel = None;
                 left_at = Some(Instant::now());
+            }
+            Ok(Cmd::Request(op, token)) => {
+                let changed = !already_in_state(&v, op);
+                match op {
+                    Op::Mute(on) => v.self_mute = on,
+                    Op::Deaf(on) => v.self_deaf = on,
+                    Op::Leave => {
+                        v.channel = None;
+                        left_at = Some(Instant::now());
+                    }
+                }
+                post(v.clone());
+                finish_ok(token, op, changed, &v);
             }
             Ok(_) => {}
             Err(_) => {
@@ -455,5 +583,29 @@ mod tests {
     fn truncated_frame_is_an_error() {
         let bytes = encode(1, &json!({ "a": 1 }));
         assert!(read_frame(&mut &bytes[..bytes.len() - 1]).is_err());
+    }
+
+    #[test]
+    fn already_in_requested_state_is_a_pure_decision() {
+        let mut voice = Voice { status: Status::Ready, self_mute: true, self_deaf: false, ..Default::default() };
+        assert!(already_in_state(&voice, Op::Mute(true)));
+        assert!(!already_in_state(&voice, Op::Mute(false)));
+        assert!(!already_in_state(&voice, Op::Deaf(true)));
+        assert!(already_in_state(&voice, Op::Deaf(false)));
+        assert!(already_in_state(&voice, Op::Leave));
+        voice.channel = Some(Default::default());
+        assert!(!already_in_state(&voice, Op::Leave));
+    }
+
+    #[test]
+    fn pending_deadline_sweep_and_disconnect_drain_remove_only_their_entries() {
+        let now = Instant::now();
+        let mut pending = Pending::new();
+        pending.insert("expired".into(), (Op::Mute(true), ReplyToken::detached(), now - Duration::from_secs(1)));
+        pending.insert("live".into(), (Op::Deaf(true), ReplyToken::detached(), now + Duration::from_secs(1)));
+        expire_pending(&mut pending, now);
+        assert_eq!(pending.keys().map(String::as_str).collect::<Vec<_>>(), ["live"]);
+        drain_pending(&mut pending);
+        assert!(pending.is_empty());
     }
 }

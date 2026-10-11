@@ -8,9 +8,11 @@
 #![windows_subsystem = "windows"]
 
 mod bar;
+mod commands;
 mod data;
 mod picker;
 mod popup;
+mod ttqueue;
 mod worker;
 
 use bar::*;
@@ -23,6 +25,7 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::{fs, thread, time::Duration};
 
+use taskbar_dock::block::{CommandReply, ReplyToken};
 use taskbar_dock::block::{self, Canvas, Content, Ctx, Float, FloatAt, Frame, MenuBuilder, PanelFrame, PanelKey, PanelKind, PanelMouse, Spec};
 use taskbar_dock::menu_panel::{glyph, Row};
 use taskbar_dock::style::Look;
@@ -42,7 +45,6 @@ const SHOW_IN_POPUP: usize = 8;
 const WM_DATA: u32 = WM_APP + 2;
 /// Content timer: once a second, the minute countdown and anything else that changed.
 const TIMER_TICK: usize = 1;
-
 // the right-click panel's own rows
 const ID_REFRESH: usize = 1;
 const ID_TIMETABLE: usize = 2;
@@ -176,7 +178,20 @@ impl Content for App {
             if lp != 0 { let posted = unsafe { *Box::from_raw(lp as *mut picker::Posted) }; self.picker.accept_result(posted.generation, posted.data, ctx); }
             return Some(0);
         }
+        if msg == commands::WM_COMMAND_DONE {
+            if lp != 0 {
+                let posted = unsafe { *Box::from_raw(lp as *mut commands::Posted) };
+                commands::finish(posted);
+            }
+            return Some(0);
+        }
         (msg == WM_DATA).then(|| { self.refresh(ctx); 0 })
+    }
+
+    fn commands(&self) -> Vec<(&'static str, &'static str)> { commands::commands() }
+
+    fn command(&mut self, name: &str, args: &[String], token: ReplyToken, _ctx: &mut Ctx) -> CommandReply {
+        commands::run(name, args, token)
     }
 
     fn panel_size(&mut self, kind: PanelKind, scale: f32) -> Option<(i32, i32)> {
