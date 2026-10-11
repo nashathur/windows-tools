@@ -131,9 +131,10 @@ Mark anything you did not verify. If something is ambiguous, state your assumpti
 
 '@
 
-$args_ = @()
-if ($Search) { $args_ += '--search' }   # a top-level flag: it goes before `exec`
-$args_ += 'exec'
+$args_ = @('exec')
+# Not the top-level --search flag: the CLI drops it on the way to `exec` (0.162), leaving search cached or off.
+# Bare `live` (no TOML quotes, which PS 5.1 would strip) falls back to the literal string.
+if ($Search) { $args_ += @('-c', 'web_search=live') }
 if ($Resume) {
     $args_ += @('resume', $Resume, '-c', "sandbox_mode=$Sandbox")
 } elseif ($Review) {
