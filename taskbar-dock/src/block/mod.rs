@@ -18,6 +18,7 @@
 //!   Windows, Edit settings…, Quit)
 //! - the tray icon, shown whenever the strip isn't (switched off, or nothing to show), so the
 //!   panels stay reachable ([`Content::tray_icon`])
+//! - the widget's own dialog (bus's stop picker) gets Tab / Enter / Esc ([`Spec::dialog`])
 //! - following Windows' settings and the settings file live
 //!
 //! Ownership ("requests, applied afterwards"): Block keeps its state, the Content included, in
@@ -108,6 +109,10 @@ pub struct Spec {
     pub stretch: bool,
     /// The widget's log file, for dockctl's `log` (None: dockctl says there is none).
     pub log_file: Option<std::path::PathBuf>,
+    /// The widget's own dialog-like window open right now (0: none), e.g. bus's stop picker:
+    /// Block's message loop gives it Tab / Enter / Esc (`IsDialogMessageW`). The widget opens it
+    /// (`ctx.after`) and closes it itself; Quit ends it with the program.
+    pub dialog: Option<fn() -> isize>,
 }
 
 impl Spec {
@@ -126,6 +131,7 @@ impl Spec {
             compact_when_crowded: true,
             stretch: false,
             log_file: None,
+            dialog: None,
         }
     }
 }
@@ -216,9 +222,11 @@ pub struct Frame<'a> {
     pub pressed: bool,
     /// Floating rather than in the taskbar.
     pub floating: bool,
-    /// Crowded, for a stretchable strip ([`Spec::stretch`]): the width it was fitted to, px at
-    /// this frame's zoom. Lay out to fit it if you can (narrow a text column); Block cuts off
-    /// anything wider, fading the end. None: the natural width.
+    /// The width the strip is drawn at, px at this frame's zoom: crowded, for a stretchable strip
+    /// ([`Spec::stretch`]), or while a compact switch animates the width (the full content, at
+    /// every width between compact and full). Lay out to fit it if you can (narrow a text column,
+    /// keep what sits at the right end); Block cuts off anything wider, fading the end. None: the
+    /// natural width.
     pub fit_width: Option<i32>,
 }
 
@@ -306,6 +314,7 @@ pub(crate) enum Request {
     Redraw,
     RedrawPanel,
     ResizePanel,
+    RedrawTray,
     Every(usize, u32),
     Stop(usize),
     OpenPanel,
@@ -322,6 +331,7 @@ impl std::fmt::Debug for Request {
             Request::Redraw => write!(f, "Redraw"),
             Request::RedrawPanel => write!(f, "RedrawPanel"),
             Request::ResizePanel => write!(f, "ResizePanel"),
+            Request::RedrawTray => write!(f, "RedrawTray"),
             Request::Every(id, ms) => write!(f, "Every({id}, {ms})"),
             Request::Stop(id) => write!(f, "Stop({id})"),
             Request::OpenPanel => write!(f, "OpenPanel"),
@@ -357,6 +367,12 @@ impl Ctx {
     /// strip, or the tray icon), no fade, and draws it again. Nothing if none is open.
     pub fn resize_panel(&mut self) {
         self.reqs.push(Request::ResizePanel);
+    }
+
+    /// The tray logo changed (bus: another line, or its badge colour): Block asks
+    /// [`Content::tray_icon`] again. A look change redraws it anyway.
+    pub fn redraw_tray(&mut self) {
+        self.reqs.push(Request::RedrawTray);
     }
 
     /// Call [`Content::timer`] with `id` every `ms` (replaces a running one with the same id).

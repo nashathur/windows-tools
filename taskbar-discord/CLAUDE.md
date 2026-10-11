@@ -29,7 +29,11 @@ right-click panel's standard rows, the tray icon and following the settings file
 - menu.rs: the right-click panel's own rows (Mute, Deafen, Leave; Reconnect; Sign in only while
   signed out) and
   `settings_changed` (new credentials reconnect; media's `max_width` sets the text column).
-- render.rs: strip layout + drawing into Block's canvas (`strip`, `StripLayout::block_hit`/`cover`),
+- render.rs: strip layout + drawing into Block's canvas (`strip`, `StripLayout::block_hit`/`cover`;
+  the avatar stack sits at the left end of its column, by the logo; honours `Frame::fit_width`
+  in a call: `fit_column` narrows the column, then the gaps, and the full stack is cut off at the
+  column's right end and faded by how much of the column is left (`over`), so a compact switch keeps
+  the buttons right and fades evenly both ways),
   `tint`, `tray_logo`, panel layout + hit test, `paint_panel`.
 - config.rs: the `discord` section; `save` merges (Block owns `compact` and `show_on_taskbar`) and
   drops the old `show_when_idle` key.

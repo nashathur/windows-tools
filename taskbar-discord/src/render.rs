@@ -305,7 +305,11 @@ fn fill_capsule(buf: &mut [u32], width: i32, x: i32, y: i32, w: i32, h: i32, col
 /// In a call it is laid out like the media strip (same logo/ring, text-column and button sizes,
 /// so the two have the same width): `| logo+ring | stacked avatars (+N) | mute deafen leave |`,
 /// compact without the avatars. Otherwise a headset and two lines of text.
-pub fn strip(cv: Option<&mut block::Canvas>, c: &StripContent, compact: bool, height: i32, scale: f32, look: &Look) -> StripLayout {
+///
+/// `fit` ([`block::Frame::fit_width`], e.g. during a compact switch): in a call the avatar column
+/// narrows to it, then the gaps beside it, down to the compact layout; the buttons stay at the
+/// right end. Without a call it isn't used (Block cuts the text off).
+pub fn strip(cv: Option<&mut block::Canvas>, c: &StripContent, compact: bool, fit: Option<i32>, height: i32, scale: f32, look: &Look) -> StripLayout {
     let s = |v: f32| (v * scale).round() as i32;
     let v = c.voice;
     let f = Font::new(s(look.font_size), 400, &look.font, ANTIALIASED_QUALITY);
@@ -335,9 +339,12 @@ pub fn strip(cv: Option<&mut block::Canvas>, c: &StripContent, compact: bool, he
 
     let (text_x, text_w, buttons_x, natural);
     if in_call {
-        text_x = ring_x + ring_d + if compact { 0 } else { text_gap };
-        text_w = if compact { 0 } else { (c.text_w * scale).round() as i32 };
-        buttons_x = text_x + text_w + if compact { s(2.0) } else { text_gap };
+        let full = if compact { (0, 0, s(2.0)) } else { (text_gap, (c.text_w * scale).round() as i32, text_gap) };
+        let rest = ring_x + ring_d + STRIP_BUTTONS.len() as i32 * button_w + s(PAD_RIGHT);
+        let (gap1, column, gap2) = fit_column(full, s(2.0), fit.filter(|_| !compact).map(|w| w - rest));
+        text_x = ring_x + ring_d + gap1;
+        text_w = column;
+        buttons_x = text_x + text_w + gap2;
         natural = buttons_x + STRIP_BUTTONS.len() as i32 * button_w + s(PAD_RIGHT);
     } else {
         let pad = s(8.0);
@@ -411,8 +418,17 @@ pub fn strip(cv: Option<&mut block::Canvas>, c: &StripContent, compact: bool, he
         avatars::draw_ring_a(buf, width, ring_x as f32, (cover_top - around) as f32, ring_d as f32, s(RING_WIDTH) as f32, rgb24, alpha);
 
         // the people in the places, stacked, the first on top; everyone else (muted, deafened,
-        // quiet longest, or more than fit): "+N"
-        if !compact && !members.is_empty() {
+        // quiet longest, or more than fit): "+N"; at the column's left end, by the logo.
+        // A narrowed column (a compact switch) keeps the full one's stack, cut off at its right
+        // end and faded by how much of the column is left, so it fades in and out evenly.
+        if !compact && !members.is_empty() && text_w > 0 {
+            let full_w = ((c.text_w * scale).round() as i32).max(text_w);
+            let fade = text_w as f32 / full_w as f32;
+            let mut layer = (text_w < full_w).then(|| vec![0u32; buf.len()]);
+            let dst: &mut [u32] = match layer.as_mut() {
+                Some(l) => l,
+                None => &mut *buf,
+            };
             let ad = ring_d as f32;
             let pill_h = (ad * 0.8).round() as i32;
             let pill_font = Font::new(s(look.font_size) * 9 / 10, 600, &look.font, ANTIALIASED_QUALITY);
@@ -428,37 +444,41 @@ pub fn strip(cv: Option<&mut block::Canvas>, c: &StripContent, compact: bool, he
             // the avatars overlap as much as it takes for all of them and the pill to fit the
             // column; only when that would hide too much of each one does one drop out
             let reserve = |n: usize| if extra_of(n) > 0 { s(4.0) as f32 + pill_w(extra_of(n)) as f32 } else { 0.0 };
-            let step_for = |n: usize| if n > 1 { ((text_w as f32 - ad - reserve(n)) / (n - 1) as f32).min(ad * STACK_STEP).floor() } else { 0.0 };
+            let step_for = |n: usize| if n > 1 { ((full_w as f32 - ad - reserve(n)) / (n - 1) as f32).min(ad * STACK_STEP).floor() } else { 0.0 };
             while shown > 1 && step_for(shown) < ad * MIN_STEP {
                 shown -= 1;
             }
             let step = step_for(shown);
             let stack = |n: usize| if n == 0 { -s(4.0) as f32 } else { ad + step * (n - 1) as f32 };
+            let extra = extra_of(shown);
+            let x0 = text_x; // anchored left, beside the server's logo
             let y = (height as f32 - ad) / 2.0;
             let gap = (1.5 * scale).max(1.0);
             for i in (0..shown).rev() {
                 let m = &c.people[i];
-                let x = text_x as f32 + step * i as f32;
+                let x = x0 as f32 + step * i as f32;
                 if i + 1 < shown {
-                    avatars::cut_circle(buf, width, x - gap, y - gap, ad + 2.0 * gap);
+                    avatars::cut_circle(dst, width, x - gap, y - gap, ad + 2.0 * gap);
                 }
                 let (ring, d) = (2.0 * scale, ad);
                 let inner = d - 2.0 * (ring + 1.0 * scale);
                 let img = c.avatars.get(i).cloned().flatten();
-                avatars::draw_circle(buf, width, x + ring + scale, y + ring + scale, inner, img.as_deref(), brand24("discord.blurple"), 255);
+                avatars::draw_circle(dst, width, x + ring + scale, y + ring + scale, inner, img.as_deref(), brand24("discord.blurple"), 255);
                 if m.speaking {
-                    avatars::draw_ring(buf, width, x, y, d, ring, brand24("discord.green"));
+                    avatars::draw_ring(dst, width, x, y, d, ring, brand24("discord.green"));
                 }
             }
-            let extra = extra_of(shown);
             if extra > 0 {
                 let pw = pill_w(extra);
-                let px = text_x + stack(shown).round() as i32 + s(4.0);
+                let px = x0 + stack(shown).round() as i32 + s(4.0);
                 let py = (height - pill_h) / 2;
                 let t = Theme::new(look);
                 let (bg, txt) = (t.color.chip.rgb24(), t.color.chip_text.rgb24());
-                fill_capsule(buf, width, px, py, pw, pill_h, bg);
-                blit_text(buf, width, px, py, pw, pill_h, &pill_font, &pill_text(extra), txt);
+                fill_capsule(dst, width, px, py, pw, pill_h, bg);
+                blit_text(dst, width, px, py, pw, pill_h, &pill_font, &pill_text(extra), txt);
+            }
+            if let Some(l) = layer {
+                over(buf, &l, width, (text_x, text_x + text_w), fade);
             }
         }
     } else if v.status.needs_user() {
@@ -471,6 +491,39 @@ pub fn strip(cv: Option<&mut block::Canvas>, c: &StripContent, compact: bool, he
 /// The blurple boxes Block draws under the strip (`Content::tint`): the whole strip always (stronger
 /// on hover), a hovered button's box blurple, or red for Leave and switched-on buttons, like
 /// Discord's own.
+/// Puts `layer` (premultiplied 0xAARRGGBB, as `buf`) over `buf` at `opacity`, only within the
+/// columns `xs` (left, right exclusive).
+fn over(buf: &mut [u32], layer: &[u32], width: i32, xs: (i32, i32), opacity: f32) {
+    let k = (opacity.clamp(0.0, 1.0) * 255.0).round() as u32;
+    for (i, (d, &s)) in buf.iter_mut().zip(layer).enumerate() {
+        let x = i as i32 % width;
+        if s == 0 || x < xs.0 || x >= xs.1 {
+            continue;
+        }
+        let ch = |p: u32, sh: u32| (p >> sh) & 0xff;
+        let sa = ch(s, 24) * k / 255;
+        let mut out = 0;
+        for sh in [0, 8, 16, 24] {
+            out |= ((ch(s, sh) * k / 255 + ch(*d, sh) * (255 - sa) / 255).min(255)) << sh;
+        }
+        *d = out;
+    }
+}
+
+/// The avatar column and the gaps beside it, (gap, column, gap), fitted into `room` px (None:
+/// as they are): the column narrows first, then the gaps, towards the compact layout's
+/// `min_gaps` (both together); never wider than given.
+fn fit_column((gap1, column, gap2): (i32, i32, i32), min_gaps: i32, room: Option<i32>) -> (i32, i32, i32) {
+    let Some(room) = room.filter(|r| *r < gap1 + column + gap2) else { return (gap1, column, gap2) };
+    if room > gap1 + gap2 {
+        return (gap1, room - gap1 - gap2, gap2);
+    }
+    let gaps = room.max(min_gaps);
+    let span = gap1 + gap2 - min_gaps;
+    let first = if span > 0 { (gap1 as f32 * (gaps - min_gaps) as f32 / span as f32).round() as i32 } else { 0 };
+    (first, 0, gaps - first)
+}
+
 pub fn tint(v: &Voice, area: block::Hit, look: &Look) -> Option<block::Tint> {
     let (rest, over) = if look.light { (70.0, 105.0) } else { (85.0, 125.0) };
     let rgb = match area {
@@ -817,6 +870,29 @@ pub fn paint_panel(dc: HDC, w: i32, h: i32, v: &Voice, avatar: &dyn Fn(&Member) 
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_avatar_column_narrows_then_the_gaps() {
+        let full = (12, 100, 12);
+        assert_eq!(fit_column(full, 2, None), full);
+        assert_eq!(fit_column(full, 2, Some(500)), full, "room enough: as it is");
+        assert_eq!(fit_column(full, 2, Some(74)), (12, 50, 12), "the column first");
+        assert_eq!(fit_column(full, 2, Some(24)), (12, 0, 12));
+        assert_eq!(fit_column(full, 2, Some(13)), (6, 0, 7), "then the gaps");
+        assert_eq!(fit_column(full, 2, Some(1)), (0, 0, 2), "down to compact's");
+    }
+
+    #[test]
+    fn a_layer_goes_over_at_its_opacity_within_its_columns() {
+        let mut buf = vec![0xff00_0000u32; 3]; // opaque black
+        let layer = [0xffff_ffffu32, 0xffff_ffff, 0xffff_ffff]; // opaque white
+        over(&mut buf, &layer, 3, (1, 2), 0.5);
+        assert_eq!(buf[1], 0xff80_8080, "half white over black");
+        assert_eq!((buf[0], buf[2]), (0xff00_0000, 0xff00_0000), "outside the columns: untouched");
+        let mut buf = vec![0u32; 1];
+        over(&mut buf, &[0xffff_ffff], 1, (0, 1), 1.0);
+        assert_eq!(buf[0], 0xffff_ffff, "full opacity over nothing");
+    }
 
     fn in_call(n: usize) -> Voice {
         let mut v = Voice { status: Status::Ready, ..Default::default() };

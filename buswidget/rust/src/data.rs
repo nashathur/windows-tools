@@ -30,7 +30,7 @@ pub struct Config {
     pub dest: String,      // destination shown in the popup; empty = the trip's headsign
     pub badge_color: String, // "RRGGBB" line badge colour; empty = the line colour from the timetable
     pub badge_text: String,  // "RRGGBB" badge number colour; empty = black or white, whichever reads better
-    pub compact: bool,       // the strip shows only the badge and the next departure
+    // `compact` and `show_on_taskbar` in the same section are Block's (taskbar_dock::block)
 }
 
 const FIELDS: [&str; 7] = ["agency", "line", "stop_code", "label", "dest", "badge_color", "badge_text"];
@@ -45,7 +45,6 @@ impl Config {
             dest: "Utrecht CS".into(), // line 3 is a loop: its headsign "Zuilen" would mislead here
             badge_color: String::new(),
             badge_text: String::new(),
-            compact: false,
         }
     }
 
@@ -74,11 +73,21 @@ impl Config {
         }
     }
 
-    fn to_json(&self) -> serde_json::Value {
-        let mut m: serde_json::Map<String, serde_json::Value> =
-            FIELDS.iter().map(|k| (k.to_string(), serde_json::json!(self.get(k)))).collect();
-        m.insert("compact".into(), serde_json::json!(self.compact));
-        serde_json::Value::Object(m)
+    /// Writes these keys into the bus section, keeping the others (Block's `compact` and
+    /// `show_on_taskbar`); no write if nothing changed.
+    fn merge(&self) -> io::Result<()> {
+        settings::update(|root| {
+            if !root.is_object() {
+                *root = serde_json::json!({});
+            }
+            let sec = &mut root["bus"];
+            if !sec.is_object() {
+                *sec = serde_json::json!({});
+            }
+            for k in FIELDS {
+                sec[k] = serde_json::json!(self.get(k));
+            }
+        })
     }
 
     /// The old data\config.txt (key = value lines), migrated into the shared file once.
@@ -105,7 +114,6 @@ impl Config {
                         c.set(k, v.to_string());
                     }
                 }
-                c.compact = bus.get("compact").and_then(|v| v.as_bool()).unwrap_or(false);
             }
             None => {
                 if let Some(old) = Self::load_old(dir) {
@@ -114,14 +122,14 @@ impl Config {
                 }
             }
         }
-        // write the bus section back in full (fills in missing keys; no write if unchanged)
-        let _ = settings::save_section("bus", c.to_json());
+        // fills in missing keys (no write if unchanged)
+        let _ = c.merge();
         c
     }
 
     /// Saves the bus section only; the other sections are left as they are.
     pub fn save(&self, _dir: &Path) -> io::Result<()> {
-        settings::save_section("bus", self.to_json())
+        self.merge()
     }
     /// What the cached schedule depends on.
     pub fn sig(&self) -> String {

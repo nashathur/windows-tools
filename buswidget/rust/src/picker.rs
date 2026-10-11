@@ -249,7 +249,6 @@ unsafe fn select() {
                     dest: String::new(),
                     badge_color: String::new(), // new line: its own colour from the timetable
                     badge_text: String::new(),
-                    compact: crate::current().0.compact,
                 })
             });
             if let Some(cfg) = cfg {

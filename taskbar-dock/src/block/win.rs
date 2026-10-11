@@ -173,8 +173,14 @@ pub fn run<C: Content>(spec: Spec, content: C) {
         update_hooks();
         SetTimer(main, T_WATCH, WATCH_MS, None);
 
+        let dialog = st(|s| s.spec.dialog).flatten();
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, 0, 0, 0) > 0 {
+            // Tab / Enter / Esc in the widget's own dialog (Spec::dialog)
+            let d = dialog.map_or(0, |f| f());
+            if d != 0 && IsDialogMessageW(d, &msg) != 0 {
+                continue;
+            }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -241,6 +247,7 @@ fn apply(reqs: Vec<Request>) {
                 }
             }
             Request::ResizePanel => resize_after = true,
+            Request::RedrawTray => tray_sync(true, false),
             Request::Every(id, ms) => {
                 if let Some(main) = st(|s| s.main) {
                     unsafe { SetTimer(main, id, ms, None) };
@@ -1208,7 +1215,9 @@ fn redraw() {
         let shown_compact = compact && resize_w.is_none();
         let Some(Some((mut cv, feel, cover, hover, dragging_now, hot, tint))) = st(|s| {
             let mut f = frame(&s.look, &s.core, floating, height, dpi, zoom, shown_compact);
-            f.fit_width = narrowed.map(|w| (w as f32 * zoom).round() as i32);
+            // crowded, or a compact switch running: the width it's drawn at (a Content that can
+            // narrow lays out to it, so its right end isn't cut off)
+            f.fit_width = core::fit_width(resize_w, narrowed, zoom);
             let natural = s.content.measure(&f, shown_compact).max(1);
             let mut cv = Canvas::new(natural, height)?;
             s.content.draw(&mut cv, &f);

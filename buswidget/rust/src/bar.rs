@@ -1,4 +1,4 @@
-//! The strip's text and drawing, the shared look, and dock geometry helpers.
+//! The strip's text and drawing (into Block's canvas), and the tray logo.
 
 use super::*;
 
@@ -6,16 +6,6 @@ pub(crate) fn fmt_min(u: &data::Bus, now: i64) -> String {
     let m = (u.t - now).div_euclid(60);
     let s = if m < 1 { "now".to_string() } else { format!("{m}′") };
     if u.live { s } else { format!("~{s}") }
-}
-
-pub(crate) fn bar_text() -> String {
-    bar_text_for(compact_now())
-}
-
-/// Drawn in compact mode: chosen in the settings, or no room for the full strip next to the
-/// taskbar's buttons (dock::fit).
-pub(crate) fn compact_now() -> bool {
-    current().0.compact || ui(|u| u.fit.borrow().compact())
 }
 
 /// The strip's text in full or compact mode.
@@ -66,223 +56,119 @@ pub(crate) unsafe fn fill(hdc: HDC, rc: &RECT, color: u32) {
     DeleteObject(br);
 }
 
-pub(crate) unsafe fn fullscreen_app_active() -> bool {
-    let h = GetForegroundWindow();
-    if h == 0 {
-        return false;
-    }
-    let mut cls = [0u16; 64];
-    let n = GetClassNameW(h, cls.as_mut_ptr(), cls.len() as i32);
-    let cls = String::from_utf16_lossy(&cls[..n.max(0) as usize]);
-    if ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"].contains(&cls.as_str()) {
-        return false;
-    }
-    let mut r: RECT = zeroed();
-    GetWindowRect(h, &mut r);
-    r.left <= 0 && r.top <= 0 && r.right >= GetSystemMetrics(SM_CXSCREEN) && r.bottom >= GetSystemMetrics(SM_CYSCREEN)
+// ---- the strip: badge, then the label over the departures ------------------------------
+
+/// The strip laid out for a frame: its fonts (deleted on drop), the two lines and where they go.
+struct Layout {
+    fonts: [HFONT; 3], // badge, label, departures
+    label: String,
+    text: String,
+    badge: badge::Badge,
+    pad: i32,
+    tx: i32,
+    tops: (i32, i32),
+    width: i32,
 }
 
-pub(crate) fn look() -> Look {
-    ui(|u| u.look.borrow().clone())
-}
-
-/// Re-reads the shared style and the Windows settings (theme, animation effects, hover time,
-/// time format, text size) and the display scale. Returns true if anything changed, so the
-/// strip and popup can be redrawn: everything follows Windows live, without a restart.
-pub(crate) unsafe fn refresh_look() -> bool {
-    let new = Look::current();
-    let anchor = ui(|u| if u.tray.get() != 0 { u.tray.get() } else { u.bar.get() });
-    let scale = system::scale_for(anchor);
-    ui(|u| {
-        let changed = *u.look.borrow() != new || u.scale.get() != scale;
-        *u.look.borrow_mut() = new;
-        u.scale.set(scale);
-        changed
-    })
-}
-
-// ---- taskbar strip: per-pixel alpha, so it blends with any taskbar and stays clickable ----
-
-/// Draw the strip; false if Windows refused (e.g. a transparent child window isn't supported).
-/// While compact mode is switching, the full strip is drawn narrowed to the animated width
-/// (see `start_resize`). A new width keeps the right edge: the stack hangs from the tray.
-pub(crate) unsafe fn render_bar(text: &str) -> bool {
-    let compact = compact_now();
-    let before = bar_rect();
-    let ok = match start_resize(compact) {
-        Some(w) => draw_bar(&bar_text_for(false), false, Some(w), false),
-        None => draw_bar(text, compact, None, false),
-    }
-    .is_some();
-    let (h, embedded, tray) = ui(|u| (u.bar.get(), u.embedded.get(), u.tray.get()));
-    if ok && embedded && IsWindowVisible(h) != 0 && ui(|u| u.motion.borrow().settled()) {
-        strip::keep_right_edge(h, tray, before);
-    }
-    if ok && embedded && ui(|u| u.motion.borrow().zoom()) == 1.0 {
-        // the other members fit the stack with these (dock::fit)
-        if let Some(size) = bar_size() {
-            dock::publish_widths(h, size);
+impl Drop for Layout {
+    fn drop(&mut self) {
+        for f in self.fonts {
+            unsafe { DeleteObject(f) };
         }
     }
-    ok
 }
 
-/// The strip's widths for the fit: in the chosen mode, and compact.
-pub(crate) unsafe fn bar_size() -> Option<dock::Size> {
-    Some(dock::Size { full: bar_width(current().0.compact)?, min: bar_width(true)?, stretch: false })
-}
-
-/// The strip's width in a mode (nothing drawn).
-pub(crate) unsafe fn bar_width(compact: bool) -> Option<i32> {
-    draw_bar(&bar_text_for(compact), compact, None, true)
-}
-
-/// Draws `text` in full or compact mode, cut off at `clip` px if narrower (the right end fades
-/// out), or only measures when `measure`. Returns the width, None if Windows refused.
-unsafe fn draw_bar(text: &str, compact: bool, clip: Option<i32>, measure: bool) -> Option<i32> {
-    let (h, scale, zoom) = ui(|u| (u.bar.get(), u.scale.get(), u.motion.borrow().zoom()));
-    let lk = look();
-    // content scale: the zoom grows it while dragged; the strip stays as tall as the taskbar
-    let s = scale * zoom;
-    let px = |v: f32| (v * s).round() as i32;
+/// Lays out full or `compact` mode at the frame's scale (display scale × drag zoom); the strip
+/// is as tall as the taskbar. `dc`: any memory DC.
+unsafe fn layout(dc: HDC, f: &Frame, compact: bool) -> Layout {
+    let lk = f.look;
+    let s = f.scale;
     // the shared style: the clock's font and size, regular weight; the line number in the shared badge
     let font = |size: f32, weight: i32| {
         let face = wide(&lk.font);
-        CreateFontW(-px(size), 0, 0, 0, weight, 0, 0, 0, 1, 0, 0, 4, 0, face.as_ptr())
+        CreateFontW(-f.px(size), 0, 0, 0, weight, 0, 0, 0, 1, 0, 0, 4, 0, face.as_ptr())
     };
-    let (f_badge, f_small, f_big) = (badge::font(&lk, s), font(lk.font_size, 400), font(lk.font_size, 400));
-    let screen = GetDC(0);
-    let mem = CreateCompatibleDC(screen);
+    let fonts = [badge::font(lk, s), font(lk.font_size, 400), font(lk.font_size, 400)];
     let cfg = current().0;
     // compact: the next two departures on two lines beside the badge, no label
-    let (label, text) = match text.split_once('\n') {
-        Some((a, b)) if compact => (a, b),
-        _ => (if compact { "" } else { cfg.label.as_str() }, text),
+    let all = bar_text_for(compact);
+    let (label, text) = match all.split_once('\n') {
+        Some((a, b)) if compact => (a.to_string(), b.to_string()),
+        _ => (if compact { String::new() } else { cfg.label.clone() }, all.clone()),
     };
-    let line = cfg.line.as_str();
-    let (sw, sh) = if label.is_empty() { (0, 0) } else { text_size(mem, f_small, label) };
-    let (tw, th) = text_size(mem, f_big, text);
-    let (pad, gap) = (px(8.0), px(6.0));
-    let content_h = sh + th;
-    // attached: as tall as the taskbar (like its buttons and the weather widget)
-    let (embedded, tray) = ui(|u| (u.embedded.get(), u.tray.get()));
-    let mut tb: RECT = zeroed();
-    let height = if embedded && GetClientRect(tray, &mut tb) != 0 && tb.bottom > content_h {
-        tb.bottom
-    } else {
-        content_h
-    };
+    let (sw, _) = if label.is_empty() { (0, 0) } else { text_size(dc, fonts[1], &label) };
+    let (tw, th) = text_size(dc, fonts[2], &text);
+    let (pad, gap) = (f.px(8.0), f.px(6.0));
     // the two lines sit on the taskbar clock's baselines
-    let ascent = |f: HFONT| {
-        SelectObject(mem, f);
+    let ascent = |font: HFONT| {
+        SelectObject(dc, font);
         let mut tm: TEXTMETRICW = zeroed();
-        GetTextMetricsW(mem, &mut tm);
+        GetTextMetricsW(dc, &mut tm);
         tm.tmAscent
     };
-    let (top1, top2) = if label.is_empty() {
-        (0, (height - th + 1) / 2)
+    let tops = if label.is_empty() {
+        (0, (f.height - th + 1) / 2)
     } else {
-        draw::two_line_tops(height, s, ascent(f_small), ascent(f_big))
+        draw::two_line_tops(f.height, s, ascent(fonts[1]), ascent(fonts[2]))
     };
     // the line number: the shared badge (lines up with the tray icons, as wide as the number
     // needs), 6 px from the text
-    let line_badge = badge::Badge::measure(mem, f_badge, line, height, s);
-    let tx = pad + line_badge.width + gap;
-    let natural = tx + sw.max(tw) + pad;
-    if measure {
-        DeleteDC(mem);
-        ReleaseDC(0, screen);
-        for f in [f_badge, f_small, f_big] {
-            DeleteObject(f);
+    let badge = badge::Badge::measure(dc, fonts[0], &cfg.line, f.height, s);
+    let tx = pad + badge.width + gap;
+    let width = tx + sw.max(tw) + pad;
+    Layout { fonts, label, text, badge, pad, tx, tops, width }
+}
+
+pub(crate) fn measure(f: &Frame, compact: bool) -> i32 {
+    unsafe {
+        let dc = CreateCompatibleDC(0);
+        let w = layout(dc, f, compact).width;
+        DeleteDC(dc);
+        w
+    }
+}
+
+/// White text gives the coverage, turned into the text colours (label dimmer); then the badge.
+pub(crate) fn draw(cv: &mut Canvas, f: &Frame) {
+    unsafe {
+        let dc = cv.dc;
+        let l = layout(dc, f, f.compact);
+        SetTextColor(dc, WHITE);
+        if !l.label.is_empty() {
+            draw_text(dc, l.fonts[1], l.tx, l.tops.0, &l.label);
         }
-        return Some(natural);
+        draw_text(dc, l.fonts[2], l.tx, l.tops.1, &l.text);
+        let (w, h, top2, compact) = (cv.w, cv.h, l.tops.1, f.compact);
+        let (fg, dim) = f.look.text_rgb();
+        draw::text_to_color(cv.pixels(), w, h, |y| if y < top2 && !compact { dim } else { fg });
+        let (badge_bg, badge_fg) = badge_colors();
+        l.badge.paint(dc, cv.pixels(), w, l.pad, l.fonts[0], badge_bg, Some(badge_fg), f.look, f.scale);
     }
-    let width = clip.map_or(natural, |c| c.clamp(1, natural));
-
-    let mut bmi: BITMAPINFO = zeroed();
-    bmi.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
-    bmi.bmiHeader.biWidth = width;
-    bmi.bmiHeader.biHeight = -height; // top-down
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB as _;
-    let mut bits: *mut c_void = null_mut();
-    let dib = CreateDIBSection(mem, &bmi, DIB_RGB_COLORS, &mut bits, 0, 0);
-    if dib == 0 || bits.is_null() {
-        DeleteDC(mem);
-        ReleaseDC(0, screen);
-        for f in [f_badge, f_small, f_big] {
-            DeleteObject(f);
-        }
-        return None;
-    }
-    let old = SelectObject(mem, dib);
-    let buf = std::slice::from_raw_parts_mut(bits as *mut u32, (width * height) as usize);
-
-    // 1) white text on black gives the coverage mask; 2) into colour (first line dimmer)
-    buf.fill(0);
-    SetBkMode(mem, TRANSPARENT as _);
-    SetTextColor(mem, WHITE);
-    if !label.is_empty() {
-        draw_text(mem, f_small, tx, top1, label);
-    }
-    draw_text(mem, f_big, tx, top2, text);
-    GdiFlush();
-    if width < natural {
-        // cut off while collapsing or expanding: the text fades out at the right end
-        taskbar_dock::marquee::fade_edges(buf, width, (tx, 0, width, height), px(12.0), false, true, 0);
-    }
-    let (fg, dim) = lk.text_rgb();
-    draw::text_to_color(buf, width, height, |y| if y < top2 && !compact { dim } else { fg });
-    // 3) the line badge in the line's colours
-    let (badge_bg, badge_fg) = badge_colors();
-    line_badge.paint(mem, buf, width, pad, f_badge, badge_bg, Some(badge_fg), &lk, s);
-    // 4) background under everything, with the hover highlight
-    let (radius, inset) = draw::highlight_shape(&lk, s);
-    draw::background(buf, width, height, ui(|u| u.hover.get()), lk.light, radius, inset);
-
-    let size = SIZE { cx: width, cy: height };
-    let src = POINT { x: 0, y: 0 };
-    let blend = BLENDFUNCTION {
-        BlendOp: AC_SRC_OVER as u8,
-        BlendFlags: 0,
-        SourceConstantAlpha: 255,
-        AlphaFormat: AC_SRC_ALPHA as u8,
-    };
-    let ok = UpdateLayeredWindow(h, screen, null(), &size, mem, &src, 0, &blend, ULW_ALPHA) != 0;
-    SelectObject(mem, old);
-    DeleteObject(dib);
-    DeleteDC(mem);
-    ReleaseDC(0, screen);
-    for f in [f_badge, f_small, f_big] {
-        DeleteObject(f);
-    }
-    ok.then_some(width)
 }
 
-pub(crate) fn saved_x() -> Option<i32> {
-    fs::read_to_string(data_dir().join("pos.txt")).ok()?.trim().parse().ok()
-}
-
-pub(crate) unsafe fn bar_rect() -> RECT {
-    dock::rect(ui(|u| u.bar.get()))
-}
-
-/// Gap between docked widgets and to the tray (shared style), in pixels.
-pub(crate) fn gap() -> i32 {
-    (look().gap * ui(|u| u.scale.get())).round() as i32
-}
-
-/// The tray boundary (screen x), when attached to the taskbar. See dock::tray_boundary.
-pub(crate) unsafe fn boundary() -> Option<i32> {
-    let (embedded, tray, scale) = ui(|u| (u.embedded.get(), u.tray.get(), u.scale.get()));
-    embedded.then(|| dock::tray_boundary(tray, scale))
-}
-
-/// Where the strip belongs in the dock stack, whether to slide there, and how it fits next to
-/// the taskbar's buttons (see dock::slot). None when floating.
-pub(crate) unsafe fn dock_slot() -> Option<dock::Slot> {
-    let (bar, tray) = ui(|u| (u.bar.get(), u.tray.get()));
-    let b = boundary()?;
-    dock::slot(tray, bar, bar_size()?, b, gap())
+/// The tray logo: the line badge filling the icon (the number made smaller if it doesn't fit).
+pub(crate) fn tray_logo(cv: &mut Canvas, look: &Look) -> bool {
+    unsafe {
+        let (dc, w, h) = (cv.dc, cv.w, cv.h);
+        let (bg, fg) = badge_colors();
+        let line = current().0.line;
+        let scale = h as f32 / theme::size::ICON_BOX;
+        let face = wide(&look.font);
+        let mut px = badge::font_px(look, scale);
+        let font = loop {
+            let font = CreateFontW(-px, 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, 4, 0, face.as_ptr());
+            if px <= 6 || text_size(dc, font, &line).0 <= w - 2 {
+                break font;
+            }
+            DeleteObject(font);
+            px -= 1;
+        };
+        fill(dc, &RECT { left: 0, top: 0, right: w, bottom: h }, bg);
+        let (tw, th) = text_size(dc, font, &line);
+        SetTextColor(dc, fg);
+        draw_text(dc, font, (w - tw) / 2, (h - th) / 2, &line);
+        DeleteObject(font);
+        draw::round_rect(cv.pixels(), w, (0, 0, w, h), (look.control_radius * scale).round());
+        true
+    }
 }

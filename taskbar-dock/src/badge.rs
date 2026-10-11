@@ -35,8 +35,12 @@ pub fn layout(height: i32, scale: f32, ink: (i32, i32, i32, i32)) -> (i32, i32, 
 /// The badge font: the shared font, bold, 1 px larger than the body text. Delete it after use.
 pub unsafe fn font(look: &Look, scale: f32) -> HFONT {
     let face = crate::wide(&look.font);
-    let px = ((look.font_size + 1.0) * scale).round() as i32;
-    CreateFontW(-px, 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, ANTIALIASED_QUALITY as u32, 0, face.as_ptr())
+    CreateFontW(-font_px(look, scale), 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, ANTIALIASED_QUALITY as u32, 0, face.as_ptr())
+}
+
+/// The badge font's size in px at `scale` ([`font`]).
+pub fn font_px(look: &Look, scale: f32) -> i32 {
+    ((look.font_size + 1.0) * scale).round() as i32
 }
 
 /// Black or white, whichever reads better on `bg` (a COLORREF, 0x00BBGGRR).

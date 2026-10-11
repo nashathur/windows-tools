@@ -53,18 +53,15 @@ pub(crate) fn apply_config(cfg: data::Config) {
     g.cfg = cfg;
 }
 
-/// Picks up edits to the shared settings file (Edit settings…, or the weather widget saving
-/// its own section). Changes to the label or colours show on the next redraw; the shared dock
-/// style is re-read every second by refresh_look.
-pub(crate) fn watch_settings() {
-    let mtime = taskbar_dock::settings::mtime();
-    if ui(|u| u.settings_mtime.get()) == mtime {
-        return;
+/// Block's main window (set in `Content::start`): the worker posts WM_DATA there.
+pub(crate) static MAIN: AtomicIsize = AtomicIsize::new(0);
+
+/// New data for the UI: the strip, popup and tooltip are checked at once (else on the next tick).
+fn notify() {
+    let main = MAIN.load(Relaxed);
+    if main != 0 {
+        unsafe { PostMessageW(main, WM_DATA, 0, 0) };
     }
-    let cfg = data::Config::load(data_dir());
-    // load() may tidy the file; take the time after that so it isn't seen as another edit
-    ui(|u| u.settings_mtime.set(taskbar_dock::settings::mtime()));
-    apply_config(cfg);
 }
 
 pub(crate) static FORCE_RT: AtomicBool = AtomicBool::new(false);
@@ -85,6 +82,7 @@ pub(crate) fn worker() {
     let dir = data_dir();
     if let Some(s) = data::load_schedule(dir) {
         shared().lock().unwrap().sched = Some(Arc::new(s));
+        notify();
     }
     // back-off after a failed timetable download survives restarts
     let backoff_file = dir.join("next_build.txt");
@@ -125,6 +123,7 @@ pub(crate) fn worker() {
                     shared().lock().unwrap().err = Some(format!("timetable: {e}"));
                 }
             }
+            notify();
             continue;
         }
 
@@ -167,6 +166,7 @@ pub(crate) fn worker() {
                     }
                 }
             }
+            notify();
         }
         thread::sleep(Duration::from_millis(500));
     }

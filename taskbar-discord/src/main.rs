@@ -153,7 +153,7 @@ impl Content for App {
     fn measure(&mut self, f: &Frame, compact: bool) -> i32 {
         let (people, avatars, logo, ring) = self.content(Ring::Dim, false);
         let c = StripContent { voice: &self.voice, people, avatars, max_avatars: self.cfg.max_avatars, logo, ring, text_w: self.media_w };
-        render::strip(None, &c, compact, f.height, f.scale, f.look).size.cx
+        render::strip(None, &c, compact, f.fit_width, f.height, f.scale, f.look).size.cx
     }
 
     fn draw(&mut self, cv: &mut Canvas, f: &Frame) {
@@ -171,7 +171,7 @@ impl Content for App {
         };
         let (people, avatars, logo, ring) = self.content(ring, true);
         let c = StripContent { voice: &self.voice, people, avatars, max_avatars: self.cfg.max_avatars, logo, ring, text_w: self.media_w };
-        let lay = render::strip(Some(cv), &c, f.compact, f.height, f.scale, f.look);
+        let lay = render::strip(Some(cv), &c, f.compact, f.fit_width, f.height, f.scale, f.look);
         self.strip = Some(lay);
     }
 

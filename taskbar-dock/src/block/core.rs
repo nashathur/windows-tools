@@ -100,6 +100,12 @@ impl Core {
     }
 }
 
+/// [`Frame::fit_width`] for drawing: the narrower of a running compact switch's width (`resize`,
+/// drawn px) and the crowded fit's (`narrowed`, unzoomed px, so times the drag `zoom`).
+pub(crate) fn fit_width(resize: Option<i32>, narrowed: Option<i32>, zoom: f32) -> Option<i32> {
+    [resize, narrowed.map(|w| (w as f32 * zoom).round() as i32)].into_iter().flatten().min()
+}
+
 /// The widths the dock fits by: in the chosen mode, and compact (`full` when it must never go
 /// compact for room).
 pub(crate) fn size(chosen: i32, compact: i32, spec: &Spec) -> dock::Size {
@@ -544,10 +550,19 @@ mod tests {
     }
 
     #[test]
+    fn a_compact_switch_lays_out_to_its_width() {
+        assert_eq!(fit_width(None, None, 1.0), None, "at rest, room: the natural width");
+        assert_eq!(fit_width(Some(150), None, 1.0), Some(150), "a compact switch running");
+        assert_eq!(fit_width(None, Some(200), 1.1), Some(220), "crowded, while dragged: zoomed");
+        assert_eq!(fit_width(Some(150), Some(120), 1.0), Some(120), "both: the narrower");
+    }
+
+    #[test]
     fn requests_are_recorded_not_done() {
         let mut ctx = Ctx::new(42);
         ctx.redraw();
         ctx.redraw_panel();
+        ctx.redraw_tray();
         ctx.every(1, 1000);
         ctx.stop(1);
         ctx.open_panel();
@@ -557,7 +572,7 @@ mod tests {
         ctx.quit();
         assert_eq!(ctx.main_window(), 42);
         let s: Vec<String> = ctx.reqs.iter().map(|r| format!("{r:?}")).collect();
-        assert_eq!(s, ["Redraw", "RedrawPanel", "Every(1, 1000)", "Stop(1)", "OpenPanel", "TogglePanel", "ClosePanel", "Menu", "Quit"]);
+        assert_eq!(s, ["Redraw", "RedrawPanel", "RedrawTray", "Every(1, 1000)", "Stop(1)", "OpenPanel", "TogglePanel", "ClosePanel", "Menu", "Quit"]);
     }
 
     #[test]
