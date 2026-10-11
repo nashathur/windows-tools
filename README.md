@@ -10,6 +10,21 @@ taskbar next to the tray. They stack together, can be reordered by dragging, ope
 hover or click, and follow Windows settings live (light/dark theme, animation effects, text size,
 display scale).
 
+![Discord, media, bus and weather widgets docked in the taskbar](docs/screenshots/taskbar.png)
+
+<table>
+  <tr>
+    <td valign="top"><img src="docs/screenshots/weather.png" alt="Weather panel: current conditions, next hours and next days" width="280"></td>
+    <td valign="top"><img src="docs/screenshots/media.png" alt="Now playing panel: cover, title, playback and volume controls" width="280"></td>
+    <td valign="top"><img src="docs/screenshots/bus.png" alt="Bus panel: next departures with live delays" width="220"></td>
+  </tr>
+  <tr>
+    <td align="center">Weather</td>
+    <td align="center">Now playing</td>
+    <td align="center">Bus departures</td>
+  </tr>
+</table>
+
 | Folder | What it shows |
 |---|---|
 | [`taskbar-dock`](taskbar-dock) | The shared library every widget runs on: docking and stacking, panels, right-click menu, tray icon, settings, theme and drawing. Start here to build a new widget ([BLOCK.md](taskbar-dock/BLOCK.md)). |
