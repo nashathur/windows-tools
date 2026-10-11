@@ -104,7 +104,7 @@ fn st<R>(f: impl FnOnce(&mut State) -> R) -> Option<R> {
     STATE.with(|s| s.try_borrow_mut().ok().and_then(|mut g| g.as_mut().map(f)))
 }
 
-fn log(line: &str) {
+pub(super) fn log(line: &str) {
     if let Some(l) = st(|s| s.spec.log) {
         l(line);
     }
@@ -342,6 +342,10 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             DefWindowProcW(hwnd, msg, wp, lp)
         }
         WM_COPYDATA => remote::on_copydata(wp, lp),
+        WM_COMMAND_REPLY => {
+            remote::command_reply(lp);
+            0
+        }
         WM_DESTROY => {
             PostQuitMessage(0);
             0

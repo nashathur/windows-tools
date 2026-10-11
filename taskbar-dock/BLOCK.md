@@ -11,8 +11,13 @@ menu), `shell.rs` (main panel, child module of win.rs), `tray.rs`, `remote.rs` (
 ## API (`mod.rs`)
 Spec, Content, Frame, Canvas, Hit, MenuBuilder with the standard rows. Ctx requests are applied
 after the borrow: `redraw`, `redraw_panel`, `resize_panel`, `redraw_tray`, `every` / `stop` (content
-timers), `close_panel`, `quit`, `after`; `with` for the widget's own windows / worker posts. A
-left click on the strip always toggles the panel (Block's, no widget decides); a tray icon's clicks
+timers), `close_panel`, `quit`, `after`; `with` for the widget's own windows / worker posts.
+`Content::commands()` lists optional dockctl `do` commands; `Content::command(name, args, token,
+ctx)` returns `CommandReply::Done(result)` or `Pending`. A pending command retains its non-cloneable
+`ReplyToken`; finishing it from any thread posts the result to Block's main window for delivery.
+Dropping an unfinished token replies with an error. `Spec::defaults` supplies the widget's default
+settings as JSON for dockctl `keys` and `unset`; Block adds `compact` and `show_on_taskbar`.
+A left click on the strip always toggles the panel (Block's, no widget decides); a tray icon's clicks
 are Block's too (no strip needed: the panel opens above the pointer).
 
 ## Main panel (`shell.rs`)

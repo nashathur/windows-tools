@@ -16,6 +16,10 @@ use serde_json::{json, Value};
 pub const REQUEST: usize = 0x444B_4351;
 /// `dwData` of a reply: "DKCR".
 pub const REPLY: usize = 0x444B_4352;
+/// `dwData` of a request with a request id.
+pub const REQUEST2: usize = 0x444B_4353;
+/// `dwData` of a reply with a request id.
+pub const REPLY2: usize = 0x444B_4354;
 /// Between arguments (values may hold spaces).
 pub const SEP: char = '\u{1f}';
 
@@ -60,8 +64,11 @@ pub enum Command {
     /// A row by id (decimal or 0x hex) or label; opens the menu first if it's closed.
     MenuClick(String),
     Tray(MouseButton),
-    Set(String, Value),
-    Get(Option<String>),
+    Set(bool, String, Value),
+    Get(bool, Option<String>),
+    Keys(bool),
+    Unset(bool, String),
+    Do(String, Vec<String>),
     Log(usize),
     Redraw,
     Quit,
@@ -82,6 +89,10 @@ usage: dockctl <weather|bus|discord|media|all> <command> [args]
   tray click left|right          a click on the tray icon
   set <key> <value>              the widget's settings section (value: JSON, or else text)
   get [key]                      one key, or the section (secrets masked)
+  keys [--dock]                  list settings with current and default values
+  set/get/unset --dock           edit or inspect shared dock settings
+  do <name> [args]               run a widget command; do help lists available commands
+  --timeout <s>                  reply deadline (default 5; do commands default to 120)
   log [n]                        last n lines of the widget's log (default 20)
   redraw                         measure and draw again
   quit                           as the Quit row
@@ -110,9 +121,17 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
         ["menu", "click", row @ ..] if !row.is_empty() => Command::MenuClick(row.join(" ")),
         ["tray", "click", "left"] => Command::Tray(MouseButton::Left),
         ["tray", "click", "right"] => Command::Tray(MouseButton::Right),
-        ["set", key, value @ ..] if !value.is_empty() => Command::Set(key.to_string(), value_of(&value.join(" "))),
-        ["get"] => Command::Get(None),
-        ["get", key] => Command::Get(Some(key.to_string())),
+        ["set", "--dock", key, value @ ..] if !value.is_empty() => Command::Set(true, key.to_string(), value_of(&value.join(" "))),
+        ["set", key, value @ ..] if !value.is_empty() => Command::Set(false, key.to_string(), value_of(&value.join(" "))),
+        ["get", "--dock"] => Command::Get(true, None),
+        ["get", "--dock", key] => Command::Get(true, Some(key.to_string())),
+        ["get"] => Command::Get(false, None),
+        ["get", key] => Command::Get(false, Some(key.to_string())),
+        ["keys", "--dock"] => Command::Keys(true),
+        ["keys"] => Command::Keys(false),
+        ["unset", "--dock", key] => Command::Unset(true, key.to_string()),
+        ["unset", key] => Command::Unset(false, key.to_string()),
+        ["do", name, args @ ..] => Command::Do(name.to_string(), args.iter().map(|s| (*s).to_string()).collect()),
         ["log"] => Command::Log(LOG_LINES),
         ["log", n] => Command::Log(n.parse().map_err(|_| format!("log: not a number: {n}"))?),
         ["redraw"] => Command::Redraw,
@@ -151,10 +170,44 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<String>, String> {
     Ok(if text.is_empty() { Vec::new() } else { text.split(SEP).map(str::to_string).collect() })
 }
 
+/// Encodes a v2 request as a decimal id followed by the ordinary arguments.
+pub fn encode2<S: AsRef<str>>(id: u64, args: &[S]) -> Vec<u8> {
+    let mut fields = Vec::with_capacity(args.len() + 1);
+    fields.push(id.to_string());
+    fields.extend(args.iter().map(|s| s.as_ref().to_string()));
+    encode(&fields)
+}
+
+/// Decodes a v2 request and returns its id and arguments.
+pub fn decode2(bytes: &[u8]) -> Result<(u64, Vec<String>), String> {
+    let mut fields = decode(bytes)?.into_iter();
+    let id = fields.next().ok_or_else(|| "request has no id".to_string())?.parse().map_err(|_| "request id isn't a decimal u64".to_string())?;
+    Ok((id, fields.collect()))
+}
+
+/// Encodes a v2 reply as a decimal id followed by its JSON text.
+pub fn encode_reply2(id: u64, json: &str) -> Vec<u8> {
+    encode(&[id.to_string(), json.to_string()])
+}
+
+/// Decodes a v2 reply and returns its id and JSON text.
+pub fn decode_reply2(bytes: &[u8]) -> Result<(u64, String), String> {
+    let mut fields = decode(bytes)?.into_iter();
+    let id = fields.next().ok_or_else(|| "reply has no id".to_string())?.parse().map_err(|_| "reply id isn't a decimal u64".to_string())?;
+    let json = fields.next().ok_or_else(|| "reply has no JSON".to_string())?;
+    if fields.next().is_some() { return Err("reply has extra fields".into()); }
+    Ok((id, json))
+}
+
 /// A key whose value is never printed (API keys, tokens, passwords).
 pub fn is_secret(key: &str) -> bool {
     let k = key.to_ascii_lowercase();
     ["key", "token", "secret", "password"].iter().any(|s| k.contains(s))
+}
+
+/// Masks a setting value when its name is secret, for both logs and replies.
+pub fn mask_setting(key: &str, value: &Value) -> Value {
+    if is_secret(key) && !value.is_null() && value.as_str() != Some("") { json!("***") } else { value.clone() }
 }
 
 /// `v` with every secret key's value (at any depth) replaced by `"***"` (an empty one stays
@@ -164,14 +217,28 @@ pub fn mask(v: &Value) -> Value {
         Value::Object(m) => Value::Object(
             m.iter()
                 .map(|(k, v)| {
-                    let hide = is_secret(k) && !matches!(v, Value::Null) && v.as_str() != Some("");
-                    (k.clone(), if hide { json!("***") } else { mask(v) })
+                    (k.clone(), if is_secret(k) { mask_setting(k, v) } else { mask(v) })
                 })
                 .collect(),
         ),
         Value::Array(a) => Value::Array(a.iter().map(mask).collect()),
         _ => v.clone(),
     }
+}
+
+/// One settings row, masking the current and default values by the setting name.
+pub fn key_row(key: &str, current: Option<&Value>, default: Option<&Value>) -> Value {
+    let hide = |v: Option<&Value>| v.map_or(Value::Null, |v| mask_setting(key, v));
+    json!({ "key": key, "current": hide(current), "default": hide(default) })
+}
+
+/// Resolves a setting to its configured default or reports all known keys.
+pub fn unset_default(defaults: &Value, key: &str) -> Result<Value, String> {
+    defaults.get(key).cloned().ok_or_else(|| {
+        let mut keys: Vec<String> = defaults.as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default();
+        keys.sort();
+        format!("unknown key {key:?}; known keys: {}", keys.join(", "))
+    })
 }
 
 /// A success reply: `fields` (an object) with `"ok": true`.
@@ -258,10 +325,17 @@ mod tests {
         assert_eq!(p("menu click Compact mode"), Ok(Command::MenuClick("Compact mode".into())));
         assert_eq!(p("tray click left"), Ok(Command::Tray(MouseButton::Left)));
         assert_eq!(p("tray click right"), Ok(Command::Tray(MouseButton::Right)));
-        assert_eq!(p("set compact true"), Ok(Command::Set("compact".into(), json!(true))));
-        assert_eq!(p("set city De Bilt"), Ok(Command::Set("city".into(), json!("De Bilt"))));
-        assert_eq!(p("get"), Ok(Command::Get(None)));
-        assert_eq!(p("get compact"), Ok(Command::Get(Some("compact".into()))));
+        assert_eq!(p("set compact true"), Ok(Command::Set(false, "compact".into(), json!(true))));
+        assert_eq!(p("set --dock gap 4"), Ok(Command::Set(true, "gap".into(), json!(4))));
+        assert_eq!(p("get"), Ok(Command::Get(false, None)));
+        assert_eq!(p("get compact"), Ok(Command::Get(false, Some("compact".into()))));
+        assert_eq!(p("get --dock"), Ok(Command::Get(true, None)));
+        assert_eq!(p("keys"), Ok(Command::Keys(false)));
+        assert_eq!(p("keys --dock"), Ok(Command::Keys(true)));
+        assert_eq!(p("unset --dock gap"), Ok(Command::Unset(true, "gap".into())));
+        assert_eq!(p("unset compact"), Ok(Command::Unset(false, "compact".into())));
+        assert_eq!(p("do play --app VLC"), Ok(Command::Do("play".into(), vec!["--app".into(), "VLC".into()])));
+        assert_eq!(p("do help"), Ok(Command::Do("help".into(), vec![])));
         assert_eq!(p("log"), Ok(Command::Log(LOG_LINES)));
         assert_eq!(p("log 5"), Ok(Command::Log(5)));
         assert_eq!(p("redraw"), Ok(Command::Redraw));
@@ -298,10 +372,31 @@ mod tests {
     }
 
     #[test]
+    fn v2_wire_round_trips() {
+        let args = ["do", "say", "hello there"];
+        assert_eq!(decode2(&encode2(42, &args)).unwrap(), (42, args.map(str::to_string).to_vec()));
+        let reply = encode_reply2(42, r#"{"ok":true}"#);
+        assert_eq!(decode_reply2(&reply).unwrap(), (42, r#"{"ok":true}"#.into()));
+        assert!(decode2(b"bad\x1fstate").is_err());
+        assert!(decode_reply2(b"42").is_err());
+    }
+
+    #[test]
     fn secrets_are_masked_at_any_depth_but_empty_ones_show() {
         let v = json!({ "knmi_api_key": "abc", "city": "Utrecht", "nested": { "Token": "t", "n": 1 }, "api_key": "", "password": null });
         assert_eq!(mask(&v), json!({ "knmi_api_key": "***", "city": "Utrecht", "nested": { "Token": "***", "n": 1 }, "api_key": "", "password": null }));
         assert!(is_secret("KNMI_API_KEY") && !is_secret("compact"));
+    }
+
+    #[test]
+    fn keys_mask_secret_current_and_default_values() {
+        assert_eq!(key_row("api_token", Some(&json!("secret")), Some(&json!("default"))), json!({ "key": "api_token", "current": "***", "default": "***" }));
+        assert_eq!(key_row("api_token", None, Some(&json!(""))), json!({ "key": "api_token", "current": null, "default": "" }));
+    }
+
+    #[test]
+    fn unset_unknown_key_lists_known_keys() {
+        assert_eq!(unset_default(&json!({ "alpha": 1, "beta": 2 }), "gamma"), Err("unknown key \"gamma\"; known keys: alpha, beta".into()));
     }
 
     #[test]

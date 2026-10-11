@@ -7,7 +7,9 @@
 //! Block; 2 usage.
 
 use serde_json::{json, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use taskbar_dock::ctl::{self, Known, WIDGETS};
 use taskbar_dock::wide;
 use windows_sys::Win32::Foundation::*;
@@ -17,18 +19,29 @@ use windows_sys::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNa
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 /// How long a widget may take to answer.
-const TIMEOUT_MS: u32 = 5000;
+/// The default timeout for commands other than `do`.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+/// The default timeout for widget `do` commands.
+const DO_TIMEOUT: Duration = Duration::from_secs(120);
+/// The next request ID, unique within this dockctl process.
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
+    static EXPECT: Cell<Option<(HWND, u64)>> = const { Cell::new(None) };
     static REPLY: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 unsafe extern "system" fn proc_(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     if m == WM_COPYDATA {
         let cds = &*(l as *const COPYDATASTRUCT);
-        if cds.dwData == ctl::REPLY && !cds.lpData.is_null() {
+        if cds.dwData == ctl::REPLY2 && !cds.lpData.is_null() {
             let b = std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize);
-            REPLY.with(|r| *r.borrow_mut() = Some(String::from_utf8_lossy(b).into_owned()));
+            if let Ok((id, text)) = ctl::decode_reply2(b) {
+                let sender = w as HWND;
+                if EXPECT.with(|expected| expected.get()) == Some((sender, id)) {
+                    REPLY.with(|r| *r.borrow_mut() = Some(text));
+                }
+            }
             return 1;
         }
         return 0;
@@ -100,33 +113,77 @@ enum Outcome {
     Failed(String),
 }
 
-unsafe fn ask(me: HWND, w: &Known, args: &[String]) -> Outcome {
+unsafe fn ask(me: HWND, w: &Known, args: &[String], timeout: Duration) -> Outcome {
     let Some((target, pid)) = find(&format!("{}Main", w.class), w.exe) else {
         return Outcome::Absent(if running(w.exe) { "running, not on Block yet" } else { "not running" });
     };
     // a panel or menu opened by the command may take focus, as after a click
     AllowSetForegroundWindow(pid);
-    let data = ctl::encode(args);
-    let cds = COPYDATASTRUCT { dwData: ctl::REQUEST, cbData: data.len() as u32, lpData: data.as_ptr() as *mut _ };
+    let id = ((std::process::id() as u64) << 20).wrapping_add(NEXT_ID.fetch_add(1, Ordering::Relaxed));
+    let data = ctl::encode2(id, args);
+    let cds = COPYDATASTRUCT { dwData: ctl::REQUEST2, cbData: data.len() as u32, lpData: data.as_ptr() as *mut _ };
     REPLY.with(|r| r.borrow_mut().take());
     let mut res = 0;
-    let sent = SendMessageTimeoutW(target, WM_COPYDATA, me as WPARAM, &cds as *const _ as LPARAM, SMTO_ABORTIFHUNG, TIMEOUT_MS, &mut res);
-    let reply = REPLY.with(|r| r.borrow_mut().take());
-    match (sent, reply) {
-        (_, Some(text)) => Outcome::Reply(serde_json::from_str(&text).unwrap_or_else(|_| json!({ "ok": false, "error": "bad reply", "raw": text }))),
-        (0, None) => Outcome::Failed(format!("no answer within {TIMEOUT_MS} ms")),
-        (_, None) => Outcome::Failed("the window didn't reply (not a Block widget?)".into()),
-    }
+    let deadline = Instant::now() + timeout;
+    let left = timeout.as_millis().max(1).min(u32::MAX as u128) as u32;
+    EXPECT.with(|expected| expected.set(Some((target, id))));
+    let outcome = (|| {
+        let sent = SendMessageTimeoutW(target, WM_COPYDATA, me as WPARAM, &cds as *const _ as LPARAM, SMTO_ABORTIFHUNG, left, &mut res);
+        if sent == 0 {
+            return Outcome::Failed(timeout_error(timeout));
+        }
+        if let Some(v) = take_reply() {
+            return parse_reply(v);
+        }
+        if res == 0 {
+            return Outcome::Failed("this widget's build is older than dockctl: rebuild it".into());
+        }
+        loop {
+            if let Some(v) = take_reply() {
+                return parse_reply(v);
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return Outcome::Failed(timeout_error(timeout));
+            }
+            let left = (deadline - now).as_millis().max(1).min(u32::MAX as u128) as u32;
+            MsgWaitForMultipleObjects(0, std::ptr::null(), 0, left, QS_ALLINPUT);
+            let mut msg: MSG = std::mem::zeroed();
+            while PeekMessageW(&mut msg, 0, 0, 0, PM_REMOVE) != 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+    })();
+    EXPECT.with(|expected| expected.set(None));
+    outcome
+}
+
+fn timeout_error(timeout: Duration) -> String {
+    format!("no answer within {} s (the command may still finish in the widget)", timeout.as_secs())
+}
+
+/// Takes the reply accepted by `proc_` for the current expectation.
+fn take_reply() -> Option<String> {
+    REPLY.with(|slot| slot.borrow_mut().take())
+}
+
+fn parse_reply(text: String) -> Outcome {
+    Outcome::Reply(serde_json::from_str(&text).unwrap_or_else(|_| json!({ "ok": false, "error": "bad reply", "raw": text })))
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let raw: Vec<String> = std::env::args().skip(1).collect();
     let usage = |msg: &str| -> ! {
         if !msg.is_empty() {
             eprintln!("dockctl: {msg}");
         }
         eprintln!("{}", ctl::USAGE);
         std::process::exit(2);
+    };
+    let (args, custom_timeout) = match parse_timeout(&raw) {
+        Ok(v) => v,
+        Err(e) => usage(&e),
     };
     let Some((who, cmd)) = args.split_first() else { usage("") };
     if let Err(e) = ctl::parse(cmd) {
@@ -155,11 +212,14 @@ fn main() {
         std::process::exit(1);
     }
     let mut failed = false;
+    let mut usage_failed = false;
     let mut all = serde_json::Map::new();
     for w in &targets {
-        let v = match unsafe { ask(me, w, cmd) } {
+        let timeout = custom_timeout.unwrap_or_else(|| if matches!(cmd, [do_cmd, ..] if do_cmd == "do") { DO_TIMEOUT } else { DEFAULT_TIMEOUT });
+        let v = match unsafe { ask(me, w, cmd, timeout) } {
             Outcome::Reply(v) => {
                 failed |= !v.get("ok").and_then(Value::as_bool).unwrap_or(false);
+                usage_failed |= v.get("kind").and_then(Value::as_str) == Some("usage");
                 v
             }
             Outcome::Absent(why) => {
@@ -175,5 +235,51 @@ fn main() {
     }
     let out = if targets.len() == 1 { all.into_iter().next().map(|(_, v)| v).unwrap_or(Value::Null) } else { Value::Object(all) };
     println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
-    std::process::exit(if failed { 1 } else { 0 });
+    std::process::exit(exit_code(failed, usage_failed));
+}
+
+/// Returns dockctl's documented success, failure, or usage exit code.
+fn exit_code(failed: bool, usage_failed: bool) -> i32 {
+    if usage_failed { 2 } else if failed { 1 } else { 0 }
+}
+
+/// Removes leading `--timeout seconds` options from the command arguments.
+fn parse_timeout(raw: &[String]) -> Result<(Vec<String>, Option<Duration>), String> {
+    let mut args = Vec::new();
+    let mut timeout = None;
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == "--timeout" {
+            let value = raw.get(i + 1).ok_or_else(|| "--timeout needs seconds".to_string())?;
+            let seconds: u64 = value.parse().map_err(|_| format!("--timeout: not a number: {value}"))?;
+            if seconds == 0 {
+                return Err("--timeout must be at least 1 second".into());
+            }
+            timeout = Some(Duration::from_secs(seconds));
+            i += 2;
+        } else {
+            args.extend_from_slice(&raw[i..]);
+            break;
+        }
+    }
+    Ok((args, timeout))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_is_removed_before_widget_name() {
+        assert_eq!(parse_timeout(&["--timeout".into(), "9".into(), "bus".into(), "state".into()]).unwrap(), (vec!["bus".into(), "state".into()], Some(Duration::from_secs(9))));
+        assert_eq!(parse_timeout(&["bus".into(), "state".into()]).unwrap(), (vec!["bus".into(), "state".into()], None));
+        assert!(parse_timeout(&["--timeout".into(), "x".into(), "bus".into()]).is_err());
+    }
+
+    #[test]
+    fn exit_codes_distinguish_usage_from_other_failures() {
+        assert_eq!(exit_code(false, false), 0);
+        assert_eq!(exit_code(true, false), 1);
+        assert_eq!(exit_code(true, true), 2);
+    }
 }

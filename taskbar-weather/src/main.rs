@@ -161,6 +161,7 @@ fn main() {
     spec.mutex = "Local\\TaskbarWeather.SingleInstance".into();
     spec.float = Float::Off; // as before: nothing shows until the taskbar can be joined
     spec.log_file = Some(log_file());
+    spec.defaults = Some(|| serde_json::to_value(Config::default()).unwrap_or_default());
     let app = App {
         main: 0,
         cfg: Config::load(),

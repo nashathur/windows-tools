@@ -247,5 +247,6 @@ fn main() {
     // no taskbar to join: a topmost strip at the x it was last dropped at
     spec.float = Float::Fallback(FloatAt::Saved(|| data_dir().join("pos.txt")));
     spec.log_file = Some(data_dir().join("buswidget.log"));
+    spec.defaults = Some(|| data::Config::default().to_json());
     block::run(spec, App { look: Look::current(), shown: String::new(), logo: String::new(), picker: picker::Picker::default() });
 }

@@ -313,6 +313,7 @@ fn main() {
     // in a call the avatar column follows who's in it: Block glides the width (unless `fixed_width`)
     spec.glide_width = true;
     spec.log_file = Some(log_file());
+    spec.defaults = Some(|| serde_json::to_value(Config::default()).unwrap_or_default());
     let cfg = Config::load();
     let status = if cfg.configured() || std::env::var_os("TASKBAR_DISCORD_TEST").is_some() { Status::Connecting } else { Status::NotConfigured };
     log("started");

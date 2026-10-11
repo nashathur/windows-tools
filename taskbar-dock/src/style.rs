@@ -92,6 +92,11 @@ impl Default for Style {
     }
 }
 
+/// The stored `dock` section, including follow values such as `"system"` and `"auto"`.
+pub fn dock_defaults() -> Value {
+    Value::Object(Style::default().to_json())
+}
+
 fn levels_json(t: TintLevels) -> Value {
     json!({ "quiet": num(t.quiet), "active": num(t.active), "hover": num(t.hover) })
 }
@@ -331,6 +336,14 @@ impl Look {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn defaults_round_trip_through_stored_json() {
+        let style = Style::default();
+        let stored = dock_defaults();
+        assert_eq!(Value::Object(style.to_json()), stored);
+        assert_eq!(Value::Object(Style::from_json(&stored).to_json()), stored);
+    }
 
     fn look(dock: Value, light: bool) -> Look {
         let mut sys = system::read();

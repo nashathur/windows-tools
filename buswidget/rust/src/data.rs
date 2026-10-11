@@ -36,18 +36,6 @@ pub struct Config {
 const FIELDS: [&str; 7] = ["agency", "line", "stop_code", "label", "dest", "badge_color", "badge_text"];
 
 impl Config {
-    fn default_stop() -> Self {
-        Config {
-            agency: "UOV".into(),
-            line: "3".into(),
-            stop_code: "59150850".into(), // Rhônedreef, platform towards Willem Dreeslaan / Utrecht CS
-            label: "Rhônedreef → CS".into(),
-            dest: "Utrecht CS".into(), // line 3 is a loop: its headsign "Zuilen" would mislead here
-            badge_color: String::new(),
-            badge_text: String::new(),
-        }
-    }
-
     fn get(&self, k: &str) -> &str {
         match k {
             "agency" => &self.agency,
@@ -76,6 +64,7 @@ impl Config {
     /// Writes these keys into the bus section, keeping the others (Block's `compact` and
     /// `show_on_taskbar`); no write if nothing changed.
     fn merge(&self) -> io::Result<()> {
+        let fields = self.to_json();
         settings::update(|root| {
             if !root.is_object() {
                 *root = serde_json::json!({});
@@ -84,16 +73,25 @@ impl Config {
             if !sec.is_object() {
                 *sec = serde_json::json!({});
             }
-            for k in FIELDS {
-                sec[k] = serde_json::json!(self.get(k));
+            for (key, value) in fields.as_object().unwrap() {
+                sec[key] = value.clone();
             }
         })
+    }
+
+    /// Returns this configuration as the widget's settings defaults.
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut fields = serde_json::Map::new();
+        for key in FIELDS {
+            fields.insert(key.to_string(), serde_json::json!(self.get(key)));
+        }
+        serde_json::Value::Object(fields)
     }
 
     /// The old data\config.txt (key = value lines), migrated into the shared file once.
     fn load_old(dir: &Path) -> Option<Self> {
         let text = fs::read_to_string(dir.join("config.txt")).ok()?;
-        let mut c = Self::default_stop();
+        let mut c = Self::default();
         for l in text.lines().filter(|l| !l.trim_start().starts_with('#')) {
             if let Some((k, v)) = l.split_once('=') {
                 c.set(k.trim(), v.trim().to_string());
@@ -105,8 +103,8 @@ impl Config {
     /// Loads the bus section. On first run it moves data\config.txt in (kept as
     /// config.txt.migrated) or writes the defaults.
     pub fn load(dir: &Path) -> Self {
-        let Some(root) = settings::read() else { return Self::default_stop() };
-        let mut c = Self::default_stop();
+        let Some(root) = settings::read() else { return Self::default() };
+        let mut c = Self::default();
         match root.get("bus").and_then(|b| b.as_object()) {
             Some(bus) => {
                 for k in FIELDS {
@@ -134,6 +132,20 @@ impl Config {
     /// What the cached schedule depends on.
     pub fn sig(&self) -> String {
         format!("{}/{}/{}", self.agency, self.line, self.stop_code)
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            agency: "UOV".into(),
+            line: "3".into(),
+            stop_code: "59150850".into(), // Rhônedreef, platform towards Willem Dreeslaan / Utrecht CS
+            label: "Rhônedreef → CS".into(),
+            dest: "Utrecht CS".into(), // line 3 is a loop: its headsign "Zuilen" would mislead here
+            badge_color: String::new(),
+            badge_text: String::new(),
+        }
     }
 }
 
@@ -418,7 +430,7 @@ pub fn load_schedule(dir: &Path) -> Option<Schedule> {
         // older cache (always the default stop): still use it, but mark it stale so it gets rebuilt
         Schedule {
             built: String::new(),
-            sig: Config::default_stop().sig(),
+            sig: Config::default().sig(),
             stops: h.get(1)?.split(',').map(String::from).collect(),
             color: h.get(2).unwrap_or(&"").to_string(),
             text_color: h.get(3).unwrap_or(&"").to_string(),
@@ -621,6 +633,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn config_defaults_json_has_all_fields_and_default_stop() {
+        let defaults = Config::default().to_json();
+        let fields = defaults.as_object().unwrap();
+        assert_eq!(fields.len(), FIELDS.len());
+        assert!(FIELDS.iter().all(|key| fields.contains_key(*key)));
+        assert_eq!(defaults["agency"], "UOV");
+        assert_eq!(defaults["line"], "3");
+        assert_eq!(defaults["stop_code"], "59150850");
+    }
+
+    #[test]
     fn readonly_timetable_reports_missing_file_without_creating_one() {
         let dir = std::env::temp_dir().join(format!("bus-no-timetable-{}-{}", std::process::id(), now()));
         let e = match open_timetable_readonly(&dir) { Ok(_) => panic!("missing timetable opened"), Err(e) => e };
@@ -632,7 +655,7 @@ mod tests {
     #[test]
     fn parses_saved_response() {
         let body = fs::read_to_string("tests/tpc_59150850.json").expect("sample response");
-        let cfg = Config::default_stop();
+        let cfg = Config::default();
         let buses = parse_live(&body, &cfg).unwrap();
         assert!(!buses.is_empty());
         for b in &buses {

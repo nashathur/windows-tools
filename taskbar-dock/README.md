@@ -184,10 +184,12 @@ cargo test --release
 
 ### dockctl: command-line control of widgets on Block
 
-`taskbar-dock\dockctl.exe <weather|bus|discord|media|all> <command> [args]` talks to a running
+`taskbar-dock\dockctl.exe [--timeout <s>] <weather|bus|discord|media|all> <command> [args]` talks to a running
 widget and prints JSON. Only widgets on Block answer (all four since plan step 8); one
 that isn't is reported as `"absent": "running, not on Block yet"` or `"not running"`.
-For `all` that isn't an error. Exit code: 0 ok, 1 error / no reply, 2 usage.
+For `all` that isn't an error. Exit code: 0 all succeeded, 1 error or timeout, 2 usage error.
+For `all`, 2 takes precedence if any widget reports a usage error. The default deadline is 5
+seconds, or 120 seconds for `do`; `--timeout` overrides it.
 
 | Command | Does |
 |---|---|
@@ -202,15 +204,21 @@ For `all` that isn't an error. Exit code: 0 ok, 1 error / no reply, 2 usage.
 | `menu click <id\|label>` | a row, as a click does: a switch flips and the menu stays open; opens the menu first if needed |
 | `tray click left\|right` | a click on the tray icon (error while it isn't shown) |
 | `set <key> <value>` / `get [key]` | the widget's settings section, written by the widget (`settings::update`) and followed at once; value is JSON or else text; secrets (`*key*`, `*token*`, …) print as `***` |
+| `set/get --dock ...` | set or inspect the shared `dock` section; changes are re-read and drawn before the reply |
+| `keys [--dock]` | sorted setting names with current and default values; secret values are masked |
+| `unset [--dock] <key>` | restore a setting's default |
+| `do help` | list this widget's content commands and one-line usage |
+| `do <name> [args]` | run a widget content command; the default timeout is 120 seconds |
 | `log [n]` | the widget's log, last n lines (`Spec::log_file`) |
 | `redraw`, `quit` | as Block does them |
 | `simulate taskbar-restarted`, `simulate look-changed` | test only: Block's Explorer-restart path; re-read Windows' theme and tell the widget even if unchanged |
 
-How it works (`src\ctl.rs`, `src\block\remote.rs`, `src\bin\dockctl.rs`): dockctl finds the
-widget's hidden main window (`<strip class>Main`, owned by the widget's exe) and sends a
-`WM_COPYDATA`; Block runs the command through its own paths and replies with a `WM_COPYDATA` to
-dockctl's window. The widget does the reading and writing, so it's the real `%APPDATA%` even
-from a Claude session. Build: `cargo build --release --bin dockctl`, then copy
+How it works (`src\ctl.rs`, `src\block\remote.rs`, `src\bin\dockctl.rs`): protocol v2 sends
+each `WM_COPYDATA` request with a process-unique id; replies echo it, and dockctl accepts a reply
+only from the widget window it asked. It pumps messages until the matching reply or deadline.
+Slow content work may reply later through Block's UI thread. The widget copies request bytes
+before returning from the message. The widget does the reading and writing, so it's the real
+`%APPDATA%` even from a Claude session. Build: `cargo build --release --bin dockctl`, then copy
 `target\release\dockctl.exe` to `taskbar-dock\`.
 
 Examples:

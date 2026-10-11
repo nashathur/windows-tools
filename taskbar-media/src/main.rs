@@ -470,6 +470,7 @@ fn main() {
     // the text column follows the track: Block glides the width (unless `fixed_width`)
     spec.glide_width = true;
     spec.log_file = Some(log_file());
+    spec.defaults = Some(|| serde_json::to_value(Config::default()).unwrap_or_default());
     log("started");
     let app = App {
         main: 0,

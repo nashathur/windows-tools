@@ -104,6 +104,8 @@ pub struct Spec {
     pub glide_width: bool,
     /// The widget's log file, for dockctl's `log` (None: dockctl says there is none).
     pub log_file: Option<std::path::PathBuf>,
+    /// The widget's stored configuration defaults, before Block adds its own settings.
+    pub defaults: Option<fn() -> serde_json::Value>,
 }
 
 impl Spec {
@@ -122,6 +124,7 @@ impl Spec {
             stretch: false,
             glide_width: false,
             log_file: None,
+            defaults: None,
         }
     }
 }
@@ -338,6 +341,78 @@ pub struct Ctx {
     main: isize,
 }
 
+/// A command error that dockctl can display.
+pub struct CommandError {
+    /// Dockctl exits 2 and shows the command's usage.
+    pub usage: bool,
+    /// The error text.
+    pub message: String,
+}
+
+/// A command that finishes now or will answer through its token later.
+pub enum CommandReply {
+    Done(Result<serde_json::Value, CommandError>),
+    Pending,
+}
+
+pub(crate) struct CommandResult {
+    pub requester: isize,
+    pub id: u64,
+    pub result: Result<serde_json::Value, CommandError>,
+    pub usage: Option<&'static str>,
+}
+
+/// Posted to Block's main window when a command token is finished.
+pub const WM_COMMAND_REPLY: u32 = windows_sys::Win32::UI::WindowsAndMessaging::WM_APP + 0x3F01;
+
+/// Completes one asynchronous dockctl command from any thread.
+pub struct ReplyToken {
+    main: isize,
+    requester: isize,
+    id: u64,
+    finished: bool,
+    usage: Option<&'static str>,
+    logger: fn(&str),
+}
+
+impl ReplyToken {
+    pub(crate) fn new(main: isize, requester: isize, id: u64, usage: Option<&'static str>, logger: fn(&str)) -> Self {
+        Self { main, requester, id, finished: false, usage, logger }
+    }
+
+    /// Creates a token that answers nobody, for widget unit tests.
+    pub fn detached() -> Self {
+        Self { main: 0, requester: 0, id: 0, finished: false, usage: None, logger: |_| {} }
+    }
+
+    fn post(&mut self, result: Result<serde_json::Value, CommandError>) {
+        self.finished = true;
+        if self.main == 0 {
+            return;
+        }
+        let payload = Box::new(CommandResult { requester: self.requester, id: self.id, result, usage: self.usage });
+        let raw = Box::into_raw(payload);
+        let posted = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(self.main, WM_COMMAND_REPLY, 0, raw as isize) };
+        if posted == 0 {
+            unsafe { drop(Box::from_raw(raw)); }
+            (self.logger)("dockctl: dropping command reply because the main window is gone");
+        }
+    }
+
+    /// Posts the result to Block's main window, which sends it to dockctl.
+    pub fn finish(mut self, result: Result<serde_json::Value, CommandError>) {
+        self.post(result);
+    }
+}
+
+impl Drop for ReplyToken {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.post(Err(CommandError { usage: false, message: "the command ended without an answer".into() }));
+        }
+    }
+}
+
 pub(crate) enum Request {
     Redraw,
     RedrawPanel,
@@ -454,6 +529,14 @@ impl<T: std::any::Any> AsAny for T {
 /// `draw` are required. Callbacks with a [`Ctx`] record requests; the others must not change
 /// anything outside `self`.
 pub trait Content: AsAny + 'static {
+    /// The widget's available `do` commands and their one-line usage.
+    fn commands(&self) -> Vec<(&'static str, &'static str)> { Vec::new() }
+
+    /// Runs a widget-specific command. Slow work may finish through `token` on any thread.
+    fn command(&mut self, _name: &str, _args: &[String], _token: ReplyToken, _ctx: &mut Ctx) -> CommandReply {
+        CommandReply::Done(Err(CommandError { usage: true, message: "unknown command".into() }))
+    }
+
     /// The strip's natural width for `f` (full or `compact`), px. Called unzoomed for the dock's
     /// fit and at the drag zoom for drawing.
     fn measure(&mut self, f: &Frame, compact: bool) -> i32;

@@ -14,6 +14,8 @@ use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
 thread_local! {
     /// A row `menu click` will click once the menu it opened is up.
     static PENDING: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// A widget that answers `Done` has dropped or kept its token; ignore the token's later drop-reply.
+    static DONE_IDS: std::cell::RefCell<std::collections::HashSet<u64>> = std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
 /// Posted to the main window to click [`PENDING`] from inside the menu's loop.
@@ -33,38 +35,192 @@ pub(super) fn pending_click() {
 /// WM_COPYDATA on the main window: a dockctl request (anything else: 0, not handled).
 pub(super) fn on_copydata(wp: WPARAM, lp: LPARAM) -> LRESULT {
     let cds = unsafe { &*(lp as *const COPYDATASTRUCT) };
-    if cds.dwData != ctl::REQUEST {
+    if cds.dwData != ctl::REQUEST && cds.dwData != ctl::REQUEST2 {
         return 0;
     }
-    let bytes = if cds.lpData.is_null() { &[][..] } else { unsafe { std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize) } };
-    let sender = wp as HWND;
-    match ctl::decode(bytes).and_then(|a| ctl::parse(&a)) {
-        Ok(cmd) => {
-            log(&format!("dockctl: {cmd:?}"));
-            run(sender, cmd)
+    let bytes = if cds.lpData.is_null() { Vec::new() } else { unsafe { std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize).to_vec() } };
+    let v2 = cds.dwData == ctl::REQUEST2;
+    let (id, args) = if v2 {
+        match ctl::decode2(&bytes) {
+            Ok((id, args)) => (id, args),
+            Err(e) => {
+                send_reply(ReplyTo { hwnd: wp as HWND, id: 0, v2 }, &ctl::error(e));
+                return 1;
+            }
         }
-        Err(e) => reply(sender, &ctl::error(e)),
+    } else {
+        (0, match ctl::decode(&bytes) {
+            Ok(args) => args,
+            Err(e) => {
+                send_reply(ReplyTo { hwnd: wp as HWND, id: 0, v2 }, &ctl::error(e));
+                return 1;
+            }
+        })
+    };
+    let to = ReplyTo { hwnd: wp as HWND, id, v2 };
+    match ctl::parse(&args) {
+        Ok(cmd) => {
+            log(&command_log(&cmd));
+            run(to, cmd)
+        }
+        Err(e) => send_reply(to, &ctl::error(e)),
     }
     1
 }
 
-fn reply(to: HWND, text: &str) {
+#[derive(Clone, Copy)]
+struct ReplyTo { hwnd: HWND, id: u64, v2: bool }
+
+fn send_reply(to: ReplyTo, text: &str) {
     let main = st(|s| s.main).unwrap_or(0);
-    let cds = COPYDATASTRUCT { dwData: ctl::REPLY, cbData: text.len() as u32, lpData: text.as_ptr() as *mut _ };
+    let bytes = if to.v2 { ctl::encode_reply2(to.id, text) } else { text.as_bytes().to_vec() };
+    let cds = COPYDATASTRUCT { dwData: if to.v2 { ctl::REPLY2 } else { ctl::REPLY }, cbData: bytes.len() as u32, lpData: bytes.as_ptr() as *mut _ };
     unsafe {
         let mut _r = 0;
-        SendMessageTimeoutW(to, WM_COPYDATA, main as WPARAM, &cds as *const _ as LPARAM, SMTO_ABORTIFHUNG, 2000, &mut _r);
+        if SendMessageTimeoutW(to.hwnd, WM_COPYDATA, main as WPARAM, &cds as *const _ as LPARAM, SMTO_ABORTIFHUNG, 2000, &mut _r) == 0 {
+            log("dockctl: reply delivery failed; requester is gone or hung");
+        }
     }
 }
 
 /// Reply, and let the sender go on while this thread carries on with the command.
-fn reply_and_release(to: HWND, text: &str) {
-    reply(to, text);
+fn reply_and_release(to: ReplyTo, text: &str) {
+    send_reply(to, text);
     unsafe { ReplyMessage(1) };
 }
 
-fn run(to: HWND, cmd: Command) {
-    let ok = |v: Value| reply(to, &ctl::ok(v));
+fn usage_reply(message: &str, usage: Option<&str>) -> String {
+    let mut value = json!({ "ok": false, "kind": "usage", "error": message });
+    if let Some(usage) = usage { value["usage"] = json!(usage); }
+    value.to_string()
+}
+
+fn command_log(cmd: &Command) -> String {
+    match cmd {
+        Command::Set(_, key, value) => format!("dockctl: Set({key:?}, {:?})", ctl::mask_setting(key, value)),
+        _ => format!("dockctl: {cmd:?}"),
+    }
+}
+
+fn defaults_for(dock: bool) -> Result<(&'static str, Value), String> {
+    let (section, mut defaults) = if dock {
+        ("dock", crate::style::dock_defaults())
+    } else {
+        let Some((section, defaults)) = st(|s| (s.spec.section, s.spec.defaults)) else {
+            return Err("this widget doesn't list its defaults (Spec::defaults)".into());
+        };
+        let Some(make_defaults) = defaults else {
+            return Err("this widget doesn't list its defaults (Spec::defaults)".into());
+        };
+        (section, make_defaults())
+    };
+    if !defaults.is_object() {
+        defaults = json!({});
+    }
+    if !dock {
+        defaults["compact"] = json!(false);
+        defaults["show_on_taskbar"] = json!(true);
+    }
+    Ok((section, defaults))
+}
+
+fn settings_written(dock: bool) {
+    if dock {
+        refresh_look(true);
+        redraw();
+    } else {
+        follow_settings();
+        redraw();
+        tray_sync(false, false);
+    }
+}
+
+fn keys(to: ReplyTo, dock: bool) {
+    let (section, defaults) = match defaults_for(dock) {
+        Ok(values) => values,
+        Err(error) => return send_reply(to, &ctl::error(error)),
+    };
+    let current = settings::section(section).unwrap_or_else(|| json!({}));
+    let mut names: Vec<String> = defaults.as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default();
+    names.sort();
+    let rows: Vec<Value> = names.iter().map(|key| ctl::key_row(key, current.get(key), defaults.get(key))).collect();
+    send_reply(to, &ctl::ok(json!({ "section": section, "keys": rows })));
+}
+
+fn unset(to: ReplyTo, dock: bool, key: &str) {
+    let (section, defaults) = match defaults_for(dock) {
+        Ok(values) => values,
+        Err(error) => return send_reply(to, &ctl::error(error)),
+    };
+    let value = match ctl::unset_default(&defaults, key) {
+        Ok(value) => value,
+        Err(message) => return send_reply(to, &ctl::error(message)),
+    };
+    let res = settings::update(|root| {
+        if !root.is_object() {
+            *root = json!({});
+        }
+        if !root[section].is_object() {
+            root[section] = json!({});
+        }
+        root[section][key] = value.clone();
+    });
+    match res {
+        Ok(()) => {
+            settings_written(dock);
+            let shown = ctl::mask_setting(key, &value);
+            send_reply(to, &ctl::ok(json!({ "key": key, "value": shown })));
+        }
+        Err(e) => send_reply(to, &ctl::error(format!("saving failed: {e}"))),
+    }
+}
+
+fn do_command(to: ReplyTo, name: &str, args: &[String]) {
+    let Some(names) = st(|s| s.content.commands()) else { return };
+    if name == "help" && args.is_empty() {
+        let list: Vec<Value> = names.iter().map(|(name, usage)| json!({ "name": name, "usage": usage })).collect();
+        return send_reply(to, &ctl::ok(json!({ "commands": list })));
+    }
+    let Some((_, usage)) = names.iter().find(|(n, _)| *n == name) else {
+        let message = if names.is_empty() {
+            format!("unknown command {name:?}: this widget has no do commands")
+        } else {
+            let known = names.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ");
+            format!("unknown command {name:?}; available: {known}")
+        };
+        return send_reply(to, &usage_reply(&message, None));
+    };
+    // a v1 request can't take a late reply
+    if !to.v2 {
+        return send_reply(to, &ctl::error("this dockctl is older than the widget: rebuild dockctl"));
+    }
+    let Some((main, logger)) = st(|s| (s.main, s.spec.log)) else { return };
+    let token = ReplyToken::new(main, to.hwnd, to.id, Some(*usage), logger);
+    let reply = call(|content, ctx| content.command(name, args, token, ctx));
+    if let Some(CommandReply::Done(result)) = reply {
+        DONE_IDS.with(|ids| ids.borrow_mut().insert(to.id));
+        send_result(to, result, Some(usage));
+    }
+}
+
+fn send_result(to: ReplyTo, result: Result<Value, CommandError>, usage: Option<&str>) {
+    match result {
+        Ok(value) => send_reply(to, &ctl::ok(value)),
+        Err(error) if error.usage => send_reply(to, &usage_reply(&error.message, usage)),
+        Err(error) => send_reply(to, &ctl::error(error.message)),
+    }
+}
+
+/// Handles a posted result from a worker, on Block's UI thread.
+pub(super) fn command_reply(lp: LPARAM) {
+    if lp == 0 { return; }
+    let result = unsafe { *Box::from_raw(lp as *mut CommandResult) };
+    if DONE_IDS.with(|ids| ids.borrow_mut().remove(&result.id)) { return; }
+    send_result(ReplyTo { hwnd: result.requester, id: result.id, v2: true }, result.result, result.usage);
+}
+
+fn run(to: ReplyTo, cmd: Command) {
+    let ok = |v: Value| send_reply(to, &ctl::ok(v));
     match cmd {
         Command::State => ok(state()),
         Command::Panel(op) => {
@@ -74,7 +230,7 @@ fn run(to: HWND, cmd: Command) {
                 PanelOp::Close => panel_closed(false),
                 PanelOp::OpenPicker => {
                     let opened = open_panel_kind_with(PanelKind::Picker, true);
-                    if !opened { return reply(to, &ctl::error("this widget has no picker panel")); }
+                    if !opened { return send_reply(to, &ctl::error("this widget has no picker panel")); }
                 }
             }
             ok(json!({ "panel": panel_state() }))
@@ -120,7 +276,7 @@ fn run(to: HWND, cmd: Command) {
             let (open, rows) = menu_rows();
             let named: Vec<(usize, String)> = rows.iter().map(|r| (r.id, r.label.clone())).collect();
             let Some(row) = ctl::find_row(&named, &name).and_then(|id| rows.into_iter().find(|r| r.id == id)) else {
-                return reply(to, &ctl::error(format!("no menu row {name:?}")));
+                return send_reply(to, &ctl::error(format!("no menu row {name:?}")));
             };
             let what = json!({ "clicked": row.label, "id": row.id, "switch_was": row.switch, "opened_menu": !open });
             if open {
@@ -137,7 +293,7 @@ fn run(to: HWND, cmd: Command) {
         }
         Command::Tray(button) => {
             if st(|s| s.tray_on) != Some(true) {
-                return reply(to, &ctl::error("the tray icon isn't shown"));
+                return send_reply(to, &ctl::error("the tray icon isn't shown"));
             }
             match button {
                 MouseButton::Left => {
@@ -150,8 +306,8 @@ fn run(to: HWND, cmd: Command) {
                 }
             }
         }
-        Command::Set(key, value) => {
-            let Some(section) = st(|s| s.spec.section) else { return };
+        Command::Set(dock, key, value) => {
+            let section = if dock { "dock" } else { let Some(s) = st(|s| s.spec.section) else { return }; s };
             let res = settings::update(|root| {
                 if !root.is_object() {
                     *root = json!({});
@@ -164,36 +320,37 @@ fn run(to: HWND, cmd: Command) {
             match res {
                 Ok(()) => {
                     // as the watch timer would, at once
-                    follow_settings();
-                    redraw();
-                    tray_sync(false, false);
-                    let shown = if ctl::is_secret(&key) { json!("***") } else { value };
+                    settings_written(dock);
+                    let shown = ctl::mask_setting(&key, &value);
                     ok(json!({ "key": key, "value": shown }));
                 }
-                Err(e) => reply(to, &ctl::error(format!("saving failed: {e}"))),
+                Err(e) => send_reply(to, &ctl::error(format!("saving failed: {e}"))),
             }
         }
-        Command::Get(key) => {
-            let Some(section) = st(|s| s.spec.section) else { return };
+        Command::Get(dock, key) => {
+            let section = if dock { "dock" } else { let Some(s) = st(|s| s.spec.section) else { return }; s };
             let sec = ctl::mask(&settings::section(section).unwrap_or(Value::Null));
             match key {
                 None => ok(json!({ "section": section, "value": sec })),
                 Some(k) => match sec.get(&k) {
                     Some(v) => ok(json!({ "key": k, "value": v })),
-                    None => reply(to, &ctl::error(format!("{section}: no key {k:?}"))),
+                    None => send_reply(to, &ctl::error(format!("{section}: no key {k:?}"))),
                 },
             }
         }
+        Command::Keys(dock) => keys(to, dock),
+        Command::Unset(dock, key) => unset(to, dock, &key),
+        Command::Do(name, args) => do_command(to, &name, &args),
         Command::Log(n) => {
             let Some(file) = st(|s| s.spec.log_file.clone()).flatten() else {
-                return reply(to, &ctl::error("this widget has no log file (Spec::log_file)"));
+                return send_reply(to, &ctl::error("this widget has no log file (Spec::log_file)"));
             };
             match std::fs::read(&file) {
                 Ok(b) => {
                     let text = String::from_utf8_lossy(&b);
                     ok(json!({ "file": file.display().to_string(), "lines": ctl::tail(&text, n) }));
                 }
-                Err(e) => reply(to, &ctl::error(format!("{}: {e}", file.display()))),
+                Err(e) => send_reply(to, &ctl::error(format!("{}: {e}", file.display()))),
             }
         }
         Command::Redraw => {
@@ -299,4 +456,16 @@ fn state() -> Value {
         "tray": { "shown": tray_on, "tip": tip },
         "look": look_state(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_log_masks_secret_set_values() {
+        let line = command_log(&Command::Set(false, "knmi_api_key".into(), json!("sensitive")));
+        assert_eq!(line, "dockctl: Set(\"knmi_api_key\", String(\"***\"))");
+        assert!(!line.contains("sensitive"));
+    }
 }

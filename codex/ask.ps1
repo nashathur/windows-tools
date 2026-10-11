@@ -5,7 +5,8 @@ param(
     [string]$Dir = (Get-Location).Path,       # Codex's working root
     [string]$Out,                             # final answer; default <PromptFile>.answer.md
     [ValidateSet('read-only', 'workspace-write')][string]$Sandbox = 'read-only',
-    [string]$Review,                          # 'uncommitted', 'base:<branch>' or 'commit:<sha>'
+    [string]$Review,                          # 'uncommitted', 'base:<branch>', 'commit:<sha>', or 'custom' (-PromptFile names target and focus)
+    [switch]$Search,                          # live web search; read-only ask calls only
     [ValidateSet('build', 'review')][string]$Role,  # model/effort/sandbox preset; inferred from the mode when omitted
     [string]$Model,
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'max', 'ultra')][string]$Effort = 'high',  # CLI default is 'none'
@@ -72,7 +73,13 @@ $exe = Get-ChildItem "$env:LOCALAPPDATA\OpenAI\Codex\bin\*\codex.exe" |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $exe) { throw 'codex.exe not found under %LOCALAPPDATA%\OpenAI\Codex\bin (is the Codex app installed?)' }
 
-if ([bool]$PromptFile -eq [bool]$Review) { throw 'Give exactly one of -PromptFile or -Review (review presets take no prompt).' }
+if (-not ($PromptFile -or $Review)) { throw 'Give -PromptFile, -Review, or -Review with -PromptFile (focus instructions).' }
+if ($Resume -and $Review) { throw '-Review starts a fresh review: drop -Resume.' }
+# The CLI takes review instructions only without a preset: the prompt itself names what to review and the focus.
+if ($Review -eq 'custom' -and -not $PromptFile) { throw '-Review custom needs -PromptFile (what to review, and the focus).' }
+if ($Review -and $Review -ne 'custom' -and $PromptFile) {
+    throw "-Review $Review takes no instructions (CLI limit): use -Review custom -PromptFile, naming the diff or files to review."
+}
 if ($Resume -and -not $PromptFile) { throw '-Resume needs -PromptFile (the follow-up message).' }
 if ($Resume -and $Worktree) { throw '-Resume reruns in the session''s own dir (a worktree session keeps its worktree): drop -Worktree.' }
 # `exec resume` runs in the launch dir and takes no -C/-s, so -Keep records both and -Resume restores them.
@@ -100,6 +107,10 @@ if ($Role -eq 'build') {
     if (-not $Resume -and -not $PSBoundParameters.ContainsKey('Sandbox')) { $Worktree = [switch]$true }
     if (-not $Worktree -and $Sandbox -eq 'read-only') { throw "-Role build needs write access, but this call is read-only$resumed." }
 }
+# Web pages can carry instructions aimed at Codex, so search only where it can't write; never for a review.
+if ($Search -and ($Review -or $Worktree -or $Sandbox -ne 'read-only')) {
+    throw "-Search is for read-only ask calls only (no -Review, -Worktree or write access)$resumed."
+}
 if (-not $PSBoundParameters.ContainsKey('Model'))  { $Model  = $roles[$Role].Model }
 if (-not $PSBoundParameters.ContainsKey('Effort')) { $Effort = $roles[$Role].Effort }
 
@@ -120,7 +131,9 @@ Mark anything you did not verify. If something is ambiguous, state your assumpti
 
 '@
 
-$args_ = @('exec')
+$args_ = @()
+if ($Search) { $args_ += '--search' }   # a top-level flag: it goes before `exec`
+$args_ += 'exec'
 if ($Resume) {
     $args_ += @('resume', $Resume, '-c', "sandbox_mode=$Sandbox")
 } elseif ($Review) {
@@ -129,6 +142,7 @@ if ($Resume) {
         '^uncommitted$' { $args_ += '--uncommitted' }
         '^base:(.+)$'   { $args_ += @('--base', $Matches[1]) }
         '^commit:(.+)$' { $args_ += @('--commit', $Matches[1]) }
+        '^custom$'      { }   # the prompt (stdin) names the target
         default         { throw "Bad -Review '$Review'" }
     }
 } else {
@@ -143,12 +157,13 @@ if (-not ($Keep -or $Resume -or $Worktree)) { $args_ += '--ephemeral' }   # the 
 $args_ += @('-o', "`"$Out`"", '-c', "model_reasoning_effort=$Effort")
 if ($Model) { $args_ += @('-m', $Model) }
 
-# Stdin carries the prompt (with the role preamble on a fresh session); empty for a review, so nothing waits on it.
+# Stdin carries the prompt: with the role preamble on a fresh ask, bare as review focus instructions
+# (the preamble would override the review's own rubric); empty for a plain review, so nothing waits on it.
 $stdin = "$base.stdin.txt"
 $text = ''
 if ($PromptFile) {
     $text = [IO.File]::ReadAllText($PromptFile)
-    if (-not $Resume) { $text = $preamble + $text }
+    if (-not ($Resume -or $Review)) { $text = $preamble + $text }
     $args_ += '-'
 }
 [IO.File]::WriteAllText($stdin, $text, (New-Object Text.UTF8Encoding $false))
