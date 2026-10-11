@@ -23,11 +23,11 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::{fs, thread, time::Duration};
 
-use taskbar_dock::block::{self, Canvas, Content, Ctx, Float, FloatAt, Frame, MenuBuilder, PanelFrame, PanelKind, PanelMouse, Spec};
+use taskbar_dock::block::{self, Canvas, Content, Ctx, Float, FloatAt, Frame, MenuBuilder, PanelFrame, PanelKey, PanelKind, PanelMouse, Spec};
 use taskbar_dock::menu_panel::{glyph, Row};
 use taskbar_dock::style::Look;
 use taskbar_dock::theme::{self, Theme};
-use taskbar_dock::{badge, dock, draw, system, wide};
+use taskbar_dock::{badge, draw, wide};
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
@@ -80,25 +80,41 @@ fn badge_colors() -> (u32, u32) {
     });
     let table = &table;
     let (cfg, sched, ..) = current();
-    let (bg, fg) = if let Some(bg) = hex_color(&cfg.badge_color) {
-        (Some(bg), hex_color(&cfg.badge_text))
-    } else if let Some(c) = data::find_line_color(table, &cfg.agency, &cfg.line).filter(|c| hex_color(&c.bg).is_some()) {
-        (hex_color(&c.bg), hex_color(&c.fg))
-    } else {
-        sched.map_or((None, None), |s| (hex_color(&s.color), hex_color(&s.text_color)))
-    };
+    let route = sched.as_ref().map_or(("", ""), |s| (s.color.as_str(), s.text_color.as_str()));
+    // the settings' own badge colour wins; its text is given, or the contrast to that colour
+    if let Some(bg) = hex_color(&cfg.badge_color) {
+        return (bg, hex_color(&cfg.badge_text).unwrap_or_else(|| badge::contrast_text(bg)));
+    }
+    let (bg, fg) = line_badge_colors_for(table, &cfg.agency, &cfg.line, route.0, route.1);
+    (bg, hex_color(&cfg.badge_text).unwrap_or(fg))
+}
+
+/// A line's badge colours: line_colors.txt (an entry with a valid colour), else the route's GTFS
+/// colour, else turquoise; the text colour given, or the contrast to the badge.
+fn line_badge_colors_for(table: &[data::LineColor], agency: &str, line: &str, route_bg: &str, route_fg: &str) -> (u32, u32) {
+    let (bg, fg) = data::find_line_color(table, agency, line)
+        .filter(|c| hex_color(&c.bg).is_some())
+        .map_or((hex_color(route_bg), hex_color(route_fg)), |c| (hex_color(&c.bg), hex_color(&c.fg)));
     let bg = bg.unwrap_or_else(badge_fallback);
     (bg, fg.unwrap_or_else(|| badge::contrast_text(bg)))
 }
 
-fn log(m: &str) {
-    data::log(data_dir(), m);
+pub(crate) fn line_badge_color(agency: &str, line: &str, route_bg: &str, route_fg: &str) -> (theme::Rgb, theme::Rgb) {
+    thread_local!(static TABLE: RefCell<(Option<std::time::SystemTime>, Vec<data::LineColor>)> = RefCell::new((None, Vec::new())));
+    let path = data_dir().join("line_colors.txt");
+    let mtime = fs::metadata(&path).and_then(|m| m.modified()).ok();
+    let table = TABLE.with(|t| {
+        let mut t = t.borrow_mut();
+        if t.0 != mtime || (mtime.is_some() && t.1.is_empty()) { *t = (mtime, data::load_line_colors(data_dir())); }
+        t.1.clone()
+    });
+    let (bg, fg) = line_badge_colors_for(&table, agency, line, route_bg, route_fg);
+    (theme::Rgb((bg & 255) as u8, ((bg >> 8) & 255) as u8, ((bg >> 16) & 255) as u8),
+     theme::Rgb((fg & 255) as u8, ((fg >> 8) & 255) as u8, ((fg >> 16) & 255) as u8))
 }
 
-/// The display scale where the strip is (or the taskbar, with none), for the picker.
-fn scale_now() -> f32 {
-    let strip = block::strip_window();
-    system::scale_for(if strip != 0 { strip } else { unsafe { dock::taskbar() } })
+fn log(m: &str) {
+    data::log(data_dir(), m);
 }
 
 /// The bus widget: Block's Content. The data lives in the worker's `Shared`; this keeps what
@@ -110,6 +126,7 @@ struct App {
     shown: String,
     /// The tray logo as last drawn: line and badge colours.
     logo: String,
+    picker: picker::Picker,
 }
 
 impl App {
@@ -151,30 +168,39 @@ impl Content for App {
         if id == TIMER_TICK {
             self.refresh(ctx);
         }
+        self.picker.timer(id, ctx);
     }
 
-    fn on_message(&mut self, msg: u32, _wp: usize, _lp: isize, ctx: &mut Ctx) -> Option<isize> {
-        (msg == WM_DATA).then(|| {
-            self.refresh(ctx);
-            0
-        })
+    fn on_message(&mut self, msg: u32, _wp: usize, lp: isize, ctx: &mut Ctx) -> Option<isize> {
+        if msg == picker::WM_PICKER {
+            if lp != 0 { let posted = unsafe { *Box::from_raw(lp as *mut picker::Posted) }; self.picker.accept_result(posted.generation, posted.data, ctx); }
+            return Some(0);
+        }
+        (msg == WM_DATA).then(|| { self.refresh(ctx); 0 })
     }
 
-    fn panel_size(&mut self, _kind: PanelKind, scale: f32) -> Option<(i32, i32)> {
-        Some(popup::panel_size(&self.look, scale))
+    fn panel_size(&mut self, kind: PanelKind, scale: f32) -> Option<(i32, i32)> {
+        Some(match kind { PanelKind::Main => popup::panel_size(&self.look, scale), PanelKind::Picker => ((theme::size::PANEL_WIDE*scale).round() as i32,(theme::size::PANEL_PICKER_HEIGHT*scale).round() as i32) })
     }
 
-    fn panel_draw(&mut self, _kind: PanelKind, cv: &mut Canvas, f: &PanelFrame) {
+    fn panel_draw(&mut self, kind: PanelKind, cv: &mut Canvas, f: &PanelFrame) {
         self.look = f.look.clone();
-        popup::panel_draw(cv.dc, f.look, f.scale, f.w);
+        match kind { PanelKind::Main => popup::panel_draw(cv.dc, f.look, f.scale, f.w), PanelKind::Picker => self.picker.draw(cv,f) }
     }
 
-    fn panel_mouse(&mut self, _kind: PanelKind, ev: PanelMouse, ctx: &mut Ctx) {
+    fn panel_mouse(&mut self, kind: PanelKind, ev: PanelMouse, ctx: &mut Ctx) {
+        if kind == PanelKind::Picker { self.picker.mouse(ev,ctx); return; }
         // a click on the departures closes them (as before the port)
         if let PanelMouse::Up(..) = ev {
             ctx.close_panel();
         }
     }
+
+    fn panel_shown(&mut self, kind: PanelKind, open: bool, ctx: &mut Ctx) { if kind == PanelKind::Picker { self.picker.shown(open,ctx); } }
+    fn panel_key(&mut self, kind: PanelKind, key: PanelKey, ctx: &mut Ctx) -> bool { kind == PanelKind::Picker && self.picker.key(key,ctx) }
+    fn panel_char(&mut self, kind: PanelKind, text: &str, ctx: &mut Ctx) { if kind == PanelKind::Picker { self.picker.character(text,ctx); } }
+    fn panel_wheel(&mut self, kind: PanelKind, delta: i32, ctx: &mut Ctx) { if kind == PanelKind::Picker { self.picker.wheel(delta,ctx); } }
+    fn panel_state(&self, kind: PanelKind) -> serde_json::Value { if kind == PanelKind::Picker { self.picker.state() } else { serde_json::Value::Null } }
 
     fn menu(&mut self, m: &mut MenuBuilder) {
         let cfg = current().0;
@@ -188,7 +214,7 @@ impl Content for App {
         match id {
             ID_REFRESH => FORCE_RT.store(true, Relaxed),
             ID_TIMETABLE => FORCE_TT.store(true, Relaxed),
-            ID_STOP => ctx.after(|| unsafe { picker::open(scale_now()) }),
+            ID_STOP => ctx.open_panel_kind(PanelKind::Picker),
             _ => {}
         }
     }
@@ -221,6 +247,5 @@ fn main() {
     // no taskbar to join: a topmost strip at the x it was last dropped at
     spec.float = Float::Fallback(FloatAt::Saved(|| data_dir().join("pos.txt")));
     spec.log_file = Some(data_dir().join("buswidget.log"));
-    spec.dialog = Some(picker::hwnd); // Tab / Enter / Esc in the stop picker
-    block::run(spec, App { look: Look::current(), shown: String::new(), logo: String::new() });
+    block::run(spec, App { look: Look::current(), shown: String::new(), logo: String::new(), picker: picker::Picker::default() });
 }

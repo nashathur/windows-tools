@@ -138,8 +138,8 @@ impl Content for App {
         menu::settings_changed(self, ctx);
     }
 
-    fn panel_size(&mut self, _kind: PanelKind, scale: f32) -> Option<(i32, i32)> {
-        Some(((render::POPUP_W as f32 * scale) as i32, (render::POPUP_H as f32 * scale) as i32))
+    fn panel_size(&mut self, kind: PanelKind, scale: f32) -> Option<(i32, i32)> {
+        (kind == PanelKind::Main).then_some(((render::POPUP_W as f32 * scale) as i32, (render::POPUP_H as f32 * scale) as i32))
     }
 
     fn panel_draw(&mut self, _kind: PanelKind, cv: &mut Canvas, f: &PanelFrame) {

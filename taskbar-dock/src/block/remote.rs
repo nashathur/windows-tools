@@ -6,7 +6,7 @@
 //! the result.
 
 use super::*;
-use crate::ctl::{self, Command, MouseButton, PanelOp, Simulate};
+use crate::ctl::{self, Command, MouseButton, PanelKey as CtlPanelKey, PanelOp, Simulate};
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
@@ -72,9 +72,34 @@ fn run(to: HWND, cmd: Command) {
                 PanelOp::Open => apply(vec![Request::OpenPanel]),
                 PanelOp::Toggle => apply(vec![Request::TogglePanel]),
                 PanelOp::Close => panel_closed(false),
+                PanelOp::OpenPicker => {
+                    let opened = open_panel_kind_with(PanelKind::Picker, true);
+                    if !opened { return reply(to, &ctl::error("this widget has no picker panel")); }
+                }
             }
             ok(json!({ "panel": panel_state() }))
         }
+        Command::PanelKey(key) => {
+            let (key, ctrl, alt) = match key {
+                CtlPanelKey::Enter => (PanelKeyCode::Enter, false, false), CtlPanelKey::Esc => (PanelKeyCode::Escape, false, false),
+                CtlPanelKey::Up => (PanelKeyCode::Up, false, false), CtlPanelKey::Down => (PanelKeyCode::Down, false, false),
+                CtlPanelKey::PgUp => (PanelKeyCode::PageUp, false, false), CtlPanelKey::PgDn => (PanelKeyCode::PageDown, false, false),
+                CtlPanelKey::Home => (PanelKeyCode::Home, false, false), CtlPanelKey::End => (PanelKeyCode::End, false, false),
+                CtlPanelKey::CtrlHome => (PanelKeyCode::Home, true, false), CtlPanelKey::CtrlEnd => (PanelKeyCode::End, true, false),
+                CtlPanelKey::Back => (PanelKeyCode::Left, false, true), CtlPanelKey::Backspace => (PanelKeyCode::Backspace, false, false),
+                CtlPanelKey::Delete => (PanelKeyCode::Delete, false, false), CtlPanelKey::Left => (PanelKeyCode::Left, false, false),
+                CtlPanelKey::Right => (PanelKeyCode::Right, false, false), CtlPanelKey::CtrlA => (PanelKeyCode::A, true, false),
+                CtlPanelKey::CtrlC => (PanelKeyCode::C, true, false), CtlPanelKey::CtrlV => (PanelKeyCode::V, true, false),
+                CtlPanelKey::CtrlX => (PanelKeyCode::X, true, false), CtlPanelKey::CtrlBackspace => (PanelKeyCode::Backspace, true, false),
+            };
+            dispatch_panel_key_with_fallback(PanelKey { key, ctrl, alt, shift: false });
+            ok(json!({ "panel": panel_state() }))
+        }
+        Command::PanelType(text) => {
+            dispatch_panel_text(&text);
+            ok(json!({ "panel": panel_state() }))
+        }
+        Command::PanelState => ok(json!({ "panel": panel_state() })),
         Command::MenuOpen => {
             if crate::menu_panel::is_open() {
                 return ok(json!({ "menu": "already open" }));
@@ -244,8 +269,8 @@ fn strip_state() -> Value {
 }
 
 fn panel_state() -> Value {
-    let Some((h, open, hover)) = st(|s| (s.panel, s.core.panel.is_open(), s.core.panel.by_hover())) else { return Value::Null };
-    json!({ "open": open, "pinned": open && !hover, "focused": h != 0 && unsafe { GetForegroundWindow() } == h, "hwnd": h, "rect": rect_of(h) })
+    let Some((h, open, hover, kind, data)) = st(|s| (s.panel, s.core.panel.is_open(), s.core.panel.by_hover(), s.panel_kind, s.content.panel_state(s.panel_kind))) else { return Value::Null };
+    json!({ "kind": if kind == PanelKind::Picker { "picker" } else { "main" }, "open": open, "pinned": open && !hover, "focused": h != 0 && unsafe { GetForegroundWindow() } == h, "hwnd": h, "rect": rect_of(h), "content": data })
 }
 
 fn look_state() -> Value {

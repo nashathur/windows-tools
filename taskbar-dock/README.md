@@ -20,7 +20,8 @@ drawing and data code use.
 | `panel` | How a widget's panel opens and closes: hover, click, pin, right-click, drag, one at a time, and the fade-in. The same for every widget, with tests. |
 | `menu_panel` | The right-click panel, in place of a Windows menu: an optional title and subtitle, action rows with an icon, on/off switches (flip and stay open), separators, and "Edit settings… / Quit" side by side. `run(anchor, menu, look, scale, on_switch)` works like `TrackPopupMenu` (own message loop, returns the action chosen); call `close()` on the shared close-panel message. Same colours as the other panels. With tests. |
 | `strip` | How a strip moves in the dock: slide right / jump left into its slot, press vs drag (3 px), follow the mouse centred while the content zooms to `drag_zoom`, shrink back after the drop. `Motion` answers with positions and does no window work (move outside your state's borrow); `move_strip` puts a child or floating strip at a screen x. A width change keeps the right edge (`keep_right_edge`, or in one step with `right_anchored`); switching compact mode animates the width (`resize`, `resize_width`); a neighbour's width change is followed frame by frame (`follow`); a drag stays within `Limits` (tray, taskbar buttons). Glides and the switch ease like the taskbar's own buttons (`anim::ease_dock`). With tests. |
-| `draw` | Drawing for a per-pixel-alpha taskbar strip: text colour, two lines on the clock's baselines, icons in the tray-icon box, rounded shapes, the hover highlight (a box of the strip: `background_rect`), and an anti-aliased `progress_ring` along a rounded square (fractional positions allowed). |
+| `draw` | Shared drawing for the strip and panels: text colour, icons, rounded shapes, text boxes, scrolling-list rows, buttons and highlights; anti-aliased through common helpers. |
+| `text_edit` | A single-line Unicode text model with selection, editing keys and the Win32 clipboard. |
 | `badge` | A coloured, rounded badge with short text (e.g. a bus line number): tray-icon tall, as wide as its text, text centred, shared corners and font, automatic black/white text. |
 | `anim` | Easing and animation progress (0 ms when animations are off). `pulse`: a slow, smooth 0 → 1 → 0 every 2.4 s for "alive, nothing else to show"; `pulse_settle`: gliding down to 0 from wherever a pulse stopped. |
 | `marquee` | Scrolling text for a line too long for its fixed-width box: still if it fits; otherwise wait 1.5 s, then scroll left at 30 px/s in a loop (the start follows 40 px after the end) until it's back where it began, and repeat. `fade_edges` softens the cut-off edges. Still (cut with "…") when animations are off. |
@@ -111,7 +112,7 @@ not against Apple's real curve). Not yet looked at on screen at 100% and 200% sc
 
 **A new widget = a `Spec` + a `Content`.** The widget supplies the parameters and what to draw;
 `block::run(spec, content)` does everything else (BLOCK.md has the API). The closest examples:
-`taskbar-weather` (smallest), `buswidget\rust` (a dialog, a worker), `taskbar-media` (buttons, a
+`taskbar-weather` (smallest), `buswidget\rust` (a picker panel, a worker), `taskbar-media` (buttons, a
 cover, a width that follows its content), `taskbar-discord` (a worker, a width that follows).
 
 1. **The crate**: `taskbar-dock = { path = "../taskbar-dock" }`, `build.rs` + `app.manifest`
@@ -123,11 +124,11 @@ cover, a width that follows its content), `taskbar-discord` (a worker, a width t
    in the dock order, `section` the settings section (also the name on the startup list). Change
    only what differs from the defaults: `mutex`, `float`, `force_float`, `draggable`, `hover_panel`,
    `compact_when_crowded`, `stretch` (any width between compact and full, when crowded),
-   `glide_width` (a width that follows the content), `log_file` (dockctl's `log`), `dialog`.
+   `glide_width` (a width that follows the content), `log_file` (dockctl's `log`).
 3. **A `Content`** (`block::Content`): `measure(frame, compact)` and `draw(canvas, frame)` are
    required; everything else has a default: `hit`, `cover`, `tint`, `visible`, `side`, `start`,
-   `timer`, `button`, `cover_click`, the panel (`panel_size`, `panel_draw`, `panel_mouse`,
-   `panel_shown`), the right-click panel's own rows (`menu`, `menu_switch`, `menu_action`),
+   `timer`, `button`, `cover_click`, the panels (`panel_size`, `panel_draw`, `panel_mouse`,
+   `panel_key`, `panel_char`, `panel_wheel`, `panel_shown`, `panel_state`), the right-click panel's own rows (`menu`, `menu_switch`, `menu_action`),
    `settings_changed`, `look_changed`, `taskbar_restarted`, `on_message`, `closing`, and the tray
    icon (`tray_icon`, `tray_tip`). A `Ctx` collects what a callback wants done (`redraw`,
    `redraw_panel`, `every`, `after`, ...).
@@ -190,8 +191,12 @@ For `all` that isn't an error. Exit code: 0 ok, 1 error / no reply, 2 usage.
 
 | Command | Does |
 |---|---|
-| `state` | pid, exe build time; strip (hwnd, rect, shown, visible_by_state, show_on_taskbar, compact, fit, floating, side), panel (open, pinned, focused, rect), menu (open, focused, rect), tray (shown, tip), look (theme, scale) |
+| `state` | pid, exe build time; strip, panel (kind, open, pinned, focused, rect, content), menu, tray, look |
 | `panel open\|close\|toggle` | the left-click panel, as a click on the strip does |
+| `panel open picker` | open a widget's picker panel (error if it has none) |
+| `panel key <name>` | send a normalized panel key: enter, esc, up/down, pgup/pgdn, home/end, ctrl+home/end, back (Alt+Left), backspace, delete, left/right, ctrl+a/c/v/x/backspace |
+| `panel type "<text>"` | send panel text through the same character-input path |
+| `panel state` | active panel kind, open state, rectangle and widget-owned content state |
 | `menu open\|close` | the right-click panel |
 | `menu rows` | id, label, switch state of every row (of the open menu, or the one a right click would show) |
 | `menu click <id\|label>` | a row, as a click does: a switch flips and the menu stays open; opens the menu first if needed |

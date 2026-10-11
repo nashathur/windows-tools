@@ -253,6 +253,7 @@ pub(crate) fn mouse(a: &mut App, ev: PanelMouse, ctx: &mut Ctx) {
             }
             ctx.redraw_panel();
         }
+        PanelMouse::DoubleClick(..) => {}
         PanelMouse::Cancel => {
             (a.panel.pressed, a.panel.seek, a.panel.vol_drag) = (None, None, None);
             ctx.redraw_panel();

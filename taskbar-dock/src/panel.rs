@@ -149,6 +149,14 @@ impl PanelBehaviour {
         self.opened(false)
     }
 
+    /// Open a secondary panel pinned and focused, independent of the strip click reopen guard.
+    pub fn open_pinned(&mut self) -> Action {
+        self.hover_since = None;
+        self.lost_focus_at = None;
+        self.menu_open = false;
+        self.opened(false)
+    }
+
     /// Left click on a button on the strip (e.g. play/pause): it acts on its own and doesn't
     /// open, pin or close the panel. A pending hover-open waits its full delay again, so the
     /// panel doesn't pop up while the buttons are being used.
@@ -332,6 +340,15 @@ mod tests {
         assert_eq!(p.click(t0), Action::OpenByClick);
         assert!(!p.wants_ticks()); // a clicked-open panel isn't closed by mouse movement
         assert_eq!(p.click(ms(t0, 500)), Action::Close);
+    }
+
+    #[test]
+    fn a_secondary_panel_opens_pinned_past_the_reopen_guard() {
+        let mut p = PanelBehaviour::default();
+        p.closed(Instant::now(), true);
+        assert!(matches!(p.open_pinned(), Action::OpenByClick));
+        assert!(p.is_open());
+        assert!(!p.by_hover());
     }
 
     #[test]

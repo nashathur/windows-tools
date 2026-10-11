@@ -6,9 +6,8 @@
 use super::*;
 use std::cell::Cell;
 use windows_sys::Win32::Graphics::Dwm::*;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
 use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
-
-const VK_ESCAPE: usize = 0x1B;
 
 thread_local! {
     /// A TME_LEAVE is pending for the open panel (the mouse is on it).
@@ -28,7 +27,7 @@ pub(super) unsafe fn register(class: &str, hinst: isize, cursor: isize) {
     wc.lpfnWndProc = Some(panel_proc);
     wc.hInstance = hinst;
     wc.hCursor = cursor;
-    wc.style = CS_DROPSHADOW;
+    wc.style = CS_DROPSHADOW | CS_DBLCLKS;
     wc.lpszClassName = name.as_ptr();
     RegisterClassW(&wc);
 }
@@ -37,7 +36,7 @@ pub(super) unsafe fn register(class: &str, hinst: isize, cursor: isize) {
 /// above the strip; without one (`strip` 0: opened from the tray icon) above the icon, never over
 /// the tray overflow panel ([`core::panel_at_tray`]), or above the pointer when Windows doesn't
 /// say where the icon is; kept on its monitor. None: the Content has no panel. `say`: log it.
-fn placement(strip: HWND, say: bool) -> Option<(i32, i32, i32, i32)> {
+fn placement(strip: HWND, kind: PanelKind, say: bool) -> Option<(i32, i32, i32, i32)> {
     let (look, main) = st(|s| (s.look.clone(), s.main))?;
     unsafe {
         let pt = dock::cursor();
@@ -54,10 +53,12 @@ fn placement(strip: HWND, say: bool) -> Option<(i32, i32, i32, i32)> {
         let (mut dx, mut dy) = (96u32, 96u32);
         GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy);
         let scale = dx.max(96) as f32 / 96.0;
-        let (w, h) = st(|s| s.content.panel_size(PanelKind::Main, scale))??;
+        let (w, mut h) = st(|s| s.content.panel_size(kind, scale))??;
         if w <= 0 || h <= 0 {
             return None;
         }
+        let work = (mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom);
+        h = h.min((work.3 - work.1 - 2 * (look.panel_margin * scale).round() as i32).max(1));
         let (x, y) = if strip != 0 {
             crate::panel::place(strip, w, h, &look, scale)
         } else {
@@ -79,9 +80,9 @@ fn placement(strip: HWND, say: bool) -> Option<(i32, i32, i32, i32)> {
 
 /// Creates the main panel where [`placement`] says (layered, not shown yet: the caller shows and
 /// fades it). 0: the Content has no panel, or creating failed.
-pub(super) fn open(strip: HWND) -> HWND {
+pub(super) fn open(strip: HWND, kind: PanelKind) -> HWND {
     let Some((class, title, look)) = st(|s| (s.spec.class, s.spec.title, s.look.clone())) else { return 0 };
-    let Some((x, y, w, h)) = placement(strip, true) else { return 0 };
+    let Some((x, y, w, h)) = placement(strip, kind, true) else { return 0 };
     unsafe {
         let (cls, title) = (class_name(class), wide(title));
         let p = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED, cls.as_ptr(), title.as_ptr(),
@@ -103,7 +104,8 @@ pub(super) fn open(strip: HWND) -> HWND {
 /// opened (above the strip, or the tray icon), no fade; repainted either way ([`Ctx::resize_panel`]).
 pub(super) fn resize(p: HWND, strip: HWND) {
     unsafe {
-        if let Some((x, y, w, h)) = placement(strip, false) {
+        let kind = st(|s| s.panel_kind).unwrap_or(PanelKind::Main);
+        if let Some((x, y, w, h)) = placement(strip, kind, false) {
             let r = dock::rect(p);
             if (r.left, r.top, r.right - r.left, r.bottom - r.top) != (x, y, w, h) {
                 SetWindowPos(p, 0, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
@@ -131,7 +133,7 @@ unsafe fn paint(h: HWND) {
             let brush = CreateSolidBrush(f.theme().color.bg.colorref());
             FillRect(cv.dc, &rc, brush);
             DeleteObject(brush);
-            s.content.panel_draw(PanelKind::Main, &mut cv, &f);
+            s.content.panel_draw(s.panel_kind, &mut cv, &f);
         });
         if drawn.is_some() {
             BitBlt(hdc, 0, 0, w, hh, cv.dc, 0, 0, SRCCOPY);
@@ -147,7 +149,8 @@ unsafe fn paint(h: HWND) {
 }
 
 fn mouse(ev: PanelMouse) {
-    call(|c, ctx| c.panel_mouse(PanelKind::Main, ev, ctx));
+    let Some(kind) = st(|s| if s.panel != 0 { Some(s.panel_kind) } else { None }).flatten() else { return };
+    call(|c, ctx| c.panel_mouse(kind, ev, ctx));
 }
 
 /// (x, y) of a mouse message, client px.
@@ -170,12 +173,16 @@ unsafe extern "system" fn panel_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             0
         }
-        WM_KEYDOWN if wp == VK_ESCAPE => {
-            if ours() {
-                panel_closed(false);
-            }
+        WM_KEYDOWN if ours() => {
+            super::dispatch_panel_vk(wp as u32, GetKeyState(VK_CONTROL as i32) < 0, GetKeyState(VK_MENU as i32) < 0, GetKeyState(VK_SHIFT as i32) < 0);
             0
         }
+        WM_SYSKEYDOWN if ours() => {
+            let key = super::panel_key_from_vk(wp as u32, GetKeyState(VK_CONTROL as i32) < 0, GetKeyState(VK_MENU as i32) < 0, GetKeyState(VK_SHIFT as i32) < 0);
+            if super::dispatch_panel_key_with_fallback(key) { 0 } else { DefWindowProcW(h, msg, wp, lp) }
+        }
+        WM_CHAR if ours() => { super::dispatch_panel_utf16(wp as u16); 0 }
+        WM_MOUSEWHEEL if ours() => { super::dispatch_panel_wheel(((wp >> 16) as i16) as i32); 0 }
         WM_RBUTTONUP => {
             if ours() {
                 right_click(true);
@@ -191,7 +198,9 @@ unsafe extern "system" fn panel_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             mouse(PanelMouse::Move(x, y));
             0
         }
-        WM_LBUTTONDOWN => {
+        // with CS_DBLCLKS the second press of a double click comes as WM_LBUTTONDBLCLK: it's still
+        // a press (pin, capture, Down), then also a DoubleClick for the Content
+        WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
             // a click in a hover-opened panel pins it (it stays until a click elsewhere), and
             // still does what it's on
             if let Some(a) = st(|s| if s.core.panel.by_hover() { s.core.panel.click(Instant::now()) } else { Action::None }) {
@@ -201,6 +210,9 @@ unsafe extern "system" fn panel_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             PRESSED.set(true);
             SetCapture(h); // a slider can be dragged off the panel
             mouse(PanelMouse::Down(x, y));
+            if msg == WM_LBUTTONDBLCLK {
+                mouse(PanelMouse::DoubleClick(x, y));
+            }
             0
         }
         WM_LBUTTONUP => {

@@ -24,6 +24,13 @@ pub enum PanelOp {
     Open,
     Close,
     Toggle,
+    OpenPicker,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PanelKey {
+    Enter, Esc, Up, Down, PgUp, PgDn, Home, End, CtrlHome, CtrlEnd, Back,
+    Backspace, Delete, Left, Right, CtrlA, CtrlC, CtrlV, CtrlX, CtrlBackspace,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -44,6 +51,9 @@ pub enum Simulate {
 pub enum Command {
     State,
     Panel(PanelOp),
+    PanelKey(PanelKey),
+    PanelType(String),
+    PanelState,
     MenuOpen,
     MenuClose,
     MenuRows,
@@ -62,6 +72,10 @@ pub const USAGE: &str = "\
 usage: dockctl <weather|bus|discord|media|all> <command> [args]
   state                          strip, panel, menu, tray and look as JSON
   panel open|close|toggle        the left-click panel, as a click does
+  panel open picker              the widget's picker panel
+  panel key <name>               send a panel key (enter, esc, up, down, ...)
+  panel type \"<text>\"            send panel text input
+  panel state                    active panel kind, open state, rect and content state
   menu open|close                the right-click panel
   menu rows                      its rows: id, label, switch state
   menu click <id|label>          a row, as a click does (opens the menu first)
@@ -86,6 +100,10 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
         ["panel", "open"] => Command::Panel(PanelOp::Open),
         ["panel", "close"] => Command::Panel(PanelOp::Close),
         ["panel", "toggle"] => Command::Panel(PanelOp::Toggle),
+        ["panel", "open", "picker"] => Command::Panel(PanelOp::OpenPicker),
+        ["panel", "state"] => Command::PanelState,
+        ["panel", "type", text @ ..] if !text.is_empty() => Command::PanelType(text.join(" ")),
+        ["panel", "key", name] => Command::PanelKey(parse_panel_key(name)?),
         ["menu", "open"] => Command::MenuOpen,
         ["menu", "close"] => Command::MenuClose,
         ["menu", "rows"] => Command::MenuRows,
@@ -102,6 +120,18 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
         ["simulate", "taskbar-restarted"] => Command::Simulate(Simulate::TaskbarRestarted),
         ["simulate", "look-changed"] => Command::Simulate(Simulate::LookChanged),
         _ => return bad(),
+    })
+}
+
+fn parse_panel_key(name: &str) -> Result<PanelKey, String> {
+    Ok(match name.to_ascii_lowercase().as_str() {
+        "enter" => PanelKey::Enter, "esc" => PanelKey::Esc, "up" => PanelKey::Up, "down" => PanelKey::Down,
+        "pgup" => PanelKey::PgUp, "pgdn" => PanelKey::PgDn, "home" => PanelKey::Home, "end" => PanelKey::End,
+        "ctrl+home" => PanelKey::CtrlHome, "ctrl+end" => PanelKey::CtrlEnd, "back" => PanelKey::Back,
+        "backspace" => PanelKey::Backspace, "delete" => PanelKey::Delete, "left" => PanelKey::Left, "right" => PanelKey::Right,
+        "ctrl+a" => PanelKey::CtrlA, "ctrl+c" => PanelKey::CtrlC, "ctrl+v" => PanelKey::CtrlV, "ctrl+x" => PanelKey::CtrlX,
+        "ctrl+backspace" => PanelKey::CtrlBackspace,
+        _ => return Err(format!("unknown panel key: {name}")),
     })
 }
 
@@ -208,6 +238,20 @@ mod tests {
         assert_eq!(p("panel open"), Ok(Command::Panel(PanelOp::Open)));
         assert_eq!(p("panel close"), Ok(Command::Panel(PanelOp::Close)));
         assert_eq!(p("panel toggle"), Ok(Command::Panel(PanelOp::Toggle)));
+        assert_eq!(p("panel open picker"), Ok(Command::Panel(PanelOp::OpenPicker)));
+        assert_eq!(p("panel state"), Ok(Command::PanelState));
+        assert_eq!(p("panel key ctrl+backspace"), Ok(Command::PanelKey(PanelKey::CtrlBackspace)));
+        assert_eq!(p("panel type Utrecht CS"), Ok(Command::PanelType("Utrecht CS".into())));
+        for (name, key) in [
+            ("enter", PanelKey::Enter), ("esc", PanelKey::Esc), ("up", PanelKey::Up), ("down", PanelKey::Down),
+            ("pgup", PanelKey::PgUp), ("pgdn", PanelKey::PgDn), ("home", PanelKey::Home), ("end", PanelKey::End),
+            ("ctrl+home", PanelKey::CtrlHome), ("ctrl+end", PanelKey::CtrlEnd), ("back", PanelKey::Back),
+            ("backspace", PanelKey::Backspace), ("delete", PanelKey::Delete), ("left", PanelKey::Left),
+            ("right", PanelKey::Right), ("ctrl+a", PanelKey::CtrlA), ("ctrl+c", PanelKey::CtrlC),
+            ("ctrl+v", PanelKey::CtrlV), ("ctrl+x", PanelKey::CtrlX), ("ctrl+backspace", PanelKey::CtrlBackspace),
+        ] {
+            assert_eq!(parse(&["panel", "key", name]), Ok(Command::PanelKey(key)));
+        }
         assert_eq!(p("menu open"), Ok(Command::MenuOpen));
         assert_eq!(p("menu close"), Ok(Command::MenuClose));
         assert_eq!(p("menu rows"), Ok(Command::MenuRows));

@@ -18,7 +18,6 @@
 //!   Windows, Edit settings…, Quit)
 //! - the tray icon, shown whenever the strip isn't (switched off, or nothing to show), so the
 //!   panels stay reachable ([`Content::tray_icon`])
-//! - the widget's own dialog (bus's stop picker) gets Tab / Enter / Esc ([`Spec::dialog`])
 //! - following Windows' settings and the settings file live
 //!
 //! Ownership ("requests, applied afterwards"): Block keeps its state, the Content included, in
@@ -105,10 +104,6 @@ pub struct Spec {
     pub glide_width: bool,
     /// The widget's log file, for dockctl's `log` (None: dockctl says there is none).
     pub log_file: Option<std::path::PathBuf>,
-    /// The widget's own dialog-like window open right now (0: none), e.g. bus's stop picker:
-    /// Block's message loop gives it Tab / Enter / Esc (`IsDialogMessageW`). The widget opens it
-    /// (`ctx.after`) and closes it itself; Quit ends it with the program.
-    pub dialog: Option<fn() -> isize>,
 }
 
 impl Spec {
@@ -127,7 +122,6 @@ impl Spec {
             stretch: false,
             glide_width: false,
             log_file: None,
-            dialog: None,
         }
     }
 }
@@ -137,6 +131,8 @@ impl Spec {
 pub enum PanelKind {
     /// The click / hover panel.
     Main,
+    /// A focused picker or other secondary panel.
+    Picker,
 }
 
 /// Everything [`Content::panel_draw`] needs.
@@ -167,12 +163,25 @@ pub enum PanelMouse {
     Move(i32, i32),
     Down(i32, i32),
     Up(i32, i32),
+    DoubleClick(i32, i32),
     /// It left the panel.
     Leave,
     /// Pressed, but the panel lost the mouse before the release (Esc, another window took it):
     /// end a drag without acting.
     Cancel,
 }
+
+/// A normalized panel key and its explicit modifiers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PanelKey {
+    pub key: PanelKeyCode,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PanelKeyCode { Enter, Escape, Up, Down, PageUp, PageDown, Home, End, Backspace, Delete, Left, Right, Tab, A, C, V, X, Other(u32) }
 
 /// What is under the mouse on the strip ([`Content::hit`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -337,6 +346,7 @@ pub(crate) enum Request {
     Every(usize, u32),
     Stop(usize),
     OpenPanel,
+    OpenPanelKind(PanelKind),
     TogglePanel,
     ClosePanel,
     Quit,
@@ -353,6 +363,7 @@ impl std::fmt::Debug for Request {
             Request::Every(id, ms) => write!(f, "Every({id}, {ms})"),
             Request::Stop(id) => write!(f, "Stop({id})"),
             Request::OpenPanel => write!(f, "OpenPanel"),
+            Request::OpenPanelKind(kind) => write!(f, "OpenPanelKind({kind:?})"),
             Request::TogglePanel => write!(f, "TogglePanel"),
             Request::ClosePanel => write!(f, "ClosePanel"),
             Request::Quit => write!(f, "Quit"),
@@ -406,6 +417,9 @@ impl Ctx {
     pub fn close_panel(&mut self) {
         self.reqs.push(Request::ClosePanel);
     }
+
+    /// Open a specific content panel as a pinned, focused panel.
+    pub fn open_panel_kind(&mut self, kind: PanelKind) { self.reqs.push(Request::OpenPanelKind(kind)); }
 
     /// End the program (as the Quit row does).
     pub fn quit(&mut self) {
@@ -511,6 +525,18 @@ pub trait Content: AsAny + 'static {
     /// The panel has just opened (`open`) or closed, for whatever reason: e.g. start or stop a
     /// timer for what moves in it ([`Ctx::every`] + [`Ctx::redraw_panel`]), forget a hover.
     fn panel_shown(&mut self, _kind: PanelKind, _open: bool, _ctx: &mut Ctx) {}
+
+    /// A key sent to the open panel. Return true when handled; Esc otherwise closes it.
+    fn panel_key(&mut self, _kind: PanelKind, _key: PanelKey, _ctx: &mut Ctx) -> bool { false }
+
+    /// Text input sent to the open panel.
+    fn panel_char(&mut self, _kind: PanelKind, _text: &str, _ctx: &mut Ctx) {}
+
+    /// Mouse wheel delta sent to the open panel.
+    fn panel_wheel(&mut self, _kind: PanelKind, _delta: i32, _ctx: &mut Ctx) {}
+
+    /// Widget-owned panel state, exposed by dockctl.
+    fn panel_state(&self, _kind: PanelKind) -> serde_json::Value { serde_json::Value::Null }
 
     /// The right-click panel's own rows; Block adds the standard ones ([`MenuBuilder`]).
     fn menu(&mut self, _m: &mut MenuBuilder) {}

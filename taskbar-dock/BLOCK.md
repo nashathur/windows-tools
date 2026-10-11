@@ -21,10 +21,17 @@ Content gives `panel_size(kind, scale)` (px; None: no panel), `panel_draw(kind, 
 (theme bg already filled, opaque GDI) and optionally `panel_mouse`; no `Spec::panel` hook any more.
 `Ctx::resize_panel()`: the open panel takes a new `panel_size`, re-placed by the rule it opened
 with, after the strip's redraw, no fade.
+- The shell owns one HWND and one fade. Its active `PanelKind` is passed to every callback.
+  `Main` is the hover / click panel; `Picker` is a focused, pinned secondary panel opened with
+  `Ctx::open_panel_kind`. Opening a secondary kind closes menus and any current panel first.
+  Unsupported kinds return `None`.
 - `Content::panel_shown(kind, open, ctx)`: after it opens / closes (start or stop a frame timer
   for what moves in it; media's scrolling text and volume).
 - The panel has the mouse from a press to its release (a slider dragged off the panel keeps
-  following): `PanelMouse::Down` … `Up`, or `PanelMouse::Cancel` if the capture is lost.
+  following): `PanelMouse::Down` … `Up`, `DoubleClick`, or `Cancel` if the capture is lost.
+- Focused panels receive normalized `panel_key`, `panel_char`, and `panel_wheel` events.
+  `panel_key` returns true when handled; Esc closes the panel if the Content returns false.
+  Text editing and Win32 clipboard access are shared in `text_edit`.
 - No hover-open from a strip button (`Hit::Button`): while the mouse rests on one, each hover
   tick restarts the delay (`PanelBehaviour::over_button`); off it, onto the strip, the whole delay
   runs from there. An open panel is left as it is.
@@ -71,11 +78,6 @@ with, after the strip's redraw, no fade.
   highlight's shape, under everything (readable over other windows).
 - `badge::font_px(look, scale)` for badge text.
 - Cover feel and click: return the box from `Content::cover` (UI-RULES.md "Cover").
-
-## The widget's own dialog
-`Spec::dialog: Option<fn() -> isize>`: the widget's own dialog-like window open now (0: none).
-Block's loop gives it Tab/Enter/Esc via IsDialogMessageW; the widget opens it from `menu_action`
-via `ctx.after` and closes it itself.
 
 ## Show on taskbar + tray icon
 The strip shows when the switch is on and `Content::visible()`; the tray icon (`tray.rs`, logo

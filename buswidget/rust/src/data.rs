@@ -279,8 +279,13 @@ fn s(b: &[u8]) -> String {
     String::from_utf8_lossy(b).trim().to_string()
 }
 
-pub fn have_timetable(dir: &Path) -> bool {
-    dir.join(ZIP).exists()
+/// Opens the local timetable without attempting a download.
+pub fn open_timetable_readonly(dir: &Path) -> io::Result<ZipArchive<File>> {
+    let path = dir.join(ZIP);
+    if !path.exists() {
+        return Err(io::Error::new(io::ErrorKind::NotFound, "timetable not downloaded yet (it downloads once a day; `menu click \"Update timetable\"` starts it)"));
+    }
+    ZipArchive::new(File::open(path)?).map_err(err)
 }
 
 /// Get the national GTFS zip: download when `refresh` and the local copy is older than 20 h
@@ -460,7 +465,7 @@ pub fn fold(t: &str) -> String {
 
 /// All boarding platforms with a stop code, from the local timetable.
 pub fn all_stops(dir: &Path) -> io::Result<Vec<StopHit>> {
-    let mut z = open_timetable(dir, false)?;
+    let mut z = open_timetable_readonly(dir)?;
     let mut seen = HashSet::new();
     let mut v = Vec::new();
     table(&mut z, "stops.txt", ["stop_code", "stop_name", "?location_type"], |r| {
@@ -479,11 +484,13 @@ pub struct LineOpt {
     pub headsign: String,
     pub next: String, // next stop after this platform ("" = trip ends here)
     pub trips: usize,
+    pub color: String,
+    pub text_color: String,
 }
 
 /// Lines and directions serving one platform, with the stop each goes to next.
 pub fn lines_at_stop(dir: &Path, stop_code: &str) -> io::Result<Vec<LineOpt>> {
-    let mut z = open_timetable(dir, false)?;
+    let mut z = open_timetable_readonly(dir)?;
     let mut ids: HashSet<Vec<u8>> = HashSet::new();
     table(&mut z, "stops.txt", ["stop_id", "stop_code"], |r| {
         if r[1] == stop_code.as_bytes() {
@@ -515,10 +522,10 @@ pub fn lines_at_stop(dir: &Path, stop_code: &str) -> io::Result<Vec<LineOpt>> {
         }
     })?;
     let wanted: HashSet<&Vec<u8>> = trip_info.values().map(|t| &t.0).collect();
-    let mut routes: HashMap<Vec<u8>, (String, String)> = HashMap::new(); // route -> agency, line
-    table(&mut z, "routes.txt", ["route_id", "agency_id", "route_short_name"], |r| {
+    let mut routes: HashMap<Vec<u8>, (String, String, String, String)> = HashMap::new(); // route -> agency, line, badge colours
+    table(&mut z, "routes.txt", ["route_id", "agency_id", "route_short_name", "?route_color", "?route_text_color"], |r| {
         if wanted.contains(&r[0].to_vec()) {
-            routes.insert(r[0].to_vec(), (s(r[1]), s(r[2])));
+            routes.insert(r[0].to_vec(), (s(r[1]), s(r[2]), s(r[3]), s(r[4])));
         }
     })?;
     let next_ids: HashSet<&Vec<u8>> = next_of.values().filter(|v| !v.is_empty()).collect();
@@ -529,16 +536,16 @@ pub fn lines_at_stop(dir: &Path, stop_code: &str) -> io::Result<Vec<LineOpt>> {
         }
     })?;
 
-    let mut count: HashMap<(String, String, String, String), usize> = HashMap::new();
+    let mut count: HashMap<(String, String, String, String, String, String), usize> = HashMap::new();
     for (trip, next) in &next_of {
         let Some((route, head)) = trip_info.get(trip) else { continue };
-        let Some((agency, line)) = routes.get(route) else { continue };
+        let Some((agency, line, color, text_color)) = routes.get(route) else { continue };
         let next = names.get(next).cloned().unwrap_or_default();
-        *count.entry((agency.clone(), line.clone(), head.clone(), next)).or_default() += 1;
+        *count.entry((agency.clone(), line.clone(), head.clone(), next, color.clone(), text_color.clone())).or_default() += 1;
     }
     let mut v: Vec<LineOpt> = count
         .into_iter()
-        .map(|((agency, line, headsign, next), trips)| LineOpt { agency, line, headsign, next, trips })
+        .map(|((agency, line, headsign, next, color, text_color), trips)| LineOpt { agency, line, headsign, next, trips, color, text_color })
         .collect();
     // numeric line order (3 before 28), busiest direction first
     let key = |l: &LineOpt| (l.line.parse::<u32>().unwrap_or(u32::MAX), l.line.clone(), usize::MAX - l.trips);
@@ -612,6 +619,14 @@ pub fn upcoming(sched: Option<&Schedule>, live: &[Bus], now: i64) -> Vec<Bus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readonly_timetable_reports_missing_file_without_creating_one() {
+        let dir = std::env::temp_dir().join(format!("bus-no-timetable-{}-{}", std::process::id(), now()));
+        let e = match open_timetable_readonly(&dir) { Ok(_) => panic!("missing timetable opened"), Err(e) => e };
+        assert_eq!(e.to_string(), "timetable not downloaded yet (it downloads once a day; `menu click \"Update timetable\"` starts it)");
+        assert!(!dir.join(ZIP).exists());
+    }
 
     // a saved OVapi response for Rhônedreef (59150850): tests never call the API
     #[test]

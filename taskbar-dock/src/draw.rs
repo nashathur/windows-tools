@@ -124,6 +124,33 @@ pub fn button_box(col: (i32, i32), height: i32, scale: f32) -> (i32, i32, i32, i
     (l, t, l + w, t + side)
 }
 
+/// Draws the shared Windows 11 style text field into an opaque panel buffer.
+pub fn text_box(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), look: &Look, scale: f32, focused: bool) {
+    let t = crate::theme::Theme::new(look);
+    let radius = (look.control_radius * scale).round();
+    fill_round(buf, width, (rect.0 as f32, rect.1 as f32, rect.2 as f32, rect.3 as f32), radius, t.color.input.tuple(), 1.0);
+    let line_h = (if focused { 2.0 } else { 1.0 } * scale).round().max(1.0);
+    let c = if focused { t.status.accent } else { t.color.input_border };
+    fill_round(buf, width, (rect.0 as f32, rect.3 as f32 - line_h, rect.2 as f32, rect.3 as f32), radius.min(line_h), c.tuple(), 1.0);
+}
+
+/// Draws a highlighted scrolling-list row using the shared control radius.
+pub fn list_row(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), look: &Look, scale: f32, highlighted: bool) {
+    if highlighted {
+        let t = crate::theme::Theme::new(look);
+        fill_round(buf, width, (rect.0 as f32, rect.1 as f32, rect.2 as f32, rect.3 as f32),
+            (look.control_radius * scale).round(), t.color.hover.tuple(), 1.0);
+    }
+}
+
+/// Draws a shared plain or accent button surface.
+pub fn button(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), look: &Look, scale: f32, accent: bool, hovered: bool) {
+    let t = crate::theme::Theme::new(look);
+    let c = if accent { if hovered { t.status.accent_hover } else { t.status.accent } } else if hovered { t.color.button_hover } else { t.color.button };
+    fill_round(buf, width, (rect.0 as f32, rect.1 as f32, rect.2 as f32, rect.3 as f32),
+        (look.control_radius * scale).round(), c.tuple(), 1.0);
+}
+
 /// The box (left, top, right, bottom) of a `size` px square at x `left`, centred vertically on
 /// a strip `height` px tall: the cover or logo with its ring. Draw it and hit-test it with this.
 pub fn centered_box(left: i32, size: i32, height: i32) -> (i32, i32, i32, i32) {

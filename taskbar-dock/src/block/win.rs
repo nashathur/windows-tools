@@ -21,7 +21,7 @@ use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::CreateMutexW;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -70,6 +70,7 @@ struct State {
     fs_hidden: bool,
     /// The main panel's window while open (0: none; [`shell`]).
     panel: HWND,
+    panel_kind: PanelKind,
     fade: Fade,
     /// The [`FRAME_TIMERS`] running now (bit i: `FRAME_TIMERS[i]`).
     frames: u32,
@@ -157,6 +158,7 @@ pub fn run<C: Content>(spec: Spec, content: C) {
                 leaving: false,
                 fs_hidden: false,
                 panel: 0,
+                panel_kind: PanelKind::Main,
                 fade: Fade::default(),
                 frames: 0,
                 hooks: dock::Hooks::default(),
@@ -187,14 +189,8 @@ pub fn run<C: Content>(spec: Spec, content: C) {
         update_hooks();
         SetTimer(main, T_WATCH, WATCH_MS, None);
 
-        let dialog = st(|s| s.spec.dialog).flatten();
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, 0, 0, 0) > 0 {
-            // Tab / Enter / Esc in the widget's own dialog (Spec::dialog)
-            let d = dialog.map_or(0, |f| f());
-            if d != 0 && IsDialogMessageW(d, &msg) != 0 {
-                continue;
-            }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -277,6 +273,7 @@ fn apply(reqs: Vec<Request>) {
                     panel_do(a);
                 }
             }
+            Request::OpenPanelKind(kind) => open_panel_kind(kind),
             Request::TogglePanel => {
                 if let Some(a) = st(|s| s.core.panel.click(Instant::now())) {
                     panel_do(a);
@@ -688,45 +685,66 @@ fn hover_timer_sync() {
 /// Opens the main panel, fading in. `activate`: opened by a click (takes focus; a click
 /// elsewhere closes it); opened by hovering it doesn't take focus. Without a strip (from a tray
 /// icon) it opens above the pointer.
-fn open_panel(activate: bool) {
-    let Some(strip) = st(|s| s.strip) else { return };
+fn open_panel(activate: bool) { let _ = open_panel_kind_with(PanelKind::Main, activate); }
+
+fn open_panel_kind(kind: PanelKind) { let _ = open_panel_kind_with(kind, true); }
+
+fn open_panel_kind_with(kind: PanelKind, activate: bool) -> bool {
+    let Some(strip) = st(|s| s.strip) else { return false };
+    let anchor = if strip != 0 && unsafe { IsWindowVisible(strip) } != 0 { strip } else { 0 };
+    if kind != PanelKind::Main {
+        let target = if anchor != 0 { anchor } else { st(|s| s.main).unwrap_or(0) };
+        if st(|s| s.content.panel_size(kind, system::scale_for(target)).is_some()) != Some(true) { return false; }
+    }
+    if kind != PanelKind::Main {
+        // Secondary panels are always pinned and focused. Close the current panel and menus
+        // before opening so their callbacks each see one clean transition.
+        panel_closed(false);
+        crate::menu_panel::close();
+        let _ = st(|s| s.core.panel.open_pinned());
+        timer(T_HOVER, false);
+    }
     unsafe {
         // only one panel at a time: clicking a widget doesn't activate anything, so the other
         // widgets' panels wouldn't notice the click by themselves
-        if strip != 0 {
-            dock::close_other_panels(dock::taskbar(), strip);
+        if kind != PanelKind::Main || strip != 0 {
+            let owner = if strip != 0 { strip } else { st(|s| s.main).unwrap_or(0) };
+            dock::close_other_panels(dock::taskbar(), owner);
         }
-        let p = shell::open(strip);
+        let p = shell::open(anchor, kind);
         if p == 0 {
             // no panel (the Content has none): the behaviour forgets it opened
             st(|s| s.core.panel.closed(Instant::now(), false));
-            return;
+            return false;
         }
         SetLayeredWindowAttributes(p, 0, 0, LWA_ALPHA); // fade_step brings it in
         st(|s| {
             s.panel = p;
+            s.panel_kind = kind;
             s.fade.start(Instant::now());
         });
         if activate {
             ShowWindow(p, SW_SHOW);
             SetForegroundWindow(p);
+            if kind != PanelKind::Main { SetFocus(p); }
         } else {
             ShowWindow(p, SW_SHOWNOACTIVATE);
         }
     }
     timer(T_FADE, true);
-    call(|c, ctx| c.panel_shown(PanelKind::Main, true, ctx));
+    call(|c, ctx| c.panel_shown(kind, true, ctx));
+    true
 }
 
 /// Forgets the panel window and destroys it. Callers tell the behaviour why (or it decided it).
 fn close_panel_window() {
-    let Some(p) = st(|s| {
+    let Some((p, kind)) = st(|s| {
         s.fade.stop();
-        std::mem::replace(&mut s.panel, 0)
+        (std::mem::replace(&mut s.panel, 0), s.panel_kind)
     }) else { return };
     if p != 0 {
         shell::destroy(p);
-        call(|c, ctx| c.panel_shown(PanelKind::Main, false, ctx));
+        call(|c, ctx| c.panel_shown(kind, false, ctx));
     }
 }
 
@@ -734,6 +752,62 @@ fn close_panel_window() {
 fn close_panels() {
     panel_closed(false);
     crate::menu_panel::close();
+}
+
+/// Dispatches a normalized key through the same callback used by physical input.
+pub(super) fn dispatch_panel_key(key: PanelKey) -> bool {
+    let Some(kind) = st(|s| if s.panel != 0 { Some(s.panel_kind) } else { None }).flatten() else { return false };
+    call(|c, ctx| c.panel_key(kind, key, ctx)).unwrap_or(false)
+}
+
+pub(super) fn dispatch_panel_text(text: &str) {
+    if let Some(kind) = st(|s| if s.panel != 0 { Some(s.panel_kind) } else { None }).flatten() {
+        call(|c, ctx| c.panel_char(kind, text, ctx));
+    }
+}
+
+pub(super) fn dispatch_panel_wheel(delta: i32) {
+    if let Some(kind) = st(|s| if s.panel != 0 { Some(s.panel_kind) } else { None }).flatten() {
+        call(|c, ctx| c.panel_wheel(kind, delta, ctx));
+    }
+}
+
+pub(super) fn dispatch_panel_vk(vk: u32, ctrl: bool, alt: bool, shift: bool) {
+    dispatch_panel_key_with_fallback(panel_key_from_vk(vk, ctrl, alt, shift));
+}
+
+/// Converts a Win32 virtual key into Block's normalized panel key.
+pub(super) fn panel_key_from_vk(vk: u32, ctrl: bool, alt: bool, shift: bool) -> PanelKey {
+    let key = match vk {
+        0x0D => PanelKeyCode::Enter, 0x1B => PanelKeyCode::Escape, 0x26 => PanelKeyCode::Up,
+        0x28 => PanelKeyCode::Down, 0x21 => PanelKeyCode::PageUp, 0x22 => PanelKeyCode::PageDown,
+        0x24 => PanelKeyCode::Home, 0x23 => PanelKeyCode::End, 0x08 => PanelKeyCode::Backspace,
+        0x2E => PanelKeyCode::Delete, 0x25 => PanelKeyCode::Left, 0x27 => PanelKeyCode::Right,
+        0x09 => PanelKeyCode::Tab, 0x41 => PanelKeyCode::A, 0x43 => PanelKeyCode::C,
+        0x56 => PanelKeyCode::V, 0x58 => PanelKeyCode::X, n => PanelKeyCode::Other(n),
+    };
+    PanelKey { key, ctrl, alt, shift }
+}
+
+/// Dispatches a key and closes the panel when its Content declines Escape.
+pub(super) fn dispatch_panel_key_with_fallback(key: PanelKey) -> bool {
+    let taken = dispatch_panel_key(key);
+    if !taken && key.key == PanelKeyCode::Escape { panel_closed(false); }
+    taken
+}
+
+thread_local! { static HIGH_SURROGATE: std::cell::Cell<Option<u16>> = const { std::cell::Cell::new(None) }; }
+
+pub(super) fn dispatch_panel_utf16(unit: u16) {
+    if (0xD800..=0xDBFF).contains(&unit) { HIGH_SURROGATE.set(Some(unit)); return; }
+    if (0xDC00..=0xDFFF).contains(&unit) {
+        if let Some(high) = HIGH_SURROGATE.take() {
+            if let Some(ch) = char::decode_utf16([high, unit]).next().and_then(Result::ok) { dispatch_panel_text(&ch.to_string()); }
+        }
+        return;
+    }
+    HIGH_SURROGATE.set(None);
+    if let Some(ch) = char::from_u32(unit as u32).filter(|c| !c.is_control()) { dispatch_panel_text(&ch.to_string()); }
 }
 
 /// Every 50 ms while hovering or while the panel is hover-opened.

@@ -234,7 +234,8 @@ impl Content for App {
         Some(0)
     }
 
-    fn panel_size(&mut self, _kind: PanelKind, scale: f32) -> Option<(i32, i32)> {
+    fn panel_size(&mut self, kind: PanelKind, scale: f32) -> Option<(i32, i32)> {
+        if kind != PanelKind::Main { return None; }
         self.panel_scale = scale;
         let lay = render::panel_layout(&self.voice, scale);
         Some((lay.w, lay.h))
@@ -269,7 +270,7 @@ impl Content for App {
                     self.press(b);
                 }
             }
-            PanelMouse::Down(..) | PanelMouse::Cancel => {}
+            PanelMouse::Down(..) | PanelMouse::DoubleClick(..) | PanelMouse::Cancel => {}
         }
     }
 

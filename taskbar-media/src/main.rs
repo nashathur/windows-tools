@@ -378,7 +378,8 @@ impl Content for App {
         Some(0)
     }
 
-    fn panel_size(&mut self, _kind: PanelKind, scale: f32) -> Option<(i32, i32)> {
+    fn panel_size(&mut self, kind: PanelKind, scale: f32) -> Option<(i32, i32)> {
+        if kind != PanelKind::Main { return None; }
         Some(panel::size(self, scale))
     }
 

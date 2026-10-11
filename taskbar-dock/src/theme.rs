@@ -63,6 +63,9 @@ pub struct Colors {
     /// A filled button at rest, and hovered.
     pub button: Rgb,
     pub button_hover: Rgb,
+    /// Text-entry surface and outline.
+    pub input: Rgb,
+    pub input_border: Rgb,
     /// Bar, slider and switch background.
     pub track: Rgb,
     /// A missing cover.
@@ -90,6 +93,10 @@ pub struct StripColors {
 pub struct Status {
     /// The Windows accent colour (its text shade for this theme).
     pub accent: Rgb,
+    /// The accent colour used while a filled accent button is hovered.
+    pub accent_hover: Rgb,
+    /// Text on a filled accent button: black or white, whichever reads better on `accent`.
+    pub on_accent: Rgb,
     pub danger: Rgb,
     /// A filled destructive button (white text), and hovered.
     pub danger_fill: Rgb,
@@ -166,6 +173,8 @@ pub mod size {
     pub const PANEL_NARROW: f32 = 280.0;
     pub const PANEL_STANDARD: f32 = 320.0;
     pub const PANEL_WIDE: f32 = 360.0;
+    /// Fixed picker panel height at 100%, before work-area clamping.
+    pub const PANEL_PICKER_HEIGHT: f32 = 640.0;
     pub const ICON_BOX: f32 = crate::style::TRAY_ICON;
     pub const COVER_SMALL: f32 = 44.0;
 }
@@ -224,6 +233,8 @@ impl Theme {
             hover: pick(0xE4E4E4, 0x333333),
             button: pick(0xE6E6E6, 0x2D2D2D),
             button_hover: pick(0xDADADA, 0x383838),
+            input: pick(0xFFFFFF, 0x2B2B2B),
+            input_border: pick(0x8A8A8A, 0x777777),
             track: pick(0xD6D6D6, 0x454545),
             placeholder: pick(0xDEDEDE, 0x383838),
             chip: pick(0xD0D0D0, 0x3C3C3C),
@@ -234,8 +245,11 @@ impl Theme {
         };
         let strip = StripColors { fg: pick(0x1A1A1A, 0xFFFFFF), dim: pick(0x5A5A5A, 0xC8C8C8), disabled: 96.0 / 255.0 };
         let fallback = if l { ACCENT_FALLBACK.0 } else { ACCENT_FALLBACK.1 };
+        let accent_c = accent.unwrap_or(fallback);
         let status = Status {
-            accent: accent.unwrap_or(fallback),
+            accent: accent_c,
+            on_accent: Rgb::hex(if crate::badge::contrast_text(accent_c.colorref()) == 0 { 0x000000 } else { 0xFFFFFF }),
+            accent_hover: accent.unwrap_or(fallback).mix(if l { Rgb::hex(0x000000) } else { Rgb::hex(0xFFFFFF) }, 0.12),
             danger: pick(0xC42B1C, 0xFF99A4),
             danger_fill: Rgb::hex(0xC43135),
             danger_fill_hover: Rgb::hex(0xD83C3E),
@@ -267,12 +281,6 @@ pub const BRANDS: &[(&str, u32, u32)] = &[
     // the attention dot on the strip (`warn` is a different yellow)
     ("discord.attention", 0xF0A030, 0xF0A030),
 ];
-
-/// Named font overrides (see [`BRANDS`]): text that keeps "Segoe UI" instead of `look.font`.
-pub mod font_override {
-    /// The bus "Change stop…" picker (a Win32 dialog until step 11).
-    pub const BUS_PICKER: &str = "Segoe UI";
-}
 
 /// Brand colour `name` from [`BRANDS`] for light or dark. An unknown name is a bug: it panics
 /// in debug builds and gives magenta in release, so it shows.
@@ -379,6 +387,10 @@ mod tests {
     fn status_colours() {
         let (l, d) = (light().status, dark().status);
         assert_eq!((l.accent.rgb24(), d.accent.rgb24()), (0x0067C0, 0x60CDFF));
+        assert_eq!(l.accent_hover, l.accent.mix(Rgb::hex(0x000000), 0.12));
+        // the default blues: white text on the light theme's dark blue, black on the dark theme's light blue
+        assert_eq!((l.on_accent.rgb24(), d.on_accent.rgb24()), (0xFFFFFF, 0x000000));
+        assert_eq!(d.accent_hover, d.accent.mix(Rgb::hex(0xFFFFFF), 0.12));
         assert_eq!((l.danger.rgb24(), d.danger.rgb24()), (0xC42B1C, 0xFF99A4));
         assert_eq!((l.danger_fill, d.danger_fill), (Rgb::hex(0xC43135), Rgb::hex(0xC43135)));
         assert_eq!(l.danger_fill_hover, Rgb::hex(0xD83C3E));

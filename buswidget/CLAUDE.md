@@ -14,17 +14,20 @@ tray icon's line badge (shown when Show on taskbar is off). `compact` and `show_
 `bus` section are Block's; `Config::save/load` merge their keys.
 
 ## Files (rust/src/)
-- main.rs: `App` (the `block::Content`: measure/draw, 1 s content timer, WM_DATA from the worker
-  → `refresh`, panel hooks, menu rows, `settings_changed`, tray icon/tip), the `Spec`, `badge_colors`, `main`.
+- main.rs: `App` (the `block::Content`: measure/draw, 1 s content timer, worker messages
+  → `refresh`, panel hooks, menu rows, `settings_changed`, tray icon/tip), the `Spec`,
+  `badge_colors`, `main`. The stop picker state also lives in `App`.
 - worker.rs: `Shared` state, `current()`, `set_config`/`apply_config`, the worker thread (timetable
   builds, live polling from OVapi every 60 s when a bus is due within 90 min); posts WM_DATA to Block's main window.
 - bar.rs: strip text (`bar_text_for`), `measure`/`draw` into Block's canvas, `tray_logo`.
 - popup.rs: departures panel content (`popup_content`), `panel_size`, `panel_draw` (Block owns the window).
 - data.rs: config (merges into its section), GTFS parsing, schedule, live data, logging.
-- picker.rs: stop picker, a plain Win32 window; keys via `Spec::dialog`.
+- picker.rs: stop picker content drawn inside Block's focused `Picker` panel; worker results are
+  posted to Block's main window and tagged with a generation so stale searches are discarded.
 
 ## Testing
-Use `taskbar-dock\dockctl.exe bus state|panel …|menu …|simulate …` (README there), not `_tmp\real.ps1`
+Use `taskbar-dock\dockctl.exe bus state|panel …|menu …|simulate …` (README there), including
+`panel open picker`, `panel key`, `panel type` and `panel state`, not `_tmp\real.ps1`
 or mouse clicks. The dock leader is the strip nearest the tray; find it by the `IconsRight` prop in
 `_tmp\strips.ps1 -Props` (weather on 2026-10-11, not bus), and `_tmp\fit_test.ps1 -Widget <its
 folder>` must name it for the edge tests (with another widget named, the fake edge has no effect).

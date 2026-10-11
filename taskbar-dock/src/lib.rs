@@ -50,6 +50,7 @@ pub mod startup;
 pub mod strip;
 pub mod style;
 pub mod system;
+pub mod text_edit;
 pub mod theme;
 pub mod window;
 
