@@ -41,6 +41,15 @@ with, after the strip's redraw, no fade.
 - During a compact switch `Frame::fit_width` is the animated width (`core::fit_width`), so a
   Content that keeps things at its right end lays out to it instead of being cut off (discord: the
   avatar column narrows, its avatars fading with it).
+- Width following the content (plan step 9), `Spec::glide_width` (media, discord): Block takes a
+  new measured width (`core::WidthHold`: one up to 4 px narrower is ignored, any wider is taken, else the content is cut off; `Spec::width_hold` can make
+  a width hold first, wider / narrower, default none: the user wants no delay; one-shot `T_HOLD`
+  looks again when it's due), publishes it as `full` (the others refit once) and glides to it
+  like a compact switch (`start_resize` watches the target width: compact, crowded or held; `core::animate_width`,
+  tested), `publish_drawn` each frame so the neighbours follow. Meanwhile `Frame::fit_width` may
+  be **wider** than the content: lay out to it up to your maximum (media's text column, discord's
+  avatar column). Without the flag a new width jumps as before (weather, bus); a compact switch
+  animates for every widget.
 - The compact switch and every glide take `glide_ms` (300) on the taskbar's own curve
   (`anim::ease_dock`, measured 2026-10-11). Each frame of a switch Block publishes the drawn width
   (`dock::publish_drawn`, before the window takes it; cleared + `notify` on the last frame) and

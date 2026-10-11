@@ -28,8 +28,10 @@ right-click panel's standard rows, the tray icon and following the settings file
 - avatars.rs: CDN download → `discord-avatars\` cache → 64 px decode; circle/ring drawing.
 - menu.rs: the right-click panel's own rows (Mute, Deafen, Leave; Reconnect; Sign in only while
   signed out) and
-  `settings_changed` (new credentials reconnect; media's `max_width` sets the text column).
+  `settings_changed` (new credentials reconnect; media's `max_width` caps the avatar column).
 - render.rs: strip layout + drawing into Block's canvas (`strip`, `StripLayout::block_hit`/`cover`;
+  the avatar column as wide as everyone in the call (`stack_width`; `fixed_width`: always the max),
+  wider when Block's `fit_width` asks (a width held or gliding: `fit_column` widens up to the max);
   the avatar stack sits at the left end of its column, by the logo; honours `Frame::fit_width`
   in a call: `fit_column` narrows the column, then the gaps, and the full stack is cut off at the
   column's right end and faded by how much of the column is left (`over`), so a compact switch keeps
@@ -41,7 +43,8 @@ right-click panel's standard rows, the tray icon and following the settings file
 
 ## Testing
 - `TASKBAR_DISCORD_TEST=4` in the environment: no Discord needed; someone speaks in turn, the
-  buttons work, Leave rejoins after 6 s. dev.ps1 passes every `TASKBAR_*` variable on to the
+  buttons work, Leave rejoins after 6 s; every ~9 s people leave or join (n, 1, about half, n, …:
+  the strip's width glides with them, plan step 9). The third person is muted. dev.ps1 passes every `TASKBAR_*` variable on to the
   scheduled task that starts the widget (`$env:TASKBAR_DISCORD_TEST='4'; .\dev.ps1 -Fast`).
 - dockctl: `dockctl discord state|panel open|menu rows|menu click "Leave call"|tray click left|…`.
   Probe (mouse on the strip / panel, put back): `tools\_tmp\discord_probe.ps1 strip|panel x y|shot`;

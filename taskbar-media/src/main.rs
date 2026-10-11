@@ -52,6 +52,8 @@ const TIMER_WATCH: usize = 1;
 const TIMER_BEAT: usize = 2;
 const TIMER_TINT: usize = 3;
 pub(crate) const TIMER_PANEL: usize = 4;
+/// The strip's scrolling title / artist (~30 frames a second, as the panel's).
+const TIMER_SCROLL: usize = 5;
 
 /// The right-click panel's own rows.
 const ID_OPEN: usize = 100;
@@ -74,6 +76,12 @@ pub(crate) struct App {
     drawn_tint: Option<Tint>,
     /// Vertical geometry by (height, scale, font, font size): it measures the font's ink.
     geos: Vec<((i32, u32, String, u32), Geo)>,
+    /// The strip's lines (title, artist) and since when they're shown: a line too long for its
+    /// column scrolls from that moment (marquee).
+    scroll_since: Option<((String, String), Instant)>,
+    /// The last drawing had a line too long for its column; `scrolling`: TIMER_SCROLL runs.
+    scroll_long: bool,
+    scrolling: bool,
     /// The ring pulse: since when it's been pulsing (playing), or where it was when playback
     /// paused and when, as it glides down (anim::pulse_settle).
     pulse_since: Option<Instant>,
@@ -167,6 +175,19 @@ impl App {
         g
     }
 
+    /// The text column, px at `scale`: as wide as the longer line (the buttons right after it),
+    /// up to `max_width` (plan step 9: Block glides the strip to it); always `max_width` with
+    /// `fixed_width`. Measured each time with the call that draws it, so it fits exactly.
+    fn text_column(&self, scale: f32, look: &Look) -> (i32, i32) {
+        let max = (self.cfg.max_width * scale).round() as i32;
+        if self.cfg.fixed_width {
+            return (max, max);
+        }
+        let Some(c) = strip_content(self) else { return (max, max) };
+        let w = render::text_width(&c.title, &c.artist, scale, look);
+        (w.min(max), max)
+    }
+
     /// A new snapshot from the media worker.
     fn on_media(&mut self, snap: Snapshot, ctx: &mut Ctx) {
         self.sessions = snap.sessions;
@@ -226,6 +247,11 @@ impl App {
         if tinting != std::mem::replace(&mut self.tinting, tinting) {
             if tinting { ctx.every(TIMER_TINT, 16) } else { ctx.stop(TIMER_TINT) }
         }
+        // a line too long for the strip scrolls (as last drawn; the watch looks every second)
+        let scroll = self.look.animations && self.shown.is_some() && self.scroll_long;
+        if scroll != std::mem::replace(&mut self.scrolling, scroll) {
+            if scroll { ctx.every(TIMER_SCROLL, 33) } else { ctx.stop(TIMER_SCROLL) }
+        }
     }
 
     /// Every second: confirm live streams (a paused one sends no reports), reload an edited
@@ -246,15 +272,25 @@ impl App {
 impl Content for App {
     fn measure(&mut self, f: &Frame, compact: bool) -> i32 {
         let g = self.geo(f.height, f.scale, f.look);
-        render::strip_layout(&g, compact, self.cfg.max_width, f.fit_width).width
+        let (text_w, max_w) = self.text_column(f.scale, f.look);
+        render::strip_layout(&g, compact, text_w, max_w, f.fit_width).width
     }
 
     fn draw(&mut self, cv: &mut Canvas, f: &Frame) {
         let g = self.geo(f.height, f.scale, f.look);
-        let l = render::strip_layout(&g, f.compact, self.cfg.max_width, f.fit_width);
+        let (text_w, max_w) = self.text_column(f.scale, f.look);
+        let l = render::strip_layout(&g, f.compact, text_w, max_w, f.fit_width);
+        self.scroll_long = false;
         if let Some(c) = strip_content(self) {
+            // a line too long scrolls, from the start of each track
+            let now = Instant::now();
+            let key = (c.title.clone(), c.artist.clone());
+            if self.scroll_since.as_ref().is_none_or(|(k, _)| *k != key) {
+                self.scroll_since = Some((key, now));
+            }
+            let t = self.scroll_since.as_ref().map(|(_, t0)| now.duration_since(*t0).as_secs_f32());
             let w = cv.w;
-            render::draw_strip(cv.pixels(), w, &c, &l, &g, f.look, self.cfg.live_rgb());
+            self.scroll_long = render::draw_strip(cv.pixels(), w, &c, &l, &g, f.look, self.cfg.live_rgb(), t.filter(|_| f.look.animations));
         }
         self.strip = Some((l, g));
         self.drawn_tint = strip_tint(self);
@@ -311,6 +347,7 @@ impl Content for App {
                 self.sync(ctx);
             }
             TIMER_PANEL => panel::frame(self, ctx),
+            TIMER_SCROLL => ctx.redraw(),
             _ => {}
         }
     }
@@ -429,6 +466,8 @@ fn main() {
     spec.force_float = std::env::args().any(|a| a == "--float") || std::env::var_os("TASKBAR_MEDIA_FLOAT").is_some();
     // crowded: the text column narrows first
     spec.stretch = true;
+    // the text column follows the track: Block glides the width (unless `fixed_width`)
+    spec.glide_width = true;
     spec.log_file = Some(log_file());
     log("started");
     let app = App {
@@ -442,6 +481,9 @@ fn main() {
         strip: None,
         drawn_tint: None,
         geos: Vec::new(),
+        scroll_since: None,
+        scroll_long: false,
+        scrolling: false,
         pulse_since: None,
         settle: None,
         was_playing: false,

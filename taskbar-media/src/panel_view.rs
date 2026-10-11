@@ -201,8 +201,10 @@ fn paint_cover(buf: &mut [u32], width: i32, c: &Cover, r: Rc, radius: f32, bg: (
 }
 
 /// One line of text in `r`: scrolling (marquee) if it's too long and animations are on, else
-/// cut with "…". `t`: seconds since the panel opened. Returns whether it's scrolling now.
-fn paint_line(cv: &mut Canvas, font: &Font, text: &str, color: COLORREF, r: Rc, t: f32, scale: f32, animations: bool, bg: u32) -> bool {
+/// cut with "…". `t`: seconds since the panel opened (the strip: since the track came). `bg`:
+/// what the edges fade to (the strip draws white on black coverage: 0). Returns whether it's
+/// too long to stand still (scrolling or waiting to).
+pub(crate) fn paint_line(cv: &mut Canvas, font: &Font, text: &str, color: COLORREF, r: Rc, t: f32, scale: f32, animations: bool, bg: u32) -> bool {
     if text.is_empty() || r.w <= 0 {
         return false;
     }

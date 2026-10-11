@@ -108,6 +108,15 @@ pub struct Spec {
     pub compact_when_crowded: bool,
     /// Crowded: may take any width between compact and full ([`crate::dock::Size::stretch`]).
     pub stretch: bool,
+    /// The width follows the content (media, discord; plan step 9): the strip glides to a new
+    /// measured width like a compact switch, its neighbours following; crowded refits glide too.
+    /// Meanwhile [`Frame::fit_width`] may be wider than the content: lay out to it. False: a new
+    /// width jumps (weather, bus).
+    pub glide_width: bool,
+    /// With `glide_width`: how long a new content width must hold before the strip takes it,
+    /// (wider, narrower). Default none (the user wants no delay, 2026-10-11); a hold keeps a
+    /// flickering width from making the strip pump.
+    pub width_hold: (std::time::Duration, std::time::Duration),
     /// The widget's log file, for dockctl's `log` (None: dockctl says there is none).
     pub log_file: Option<std::path::PathBuf>,
     /// The widget's own dialog-like window open right now (0: none), e.g. bus's stop picker:
@@ -131,6 +140,8 @@ impl Spec {
             hover_panel: true,
             compact_when_crowded: true,
             stretch: false,
+            glide_width: false,
+            width_hold: (std::time::Duration::ZERO, std::time::Duration::ZERO),
             log_file: None,
             dialog: None,
         }
@@ -245,10 +256,12 @@ pub struct Frame<'a> {
     /// Floating rather than in the taskbar.
     pub floating: bool,
     /// The width the strip is drawn at, px at this frame's zoom: crowded, for a stretchable strip
-    /// ([`Spec::stretch`]), or while a compact switch animates the width (the full content, at
-    /// every width between compact and full). Lay out to fit it if you can (narrow a text column,
-    /// keep what sits at the right end); Block cuts off anything wider, fading the end. None: the
-    /// natural width.
+    /// ([`Spec::stretch`]), while a compact switch animates the width (the full content, at
+    /// every width between compact and full), or with [`Spec::glide_width`] while the width
+    /// glides or is held (then it may be wider than the content). Lay out to fit it if you can
+    /// (narrow or widen a text column up to its maximum, keep what sits at the right end) and
+    /// measure as that width; Block cuts off anything wider, fading the end. None: the natural
+    /// width.
     pub fit_width: Option<i32>,
 }
 

@@ -7,7 +7,7 @@ use crate::anim::Feel;
 use crate::dock::{self, Fit, FitState};
 use crate::panel::{Action, PanelBehaviour};
 use crate::strip::{Motion, Release};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Default, Debug)]
 pub(crate) struct Core {
@@ -27,6 +27,61 @@ pub(crate) struct Core {
     pub show: bool,
     /// The mode as last drawn: a switch animates the width.
     pub drawn_compact: Option<bool>,
+    /// The width the strip was last headed for (unzoomed): with [`Spec::glide_width`] a change
+    /// animates the width like a compact switch.
+    pub drawn_target: Option<i32>,
+    /// The content's width, held steady ([`Spec::glide_width`]).
+    pub width: WidthHold,
+}
+
+/// Px at 100% a measured width may differ from the held one without counting as a change.
+pub(crate) const WIDTH_SLACK: f32 = 4.0;
+
+/// A strip's content width, held steady ([`Spec::glide_width`], plan step 9): a different width
+/// is taken only once it has been measured for the grow (wider) or shrink (narrower) time of
+/// [`Spec::width_hold`]; a width narrower by no more than the slack never counts (wider always does). The first width, and any width in a new
+/// `key` (mode, height, scale), is taken at once.
+#[derive(Default, Debug)]
+pub(crate) struct WidthHold {
+    held: Option<(WidthKey, i32)>,
+    /// A different width measured since then: the latest, and since when.
+    pending: Option<(i32, Instant)>,
+}
+
+/// What a held width belongs to: compact or not, the strip's height, the scale (in 1/1000).
+pub(crate) type WidthKey = (bool, i32, i32);
+
+impl WidthHold {
+    /// `w` measured now; `(grow, shrink)`: how long a wider / narrower width must hold
+    /// ([`Spec::width_hold`]). The width to use, and how long until a pending change is due (look
+    /// again then).
+    pub fn update(&mut self, key: WidthKey, w: i32, slack: i32, (grow, shrink): (Duration, Duration), now: Instant) -> (i32, Option<Duration>) {
+        let Some((_, held)) = self.held.filter(|(k, _)| *k == key) else {
+            self.held = Some((key, w));
+            self.pending = None;
+            return (w, None);
+        };
+        // a little narrower doesn't count (some room to spare); any wider does (the content
+        // would be cut off: a title ending in "…" that fits)
+        if w == held || (w < held && held - w <= slack) {
+            self.pending = None;
+            return (held, None);
+        }
+        // the same change as before (within the slack) keeps its start
+        let since = match self.pending {
+            Some((p, t)) if (p - w).abs() <= slack => t,
+            _ => now,
+        };
+        let wait = if w > held { grow } else { shrink };
+        let gone = now.saturating_duration_since(since);
+        if gone >= wait {
+            self.held = Some((key, w));
+            self.pending = None;
+            return (w, None);
+        }
+        self.pending = Some((w, since));
+        (held, Some(wait - gone))
+    }
 }
 
 /// What a release means for the window side.
@@ -100,10 +155,18 @@ impl Core {
     }
 }
 
-/// [`Frame::fit_width`] for drawing: the narrower of a running compact switch's width (`resize`,
-/// drawn px) and the crowded fit's (`narrowed`, unzoomed px, so times the drag `zoom`).
-pub(crate) fn fit_width(resize: Option<i32>, narrowed: Option<i32>, zoom: f32) -> Option<i32> {
-    [resize, narrowed.map(|w| (w as f32 * zoom).round() as i32)].into_iter().flatten().min()
+/// [`Frame::fit_width`] for drawing: a running width animation's width (`resize`, drawn px), else
+/// the width the strip is headed for (`target`, unzoomed px, so times the drag `zoom`: crowded, or
+/// a content width held wider or narrower) when that isn't the content's own (`natural`).
+pub(crate) fn fit_width(resize: Option<i32>, target: i32, natural: i32, zoom: f32) -> Option<i32> {
+    resize.or_else(|| (target != natural).then(|| (target as f32 * zoom).round() as i32))
+}
+
+/// Whether a new `target` width should animate: a compact switch (`switched`) always; any other
+/// change of the target with [`Spec::glide_width`], or while an animation runs (it heads for the
+/// new target from where it is). `prev`: the target last drawn (None: a new strip).
+pub(crate) fn animate_width(switched: bool, prev: Option<i32>, target: i32, glide_width: bool, running: bool) -> bool {
+    switched || (prev.is_some_and(|p| p != target) && (glide_width || running))
 }
 
 /// The widths the dock fits by: in the chosen mode, and compact (`full` when it must never go
@@ -587,10 +650,54 @@ mod tests {
 
     #[test]
     fn a_compact_switch_lays_out_to_its_width() {
-        assert_eq!(fit_width(None, None, 1.0), None, "at rest, room: the natural width");
-        assert_eq!(fit_width(Some(150), None, 1.0), Some(150), "a compact switch running");
-        assert_eq!(fit_width(None, Some(200), 1.1), Some(220), "crowded, while dragged: zoomed");
-        assert_eq!(fit_width(Some(150), Some(120), 1.0), Some(120), "both: the narrower");
+        assert_eq!(fit_width(None, 258, 258, 1.0), None, "at rest, room: the natural width");
+        assert_eq!(fit_width(Some(150), 120, 258, 1.0), Some(150), "a switch running: its width");
+        assert_eq!(fit_width(None, 200, 258, 1.1), Some(220), "crowded, while dragged: zoomed");
+        assert_eq!(fit_width(None, 230, 180, 1.0), Some(230), "held wider than the content");
+    }
+
+    #[test]
+    fn which_width_changes_animate() {
+        assert!(animate_width(true, Some(258), 120, false, false), "a compact switch, any widget");
+        assert!(!animate_width(false, None, 258, true, false), "a new strip: straight in");
+        assert!(!animate_width(false, Some(258), 258, true, false), "no change");
+        assert!(animate_width(false, Some(258), 200, true, false), "content width, gliding widget");
+        assert!(!animate_width(false, Some(80), 90, false, false), "bus's countdown grows: jumps");
+        assert!(animate_width(false, Some(258), 200, false, true), "mid-switch: heads for the new one");
+    }
+
+    #[test]
+    fn a_content_width_is_held_steady() {
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let k = (false, 48, 1000);
+        const GROW_AFTER: Duration = Duration::from_millis(400);
+        let hold = (GROW_AFTER, Duration::from_millis(2000));
+        let mut h = WidthHold::default();
+        assert_eq!(h.update(k, 200, 4, hold, at(0)), (200, None), "the first width: at once");
+        assert_eq!(h.update(k, 197, 4, hold, at(10)), (200, None), "a little narrower: no change");
+        // wider: after GROW_AFTER
+        assert_eq!(h.update(k, 240, 4, hold, at(100)), (200, Some(GROW_AFTER)));
+        assert_eq!(h.update(k, 241, 4, hold, at(300)), (200, Some(GROW_AFTER - Duration::from_millis(200))), "the same change: its start kept");
+        assert_eq!(h.update(k, 241, 4, hold, at(500)), (241, None));
+        // narrower: only after 2 s, and a flicker back starts it again
+        assert_eq!(h.update(k, 150, 4, hold, at(1000)).0, 241);
+        assert_eq!(h.update(k, 241, 4, hold, at(1500)), (241, None), "back: nothing pending");
+        assert_eq!(h.update(k, 150, 4, hold, at(1600)).0, 241);
+        assert_eq!(h.update(k, 150, 4, hold, at(3500)).0, 241, "1.9 s: still held");
+        assert_eq!(h.update(k, 150, 4, hold, at(3600)), (150, None));
+        // a different measurement while pending starts the wait again
+        assert_eq!(h.update(k, 220, 4, hold, at(4000)).0, 150);
+        assert_eq!(h.update(k, 260, 4, hold, at(4300)), (150, Some(GROW_AFTER)));
+        // a new mode, height or scale: at once
+        assert_eq!(h.update((true, 48, 1000), 90, 4, hold, at(4400)), (90, None));
+        assert_eq!(h.update((false, 48, 1250), 300, 4, hold, at(4500)), (300, None));
+        // no hold (the default): at once both ways
+        let none = (Duration::ZERO, Duration::ZERO);
+        assert_eq!(h.update((false, 48, 1250), 120, 4, none, at(4600)), (120, None));
+        assert_eq!(h.update((false, 48, 1250), 123, 4, none, at(4600)), (123, None), "a little wider: taken, else the text is cut off");
+        assert_eq!(h.update((false, 48, 1250), 120, 4, none, at(4600)), (123, None), "a little narrower: room to spare");
+        assert_eq!(h.update((false, 48, 1250), 250, 4, none, at(4601)), (250, None));
     }
 
     #[test]

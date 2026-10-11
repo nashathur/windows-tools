@@ -13,6 +13,9 @@ use taskbar_dock::settings;
 pub struct Config {
     /// Widest the title/artist text gets on the strip (px at 100%); longer is cut with "…".
     pub max_width: f32,
+    /// true: the text column is always `max_width` (the strip never changes width between
+    /// tracks); false: as wide as the text.
+    pub fixed_width: bool,
     /// Fixed width of the click panel (left click), px at 100%.
     pub click_panel_width: f32,
     /// Nothing playing: the paused session stays shown this long, then the strip hides.
@@ -30,6 +33,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             max_width: 136.0,
+            fixed_width: false,
             click_panel_width: 360.0,
             hide_after_pause_s: 120,
             skip_seconds: 15,

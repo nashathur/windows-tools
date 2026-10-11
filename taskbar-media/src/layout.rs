@@ -14,6 +14,10 @@ pub const PAD_RIGHT: f32 = 2.0;
 pub const RING_GAP: f32 = 1.0;
 pub const RING_WIDTH: f32 = 2.0;
 pub const TEXT_GAP: f32 = 6.0;
+/// From the text to the buttons' column: small, as each button's glyph already sits inside its
+/// highlight margin (`draw::BUTTON_MARGIN`), so the glyph is about as far from the text as the
+/// text is from the cover.
+pub const BUTTON_GAP: f32 = 2.0;
 /// Each button's clickable width; the glyph is tray-icon sized in its middle.
 pub const BUTTON: f32 = 24.0;
 pub const BUTTONS: usize = 3;
@@ -62,7 +66,7 @@ pub fn strip(scale: f32, cover: i32, left: i32, compact: bool, text_w: i32) -> S
     let ring_x = left;
     let cover_x = ring_x + around;
     let (text_x, text_w) = if compact { (ring_x + ring, 0) } else { (ring_x + ring + px(TEXT_GAP, scale), text_w.max(0)) };
-    let buttons_x = text_x + text_w + if compact { px(2.0, scale) } else { px(TEXT_GAP, scale) };
+    let buttons_x = text_x + text_w + px(BUTTON_GAP, scale);
     let button_w = px(BUTTON, scale);
     Strip {
         width: buttons_x + BUTTONS as i32 * button_w + px(PAD_RIGHT, scale),
@@ -79,10 +83,11 @@ pub fn strip(scale: f32, cover: i32, left: i32, compact: bool, text_w: i32) -> S
     }
 }
 
-/// The layout at any `width` between compact and full (`text_w`: the full text column): the
-/// text column narrows first, then the gaps beside it close, so the cover stays on the left
-/// and the buttons on the right. For the collapse/expand animation. Outside that range: the
-/// full or the compact layout.
+/// The layout at any `width` between compact and the widest full strip (`text_w`: the widest
+/// text column, `max_width`): the text column narrows first, then the gaps beside it close, so
+/// the cover stays on the left and the buttons on the right. For the width animations and a width
+/// held wider than the text (Block's `Frame::fit_width`). Outside that range: the widest full or
+/// the compact layout.
 pub fn at_width(scale: f32, cover: i32, left: i32, text_w: i32, width: i32) -> Strip {
     let full = strip(scale, cover, left, false, text_w);
     let compact = strip(scale, cover, left, true, 0);
@@ -153,9 +158,9 @@ mod tests {
         // ring 22 px from x 4, cover inside it 3 px in
         assert_eq!((s.ring_x, s.ring, s.cover_x), (4, 22, 7));
         assert_eq!((s.text_x, s.text_w), (32, 120));
-        assert_eq!(s.buttons_x, 158);
-        assert_eq!(s.width, 158 + 72 + 2);
-        assert_eq!(s.button(1), (182, 206));
+        assert_eq!(s.buttons_x, 154, "2 px after the text");
+        assert_eq!(s.width, 154 + 72 + 2);
+        assert_eq!(s.button(1), (178, 202));
     }
 
     #[test]
@@ -168,9 +173,9 @@ mod tests {
 
     #[test]
     fn in_between_widths_narrow_the_text_then_close_the_gaps() {
-        // full 232, without text 112, compact 102 (100%, 16 px cover, 120 px text)
+        // full 228, without text 108, compact 102 (100%, 16 px cover, 120 px text)
         let s = at_width(1.0, 16, 4, 120, 150);
-        assert_eq!((s.width, s.text_x, s.text_w), (150, 32, 38));
+        assert_eq!((s.width, s.text_x, s.text_w), (150, 32, 42));
         assert_eq!(s.buttons_x + 72 + 2, 150, "buttons stay at the right edge");
         let s = at_width(1.0, 16, 4, 120, 105);
         assert_eq!((s.width, s.text_w, s.buttons_x), (105, 0, 31));
@@ -200,17 +205,17 @@ mod tests {
         let mut s = strip(1.0, 16, 4, false, 120);
         // before the first draw: whole columns
         assert_eq!(s.hit(10, 24), Part::Body);
-        assert_eq!(s.hit(157, 24), Part::Body);
-        assert_eq!(s.hit(158, 0), Part::Button(0));
-        assert_eq!(s.hit(229, 47), Part::Button(2));
-        assert_eq!(s.hit(230, 24), Part::Body); // right padding
+        assert_eq!(s.hit(153, 24), Part::Body);
+        assert_eq!(s.hit(154, 0), Part::Button(0));
+        assert_eq!(s.hit(225, 47), Part::Button(2));
+        assert_eq!(s.hit(226, 24), Part::Body); // right padding
         // drawn on a 48 px taskbar: the box is 24 × 24, rows 12..36, as wide as the column
         s.height = 48;
         assert_eq!(s.hit(190, 24), Part::Button(1));
         assert_eq!(s.hit(190, 12), Part::Button(1));
         assert_eq!(s.hit(190, 11), Part::Body); // above the box
         assert_eq!(s.hit(190, 36), Part::Body); // below it
-        assert_eq!(s.hit(157, 24), Part::Body);
+        assert_eq!(s.hit(153, 24), Part::Body);
         // the cover's ring: x 4..26, rows 13..35
         assert_eq!(s.hit(15, 24), Part::Cover);
         assert_eq!(s.hit(3, 24), Part::Body);

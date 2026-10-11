@@ -152,7 +152,7 @@ impl App {
 impl Content for App {
     fn measure(&mut self, f: &Frame, compact: bool) -> i32 {
         let (people, avatars, logo, ring) = self.content(Ring::Dim, false);
-        let c = StripContent { voice: &self.voice, people, avatars, max_avatars: self.cfg.max_avatars, logo, ring, text_w: self.media_w };
+        let c = StripContent { voice: &self.voice, people, avatars, max_avatars: self.cfg.max_avatars, logo, ring, text_w: self.media_w, fixed: self.cfg.fixed_width };
         render::strip(None, &c, compact, f.fit_width, f.height, f.scale, f.look).size.cx
     }
 
@@ -170,7 +170,7 @@ impl Content for App {
             Ring::Pulse(taskbar_dock::anim::pulse(t.elapsed().as_secs_f32()))
         };
         let (people, avatars, logo, ring) = self.content(ring, true);
-        let c = StripContent { voice: &self.voice, people, avatars, max_avatars: self.cfg.max_avatars, logo, ring, text_w: self.media_w };
+        let c = StripContent { voice: &self.voice, people, avatars, max_avatars: self.cfg.max_avatars, logo, ring, text_w: self.media_w, fixed: self.cfg.fixed_width };
         let lay = render::strip(Some(cv), &c, f.compact, f.fit_width, f.height, f.scale, f.look);
         self.strip = Some(lay);
     }
@@ -309,6 +309,8 @@ fn main() {
     let mut spec = Spec::new("TaskbarDiscordStrip", "discord", "Discord voice", log);
     spec.mutex = "Local\\TaskbarDiscord.SingleInstance".into();
     spec.float = Float::Off; // as before: only on the taskbar
+    // in a call the avatar column follows who's in it: Block glides the width (unless `fixed_width`)
+    spec.glide_width = true;
     spec.log_file = Some(log_file());
     let cfg = Config::load();
     let status = if cfg.configured() || std::env::var_os("TASKBAR_DISCORD_TEST").is_some() { Status::Connecting } else { Status::NotConfigured };

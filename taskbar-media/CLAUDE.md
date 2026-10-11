@@ -25,8 +25,12 @@ the library's `block` (plan step 8); media supplies the `Content`.
 - timeline.rs (`Progress`, skip maths) · learned.rs (real-time yes/no per app) · select.rs
   (which session shows; hide after pause).
 - render.rs: strip drawing into Block's canvas (`geo`, `strip_layout` incl. `Frame::fit_width`,
-  `draw_strip`: text, buttons, cover/badge, ring), `tray_logo`, GDI helpers · layout.rs: strip
-  geometry (`at_width`: the text column narrows first).
+  `draw_strip`: text, buttons, cover/badge, ring, `text_width`), `tray_logo`, GDI helpers ·
+  layout.rs: strip geometry (`at_width`: the text column narrows first, or widens up to
+  `max_width`; `BUTTON_GAP` after the text). The text column follows the track (`App::text_column`, plan step 9;
+  `fixed_width`: always `max_width`); Block glides the width (`Spec::glide_width`). A line
+  longer than its column scrolls (`panel_view::paint_line`, shared with the panel; content timer
+  `TIMER_SCROLL` 33 ms while one is too long, started / stopped in `sync`).
 - panel.rs: the click panel's content on Block's panel: size ("Nothing playing" without a
   session), mouse (buttons, seek drag, volume drag, mute), volume kept current, frame timer.
 - panel_view.rs: click panel layout and painting, and the "Nothing playing" panel.

@@ -223,10 +223,11 @@ fn sort(members: &mut [Member]) {
     members.sort_by_key(|m| m.name.to_lowercase());
 }
 
-/// Who gets the strip's few avatar places. People who can talk (not muted or deafened) compete
-/// for them: whoever speaks takes an empty place, else the place of the one quiet longest. The
-/// places keep their order, so the avatars don't reshuffle each time someone speaks; places
-/// nobody has won yet go to the others who can talk, in the call's order.
+/// Who gets the strip's few avatar places. When everyone fits, everyone has one (muted or not),
+/// in the call's order. Otherwise people who can talk (not muted or deafened) compete for them:
+/// whoever speaks takes an empty place, else the place of the one quiet longest. The places keep
+/// their order, so the avatars don't reshuffle each time someone speaks; places nobody has won
+/// yet go to the others who can talk, in the call's order.
 #[derive(Clone, Debug, Default)]
 pub struct Slots {
     /// (member id, the update they last spoke in; 0: not yet)
@@ -240,6 +241,13 @@ impl Slots {
         let max = max.max(1);
         self.tick += 1;
         let tick = self.tick;
+        if members.len() <= max {
+            // everyone fits: no "+N" for the muted
+            let old = std::mem::take(&mut self.held);
+            let last = |m: &Member| if m.speaking { tick } else { old.iter().find(|(id, _)| *id == m.id).map_or(0, |h| h.1) };
+            self.held = members.iter().map(|m| (m.id.clone(), last(m))).collect();
+            return;
+        }
         let can_talk = |m: &Member| !m.muted && !m.deafened;
         let find = |id: &str| members.iter().find(|m| m.id == id);
         self.held.retain(|(id, _)| find(id).is_some_and(can_talk));
@@ -422,5 +430,23 @@ mod tests {
         ms[1].muted = false;
         s.update(&ms, 3);
         assert_eq!(ids(&s, &ms), ["6", "5", "0"]);
+    }
+
+    #[test]
+    fn slots_show_everyone_when_everyone_fits() {
+        let mut ms = people(5);
+        ms[2].muted = true;
+        ms[4].deafened = true;
+        let mut s = Slots::default();
+        s.update(&ms, 5);
+        assert_eq!(ids(&s, &ms), ["0", "1", "2", "3", "4"], "five places, five people: all of them");
+        // a sixth joins: the places go to those who can talk again
+        let mut six = ms.clone();
+        six.extend(people(6).into_iter().skip(5));
+        s.update(&six, 5);
+        assert_eq!(ids(&s, &six), ["0", "1", "3", "5"]);
+        // back to five: everyone again
+        s.update(&ms, 5);
+        assert_eq!(ids(&s, &ms), ["0", "1", "2", "3", "4"]);
     }
 }

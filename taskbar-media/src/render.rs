@@ -150,23 +150,13 @@ pub fn draw_text(dc: HDC, font: &Font, s: &str, color: COLORREF, rc: RECT, flags
     }
 }
 
-/// `s` cut to fit `max` px with "…" (whole characters), and its width.
-pub fn fit(dc: HDC, font: &Font, s: &str, max: i32) -> (String, i32) {
-    let (w, _) = text_size(dc, font, s);
-    if w <= max {
-        return (s.to_string(), w);
-    }
-    let chars: Vec<char> = s.chars().collect();
-    let cut = |n: usize| format!("{}…", chars[..n].iter().collect::<String>().trim_end());
-    // the longest prefix that fits, by halving
-    let (mut lo, mut hi) = (0usize, chars.len());
-    while lo < hi {
-        let mid = (lo + hi).div_ceil(2);
-        if text_size(dc, font, &cut(mid)).0 <= max { lo = mid } else { hi = mid - 1 }
-    }
-    let t = cut(lo);
-    let w = text_size(dc, font, &t).0;
-    (t, w)
+/// The strip's text width for `title` and `artist`: the longer line, px at `scale`.
+pub fn text_width(title: &str, artist: &str, scale: f32, look: &Look) -> i32 {
+    let font = Font::new((look.font_size * scale).round() as i32, 400, &look.font);
+    let dc = unsafe { CreateCompatibleDC(None) };
+    let w = text_size(dc, &font, title).0.max(text_size(dc, &font, artist).0);
+    unsafe { let _ = DeleteDC(dc); }
+    w
 }
 
 /// What the strip shows.
@@ -272,14 +262,12 @@ pub fn geo(height: i32, scale: f32, look: &Look) -> Geo {
     Geo { height, scale, cover, margin, cover_top, top1, top2, line_h }
 }
 
-/// The layout: full (the text column `max_width` px at 100%, always that wide, so the buttons
-/// and the widgets beside it don't move when the track changes) or `compact`; `fit` (Block's
-/// [`taskbar_dock::block::Frame::fit_width`]): the full strip narrowed to that width, the text
-/// column first.
-pub fn strip_layout(g: &Geo, compact: bool, max_width: f32, fit: Option<i32>) -> Strip {
-    let text_w = (max_width * g.scale).round() as i32;
+/// The layout: full (the text column `text_w` px: as wide as the text, see `App::text_column`)
+/// or `compact`; `fit` (Block's [`taskbar_dock::block::Frame::fit_width`]): the full strip at
+/// that width, narrower or wider, the text column taking the difference up to `max_w` px.
+pub fn strip_layout(g: &Geo, compact: bool, text_w: i32, max_w: i32, fit: Option<i32>) -> Strip {
     let mut l = match fit {
-        Some(w) if !compact => layout::at_width(g.scale, g.cover, g.margin, text_w, w),
+        Some(w) if !compact => layout::at_width(g.scale, g.cover, g.margin, max_w, w),
         _ => layout::strip(g.scale, g.cover, g.margin, compact, text_w),
     };
     l.height = g.height; // for hit testing: a button is hit inside its highlight box
@@ -295,24 +283,29 @@ pub fn ring_box(l: &Strip, g: &Geo) -> (i32, i32, i32, i32) {
 
 /// Draws the strip's content laid out as `l` into Block's canvas `out` (`l.width` wide):
 /// text, buttons, the cover (or badge, or a note) and the progress ring; `live` is the ring's
-/// colour for a live stream.
-pub fn draw_strip(out: &mut [u32], out_w: i32, c: &StripContent, l: &Strip, g: &Geo, look: &Look, live: (u32, u32, u32)) {
+/// colour for a live stream. A line too long for the text column scrolls (the panel's marquee;
+/// `scroll_t`: seconds since the track came, None with animations off: cut with "…").
+/// Returns whether a line is too long (keep redrawing while it scrolls).
+pub fn draw_strip(out: &mut [u32], out_w: i32, c: &StripContent, l: &Strip, g: &Geo, look: &Look, live: (u32, u32, u32), scroll_t: Option<f32>) -> bool {
     let (height, scale) = (g.height, g.scale);
     let s = |v: f32| (v * scale).round() as i32;
     let text_font = Font::new(s(look.font_size), 400, &look.font);
     let (icon_top, icon) = draw::icon_box(height, scale);
     let icon_font = Font::new(icon, 400, ICON_FONT);
-    let Some(mut cv) = Canvas::new(l.width, height) else { return };
+    let Some(mut cv) = Canvas::new(l.width, height) else { return false };
     let white = rgb(255, 255, 255);
 
+    let mut long = false;
     if l.text_w > 0 {
-        let (title, artist) = (fit(cv.dc, &text_font, &c.title, l.text_w).0, fit(cv.dc, &text_font, &c.artist, l.text_w).0);
-        let flags = DT_LEFT | DT_TOP;
+        let line = |cv: &mut Canvas, text: &str, color: COLORREF, top: i32| {
+            let r = crate::panel_view::Rc { x: l.text_x, y: top, w: l.text_w, h: g.line_h };
+            crate::panel_view::paint_line(cv, &text_font, text, color, r, scroll_t.unwrap_or(0.0), scale, scroll_t.is_some(), 0)
+        };
         // no artist: the title alone, centred between the two lines
-        let t1 = if artist.trim().is_empty() { (g.top1 + g.top2) / 2 } else { g.top1 };
-        draw_text(cv.dc, &text_font, &title, white, RECT { left: l.text_x, top: t1, right: l.text_x + l.text_w, bottom: t1 + g.line_h }, flags);
+        let t1 = if c.artist.trim().is_empty() { (g.top1 + g.top2) / 2 } else { g.top1 };
+        long |= line(&mut cv, &c.title, white, t1);
         // the artist line dimmer (78%, like the shared second-line colour), to set it apart
-        draw_text(cv.dc, &text_font, &artist, rgb(199, 199, 199), RECT { left: l.text_x, top: g.top2, right: l.text_x + l.text_w, bottom: g.top2 + g.line_h }, flags);
+        long |= line(&mut cv, &c.artist, rgb(199, 199, 199), g.top2);
     }
     // buttons: tray-icon sized glyphs centred in their columns; unsupported ones dimmed
     let off = (taskbar_dock::theme::Theme::new(look).strip.disabled * 255.0).round() as u8;
@@ -357,6 +350,7 @@ pub fn draw_strip(out: &mut [u32], out_w: i32, c: &StripContent, l: &Strip, g: &
         }
     }
     copy_into(out, out_w, px, width);
+    long
 }
 
 /// The tray icon: the play glyph (Segoe Fluent), mono in the taskbar's text colour, as weather's

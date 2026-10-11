@@ -381,11 +381,13 @@ impl Session {
 // ---------------------------------------------------------------- test aid
 
 /// TASKBAR_DISCORD_TEST=<n>: a made-up call with n people, someone speaking in turn, so the
-/// strip and panel can be checked without Discord. Mute/deafen/leave work on it.
+/// strip and panel can be checked without Discord. Mute/deafen/leave work on it. Every 10 ticks
+/// (~9 s) people leave or join: n, 1, about half, n, … (the strip's width follows, plan step 9).
 fn fake(n: usize, rx: &Receiver<Cmd>, post: &Post) {
     let names = ["Amy", "Bob", "Chandra", "Dewi", "Eko", "Fatima", "Gus", "Hana"];
     let mut v = Voice { status: Status::Ready, me: Some("1".into()), ..Default::default() };
-    let join = |v: &mut Voice| {
+    let counts = [n.max(1), 1, n.div_ceil(2).max(1)];
+    let join = |v: &mut Voice, n: usize| {
         let states: Vec<Value> = (0..n.max(1))
             .map(|i| json!({ "nick": names[i % names.len()], "voice_state": { "self_mute": i == 2 },
                              "user": { "id": (i + 1).to_string(), "username": "x" } }))
@@ -393,7 +395,7 @@ fn fake(n: usize, rx: &Receiver<Cmd>, post: &Post) {
         v.set_channel(&json!({ "id": "10", "name": "General", "guild_id": "1", "voice_states": states }));
         v.set_guild("1", "Test server");
     };
-    join(&mut v);
+    join(&mut v, counts[0]);
     let mut tick = 0usize;
     let mut left_at: Option<Instant> = None;
     loop {
@@ -408,6 +410,9 @@ fn fake(n: usize, rx: &Receiver<Cmd>, post: &Post) {
             Ok(_) => {}
             Err(_) => {
                 tick += 1;
+                if tick % 10 == 0 && v.channel.is_some() {
+                    join(&mut v, counts[tick / 10 % counts.len()]);
+                }
                 if let Some(c) = v.channel.as_mut() {
                     let k = c.members.len().max(1);
                     for (i, m) in c.members.iter_mut().enumerate() {
@@ -416,7 +421,7 @@ fn fake(n: usize, rx: &Receiver<Cmd>, post: &Post) {
                 }
                 if left_at.is_some_and(|t| t.elapsed() > Duration::from_secs(6)) {
                     left_at = None;
-                    join(&mut v);
+                    join(&mut v, counts[0]);
                 }
             }
         }

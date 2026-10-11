@@ -16,6 +16,9 @@ pub struct Config {
     pub redirect_uri: String,
     /// Avatars on the strip (the rest is "+N").
     pub max_avatars: usize,
+    /// true: the avatar column is always media's `max_width` (the strip never changes width as
+    /// people join or leave); false: as wide as the avatars of everyone in the call.
+    pub fixed_width: bool,
 }
 
 impl Default for Config {
@@ -25,6 +28,7 @@ impl Default for Config {
             client_secret: String::new(),
             redirect_uri: "http://localhost".into(),
             max_avatars: 5,
+            fixed_width: false,
         }
     }
 }

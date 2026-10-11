@@ -52,6 +52,7 @@ apply within a second, without a restart. Missing keys are added with these defa
   "compact": false,
   "show_on_taskbar": true,
   "max_width": 136,
+  "fixed_width": false,
   "click_panel_width": 360,
   "hide_after_pause_s": 120,
   "skip_seconds": 15,
@@ -66,8 +67,12 @@ the move to the library (2026-10-11) `menu_panel_width`, `fade_ms` (now the shar
 and `start_with_windows` (now only the shared startup list) are gone; they're removed from the
 file on start.
 
-- `max_width`: the text column's fixed width (px at 100%); the strip doesn't change width
-  between tracks, so neighbouring widgets stay put.
+- `max_width`: the text column's widest (px at 100%); a longer title or artist scrolls, as in
+  the panel (waits 1.5 s, then loops; cut with "…" when Windows' animations are off). The column
+  is as wide as the longer of title and artist, the buttons right after it, so the strip changes width
+  with the track: it glides there at once, the neighbouring widgets following.
+- `fixed_width`: true keeps the text column at `max_width` (the strip never changes width
+  between tracks).
 - `tint`: `"brand"` (media_brands.txt, else the app icon's colour), `"cover"` (the cover's main
   colour) or `"off"`. Off anyway in high contrast.
 - `skip_seconds`: the −/+ buttons for single videos.

@@ -74,7 +74,7 @@ Differences from the plan found while building:
 
 - **Cover:** sits in the tray-icon box (`draw::icon_box`). If there's no cover, the fallback image from 4.6 is used.
 - **Progress ring:** a thin ring around the cover (4.7).
-- **Text:** two lines, title over artist. The text is as wide as the longer line, up to `max_width` (200 px at 100% scale), then cut with "…". Nothing scrolls on the strip.
+- **Text:** two lines, title over artist. The text is as wide as the longer line, up to `max_width` (200 px at 100% scale), then cut with "…". Changed 2026-10-11 (Block plan step 9): the column is exactly as wide as the text (no fixed width, no minimum), and a line longer than `max_width` scrolls like the panels' (4.8; "…" with animations off).
   - **Alignment with the tray clock:** the title sits on the same baseline as the clock's time line, and the artist on the same baseline as its date line, using the shared `draw::two_line_tops`. The font and size are the clock's (`dock.font`, `dock.font_size`).
   - **Checked on screen in stage 1:** a taskbar screenshot at your current scale, comparing the text rows of the widget and the clock pixel by pixel. If they're off by even 1 px, the fix goes into the shared library, so the bus and weather widgets stay aligned too.
 - **Buttons:** Segoe Fluent Icons glyphs at tray-icon size, each with its own 4 px-radius hover highlight. Buttons an app doesn't support do nothing.

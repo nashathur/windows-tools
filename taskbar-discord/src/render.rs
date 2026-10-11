@@ -137,8 +137,12 @@ pub struct StripContent<'a> {
     /// The server's logo, if it has one and it's loaded.
     pub logo: Option<Arc<Image>>,
     pub ring: Ring,
-    /// Width of the column for the people (px at 100%): media's `max_width`, so the strips match.
+    /// The widest the column for the people gets (px at 100%): media's `max_width`, so the
+    /// strips match at most.
     pub text_w: f32,
+    /// The column always `text_w` wide (the `fixed_width` setting); else as wide as the stack
+    /// of everyone in the call.
+    pub fixed: bool,
 }
 
 /// The strip's buttons during a call (like media's previous / play / next): each one's
@@ -337,11 +341,29 @@ pub fn strip(cv: Option<&mut block::Canvas>, c: &StripContent, compact: bool, fi
     let ring_d = cover + 2 * around;
     let (ring_x, button_w, text_gap) = (margin, s(STRIP_BUTTON), s(TEXT_GAP));
 
+    // the "+N" pill after the avatars
+    let pill_h = (ring_d as f32 * 0.8).round() as i32;
+    let pill_font = Font::new(s(look.font_size) * 9 / 10, 600, &look.font, ANTIALIASED_QUALITY);
+    let pill_text = |extra: usize| format!("+{extra}");
+    let pill_w = |extra: usize| {
+        let dc = unsafe { CreateCompatibleDC(None) };
+        let w = text_size(dc, &pill_font, &pill_text(extra)).0 + s(12.0);
+        unsafe { let _ = DeleteDC(dc); }
+        w.max(pill_h)
+    };
+    // the column for the people: as wide as the stack of everyone in the call (who's in the
+    // places changes as people mute or speak; the width only as they join or leave), one avatar
+    // at least, media's `max_width` at most (always, with `fixed_width`)
+    let max_col = (c.text_w * scale).round() as i32;
+    let col = if c.fixed { max_col } else { stack_width(members.len(), c.max_avatars, ring_d, &pill_w, s(4.0)).clamp(ring_d.min(max_col), max_col) };
+
     let (text_x, text_w, buttons_x, natural);
     if in_call {
-        let full = if compact { (0, 0, s(2.0)) } else { (text_gap, (c.text_w * scale).round() as i32, text_gap) };
+        // after the column only 2 px, as media's BUTTON_GAP: the button glyphs sit inside their
+        // highlight margin already
+        let full = if compact { (0, 0, s(2.0)) } else { (text_gap, col, s(2.0)) };
         let rest = ring_x + ring_d + STRIP_BUTTONS.len() as i32 * button_w + s(PAD_RIGHT);
-        let (gap1, column, gap2) = fit_column(full, s(2.0), fit.filter(|_| !compact).map(|w| w - rest));
+        let (gap1, column, gap2) = fit_column(full, max_col, s(2.0), fit.filter(|_| !compact).map(|w| w - rest));
         text_x = ring_x + ring_d + gap1;
         text_w = column;
         buttons_x = text_x + text_w + gap2;
@@ -419,26 +441,18 @@ pub fn strip(cv: Option<&mut block::Canvas>, c: &StripContent, compact: bool, fi
 
         // the people in the places, stacked, the first on top; everyone else (muted, deafened,
         // quiet longest, or more than fit): "+N"; at the column's left end, by the logo.
-        // A narrowed column (a compact switch) keeps the full one's stack, cut off at its right
-        // end and faded by how much of the column is left, so it fades in and out evenly.
+        // A narrowed column (a compact switch, a width gliding) keeps the natural one's stack,
+        // cut off at its right end and faded by how much of the column is left, so it fades in
+        // and out evenly; a widened one (a width held or gliding) just has room to spare.
         if !compact && !members.is_empty() && text_w > 0 {
-            let full_w = ((c.text_w * scale).round() as i32).max(text_w);
-            let fade = text_w as f32 / full_w as f32;
+            let full_w = col.max(1);
+            let fade = (text_w as f32 / full_w as f32).min(1.0);
             let mut layer = (text_w < full_w).then(|| vec![0u32; buf.len()]);
             let dst: &mut [u32] = match layer.as_mut() {
                 Some(l) => l,
                 None => &mut *buf,
             };
             let ad = ring_d as f32;
-            let pill_h = (ad * 0.8).round() as i32;
-            let pill_font = Font::new(s(look.font_size) * 9 / 10, 600, &look.font, ANTIALIASED_QUALITY);
-            let pill_text = |extra: usize| format!("+{extra}");
-            let pill_w = |extra: usize| {
-                let dc = unsafe { CreateCompatibleDC(None) };
-                let w = text_size(dc, &pill_font, &pill_text(extra)).0 + s(12.0);
-                unsafe { let _ = DeleteDC(dc); }
-                w.max(pill_h)
-            };
             let mut shown = c.people.len().min(c.max_avatars.max(1));
             let extra_of = |n: usize| members.len() - n;
             // the avatars overlap as much as it takes for all of them and the pill to fit the
@@ -507,11 +521,28 @@ fn over(buf: &mut [u32], layer: &[u32], width: i32, xs: (i32, i32), opacity: f32
     }
 }
 
+/// The avatar stack's natural width for `n` people in the call with up to `max` avatars (`ad` px
+/// each, a step of [`STACK_STEP`] apart), then `gap` and the "+N" pill (`pill_w`) for the rest;
+/// at least the pill alone (everyone muted: only the pill is drawn).
+fn stack_width(n: usize, max: usize, ad: i32, pill_w: impl Fn(usize) -> i32, gap: i32) -> i32 {
+    if n == 0 {
+        return ad;
+    }
+    let shown = n.min(max.max(1));
+    let step = (ad as f32 * STACK_STEP).floor() as i32;
+    let stack = ad + step * (shown as i32 - 1);
+    let w = if n > shown { stack + gap + pill_w(n - shown) } else { stack };
+    w.max(pill_w(n))
+}
+
 /// The avatar column and the gaps beside it, (gap, column, gap), fitted into `room` px (None:
-/// as they are): the column narrows first, then the gaps, towards the compact layout's
-/// `min_gaps` (both together); never wider than given.
-fn fit_column((gap1, column, gap2): (i32, i32, i32), min_gaps: i32, room: Option<i32>) -> (i32, i32, i32) {
-    let Some(room) = room.filter(|r| *r < gap1 + column + gap2) else { return (gap1, column, gap2) };
+/// as they are): narrower, the column narrows first, then the gaps, towards the compact layout's
+/// `min_gaps` (both together); wider, the column widens up to `max_column`.
+fn fit_column((gap1, column, gap2): (i32, i32, i32), max_column: i32, min_gaps: i32, room: Option<i32>) -> (i32, i32, i32) {
+    let Some(room) = room else { return (gap1, column, gap2) };
+    if room >= gap1 + column + gap2 {
+        return (gap1, (room - gap1 - gap2).min(max_column.max(column)), gap2);
+    }
     if room > gap1 + gap2 {
         return (gap1, room - gap1 - gap2, gap2);
     }
@@ -875,12 +906,32 @@ mod tests {
     #[test]
     fn the_avatar_column_narrows_then_the_gaps() {
         let full = (12, 100, 12);
-        assert_eq!(fit_column(full, 2, None), full);
-        assert_eq!(fit_column(full, 2, Some(500)), full, "room enough: as it is");
-        assert_eq!(fit_column(full, 2, Some(74)), (12, 50, 12), "the column first");
-        assert_eq!(fit_column(full, 2, Some(24)), (12, 0, 12));
-        assert_eq!(fit_column(full, 2, Some(13)), (6, 0, 7), "then the gaps");
-        assert_eq!(fit_column(full, 2, Some(1)), (0, 0, 2), "down to compact's");
+        assert_eq!(fit_column(full, 100, 2, None), full);
+        assert_eq!(fit_column(full, 100, 2, Some(500)), full, "room enough: as it is");
+        assert_eq!(fit_column(full, 100, 2, Some(74)), (12, 50, 12), "the column first");
+        assert_eq!(fit_column(full, 100, 2, Some(24)), (12, 0, 12));
+        assert_eq!(fit_column(full, 100, 2, Some(13)), (6, 0, 7), "then the gaps");
+        assert_eq!(fit_column(full, 100, 2, Some(1)), (0, 0, 2), "down to compact's");
+    }
+
+    #[test]
+    fn the_avatar_column_widens_up_to_its_maximum() {
+        let full = (12, 40, 12);
+        assert_eq!(fit_column(full, 136, 2, Some(100)), (12, 76, 12), "a width held or gliding wider");
+        assert_eq!(fit_column(full, 136, 2, Some(500)), (12, 136, 12), "never past the maximum");
+    }
+
+    #[test]
+    fn the_stack_is_as_wide_as_everyone_in_the_call() {
+        let pill = |n: usize| if n < 10 { 30 } else { 38 };
+        // 34 px avatars, a step of floor(34 × 0.62) = 21
+        assert_eq!(stack_width(1, 5, 34, pill, 4), 34, "alone: one avatar");
+        assert_eq!(stack_width(3, 5, 34, pill, 4), 34 + 2 * 21);
+        assert_eq!(stack_width(5, 5, 34, pill, 4), 34 + 4 * 21);
+        assert_eq!(stack_width(7, 5, 34, pill, 4), 34 + 4 * 21 + 4 + 30, "five, then +2");
+        assert_eq!(stack_width(1, 0, 34, pill, 4), 34, "max_avatars 0 counts as 1");
+        assert_eq!(stack_width(0, 5, 34, pill, 4), 34);
+        assert_eq!(stack_width(1, 5, 20, |_| 30, 4), 30, "at least the pill alone");
     }
 
     #[test]
