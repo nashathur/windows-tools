@@ -236,7 +236,7 @@ impl Content for App {
 
     fn settings_changed(&mut self, ctx: &mut Ctx) {
         // Edit settings…, or another widget saving its section: label, stop, colours
-        apply_config(data::Config::load());
+        apply_config(data::Config::read());
         self.refresh(ctx);
     }
 

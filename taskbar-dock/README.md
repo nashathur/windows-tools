@@ -129,8 +129,9 @@ cover, a width that follows its content), `taskbar-discord` (a worker, a width t
    `draw::progress_ring`, `badge` (a coloured rounded badge with short text), `emoji` (colour
    emoji), `marquee` (a line too long for its box). UI-RULES.md for corners, highlights, hit boxes
    and the cover.
-5. **Settings**: your own keys in your own section (`settings::read`, `settings::update`);
-   **merge** when saving: Block owns the section's `compact` and `show_on_taskbar`. Reload on
+5. **Settings**: reads are pure; fill defaults on start with `settings::fill_missing` and write
+   only changed keys with `settings::set_key` or a focused `settings::update`. Block owns the
+   section's `compact` and `show_on_taskbar`. Reload on
    `Content::settings_changed` (an edit of the file applies live). Secrets (API keys) stay in the
    section but are never shown in full in logs, menus or panels; mask them. A data file the user
    may edit (bus's `line_colors.txt`): check its mtime from a content timer.

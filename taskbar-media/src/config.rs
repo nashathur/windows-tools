@@ -5,7 +5,6 @@
 //! `show_on_taskbar` keys, and Start with Windows is the shared `startup` list.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use taskbar_dock::settings;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -45,31 +44,17 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Loads the media section and writes it back, which adds settings introduced by newer
-    /// versions. A broken file is left as-is.
+    /// Loads the media section, filling only missing keys on startup.
     pub fn load() -> Config {
-        let Some(root) = settings::read() else { return Config::default() };
-        let cfg: Config = root.get("media").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
-        cfg.save();
-        cfg
+        let defaults = serde_json::to_value(Config::default()).unwrap_or_default();
+        let _ = settings::fill_missing("media", &defaults);
+        Config::read()
     }
 
-    /// Saves these settings into the media section; other keys there (Block's `compact` and
-    /// `show_on_taskbar`) and the other sections are left as they are.
-    pub fn save(&self) {
-        let Ok(Value::Object(mine)) = serde_json::to_value(self) else { return };
-        let _ = settings::update(|root| {
-            if !root.is_object() {
-                *root = json!({});
-            }
-            let sec = &mut root["media"];
-            if !sec.is_object() {
-                *sec = json!({});
-            }
-            for (k, v) in mine {
-                sec[k.as_str()] = v;
-            }
-        });
+    /// Reads the media section without writing it. A broken file uses defaults.
+    pub fn read() -> Config {
+        let Ok(root) = settings::read() else { return Config::default() };
+        root.get("media").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default()
     }
 
     /// `live_color` as RGB; the default if it isn't "#RRGGBB".
@@ -91,6 +76,7 @@ pub fn parse_hex(s: &str) -> Option<(u32, u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn missing_keys_get_defaults() {

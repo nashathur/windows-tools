@@ -17,5 +17,5 @@ Everything about the strip window, dock, panels, tray icon and the standard menu
   Compact mode, Start with Windows), switches, and `settings_changed`.
 - tray.rs: the tray icon's tooltip (`Content::tray_tip`).
 - weather.rs (forecast API), knmi.rs (observations), render.rs (label `measure_label`/`draw_label`,
-  flyout `paint_panel`, `tray_logo`: the cloud glyph for `Content::tray_icon`), config.rs (`save` merges: Block
-  owns `compact` and `show_on_taskbar`).
+  flyout `paint_panel`, `tray_logo`: the cloud glyph for `Content::tray_icon`), config.rs (fills
+  missing defaults on start; user changes write only their changed key or location keys).

@@ -415,7 +415,7 @@ impl Content for App {
     /// settings.json changed (Edit settings…, another widget): ours again; the strip and panel
     /// follow (max_width, tint, click_panel_width).
     fn settings_changed(&mut self, ctx: &mut Ctx) {
-        self.cfg = Config::load();
+        self.cfg = Config::read();
         self.reselect(ctx);
         ctx.resize_panel();
     }

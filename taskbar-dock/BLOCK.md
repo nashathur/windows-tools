@@ -98,5 +98,6 @@ from `Content::tray_icon`, tooltip `tray_tip`) shows whenever the strip doesn't.
 Block asks `Content::tray_icon` again.
 
 ## Settings Block owns
-Block owns the section's `compact` and `show_on_taskbar` keys: a widget saving its section must
-merge, not replace it (weather `Config::save`).
+Block owns the section's `compact` and `show_on_taskbar` keys. A widget writes only keys the user
+changed; on start it fills absent keys with `settings::fill_missing`, preserving Block's keys and
+any values already in the section.

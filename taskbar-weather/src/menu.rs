@@ -25,7 +25,7 @@ pub(crate) fn switch(a: &mut App, id: usize, _ctx: &mut Ctx) -> bool {
     match id {
         ID_FAHRENHEIT => {
             a.cfg.units = if a.cfg.fahrenheit() { "celsius" } else { "fahrenheit" }.into();
-            a.cfg.save();
+            let _ = taskbar_dock::settings::set_key("weather", "units", serde_json::json!(a.cfg.units));
             fetch::start_fetch(a);
             a.cfg.fahrenheit()
         }
@@ -35,7 +35,7 @@ pub(crate) fn switch(a: &mut App, id: usize, _ctx: &mut Ctx) -> bool {
 
 pub(crate) fn action(a: &mut App, id: usize, _ctx: &mut Ctx) {
     if id == ID_REFRESH {
-        a.cfg = Config::load();
+        a.cfg = Config::read();
         fetch::restart(a);
     }
 }
@@ -44,7 +44,7 @@ pub(crate) fn action(a: &mut App, id: usize, _ctx: &mut Ctx) {
 /// on what changed: the weather data settings → fetch again; the position → redraw (Block owns
 /// `compact` and `show_on_taskbar`).
 pub(crate) fn settings_changed(a: &mut App, ctx: &mut Ctx) {
-    let cfg = Config::load();
+    let cfg = Config::read();
     let old = std::mem::replace(&mut a.cfg, cfg.clone());
     let data = |c: &Config| {
         (c.city.clone(), c.latitude, c.longitude, c.location_name.clone(), c.units.clone(),

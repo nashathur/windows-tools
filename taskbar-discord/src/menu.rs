@@ -59,7 +59,7 @@ pub(crate) fn action(a: &mut App, id: usize) {
 /// The settings file changed (Edit settings…, another widget): new app credentials reconnect;
 /// media's text column width or the avatar count redraw.
 pub(crate) fn settings_changed(a: &mut App, ctx: &mut Ctx) {
-    let cfg = Config::load();
+    let cfg = Config::read();
     if a.cfg.connection_key() != cfg.connection_key() {
         log("app settings changed: reconnecting");
         a.send(rpc::Cmd::Reconnect(cfg.connection_key()));

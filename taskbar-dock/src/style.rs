@@ -204,22 +204,11 @@ impl Style {
     /// Loads the `dock` section, adding any missing keys (with defaults) to the file so every
     /// option is visible there. Leaves an invalid file alone and returns the defaults.
     pub fn load() -> Style {
-        let Some(root) = settings::read() else { return Style::default() };
+        let defaults = Value::Object(Style::default().to_json());
+        let _ = settings::fill_missing("dock", &defaults);
+        let Ok(root) = settings::read() else { return Style::default() };
         let dock = root.get("dock").cloned().unwrap_or_else(|| json!({}));
-        let style = Style::from_json(&dock);
-        // fill in missing keys, keeping the user's values (and any keys we don't know)
-        let mut full = dock.as_object().cloned().unwrap_or_default();
-        let mut added = false;
-        for (k, v) in style.to_json() {
-            if !full.contains_key(&k) {
-                full.insert(k, v);
-                added = true;
-            }
-        }
-        if added {
-            let _ = settings::update(|r| r["dock"] = Value::Object(full));
-        }
-        style
+        Style::from_json(&dock)
     }
 
     /// The concrete values to use now, with "system" settings taken from Windows.

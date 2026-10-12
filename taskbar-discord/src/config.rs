@@ -1,7 +1,6 @@
 //! The `discord` settings section.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use taskbar_dock::settings;
 
 /// The "discord" section of the settings file shared with the other taskbar widgets,
@@ -36,31 +35,17 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Loads the section and writes it back, so new settings show up in the file.
+    /// Loads the section, filling only missing keys on startup.
     pub fn load() -> Config {
-        // keep a broken file as-is so the user can fix their edit
-        let Some(root) = settings::read() else { return Config::default() };
-        let cfg: Config = root.get("discord").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
-        cfg.save();
-        cfg
+        let defaults = serde_json::to_value(Config::default()).unwrap_or_default();
+        let _ = settings::fill_missing("discord", &defaults);
+        Config::read()
     }
 
-    /// Saves these settings into the discord section; other keys there (Block's `compact` and
-    /// `show_on_taskbar`) and the other sections are left as they are.
-    pub fn save(&self) {
-        let Ok(Value::Object(mine)) = serde_json::to_value(self) else { return };
-        let _ = settings::update(|root| {
-            if !root.is_object() {
-                *root = json!({});
-            }
-            let sec = &mut root["discord"];
-            if !sec.is_object() {
-                *sec = json!({});
-            }
-            for (k, v) in mine {
-                sec[k.as_str()] = v;
-            }
-        });
+    /// Reads the section without writing it. A broken file uses defaults.
+    pub fn read() -> Config {
+        let Ok(root) = settings::read() else { return Config::default() };
+        root.get("discord").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default()
     }
 
     pub fn configured(&self) -> bool {

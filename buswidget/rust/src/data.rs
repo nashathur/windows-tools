@@ -61,9 +61,8 @@ impl Config {
         }
     }
 
-    /// Writes these keys into the bus section, keeping the others (Block's `compact` and
-    /// `show_on_taskbar`); no write if nothing changed.
-    fn merge(&self) -> io::Result<()> {
+    /// The stop picker's choice: writes its seven keys in one update, leaving other keys alone.
+    pub fn save_stop(&self) -> io::Result<()> {
         let fields = self.to_json();
         settings::update(|root| {
             if !root.is_object() {
@@ -88,9 +87,16 @@ impl Config {
         serde_json::Value::Object(fields)
     }
 
-    /// Loads the bus section; on first run it writes the defaults.
+    /// Loads the bus section, filling only missing keys on startup.
     pub fn load() -> Self {
-        let Some(root) = settings::read() else { return Self::default() };
+        let defaults = Self::default().to_json();
+        let _ = settings::fill_missing("bus", &defaults);
+        Self::read()
+    }
+
+    /// Reads the bus section without writing it.
+    pub fn read() -> Self {
+        let Ok(root) = settings::read() else { return Self::default() };
         let mut c = Self::default();
         if let Some(bus) = root.get("bus").and_then(|b| b.as_object()) {
             for k in FIELDS {
@@ -99,14 +105,7 @@ impl Config {
                 }
             }
         }
-        // fills in missing keys (no write if unchanged)
-        let _ = c.merge();
         c
-    }
-
-    /// Saves the bus section only; the other sections are left as they are.
-    pub fn save(&self) -> io::Result<()> {
-        self.merge()
     }
     /// What the cached schedule depends on.
     pub fn sig(&self) -> String {

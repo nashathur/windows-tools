@@ -367,6 +367,15 @@ After each job: I read the diff, build with each widget's dev.ps1 (smoke must pa
 exes (widgets, dockctl, launcher, the app), check live; one Sol review over the whole step at
 the end.
 
+## Build notes (gaps filled while building)
+
+- Job 2 runs as two builds: 2a (A–F) then 2b (G, dockctl `status` / `start` / `restart`).
+- Describe cache file name: `<exe stem>-<FNV-1a 64 of the lower-cased canonical path>.json`
+  (the section isn't known before the exe has run once); the key inside is as in B.
+- dockctl refuses with a package identity every command it would run in its own process (file
+  commands for a stopped widget, `widgets …`, `startup …` and `describe` for a stopped widget):
+  from the Claude app they would all see the private copy.
+
 ## Acceptance checks (live, after job 4)
 
 - Edit settings… on each widget opens the app on its page; a second Edit settings… on another

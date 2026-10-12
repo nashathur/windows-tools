@@ -1,7 +1,7 @@
 //! The `weather` settings section.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use taskbar_dock::settings;
 
 /// Weather settings: the "weather" section of the settings file shared with the other taskbar
@@ -54,33 +54,17 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Loads the weather section; on first run it writes the defaults.
+    /// Loads the weather section, filling only missing keys on startup.
     pub fn load() -> Config {
-        // Keep a broken file as-is so the user can fix their edit.
-        let Some(root) = settings::read() else { return Config::default() };
-        let cfg: Config = root.get("weather").and_then(|w| serde_json::from_value(w.clone()).ok()).unwrap_or_default();
-        // write the section back in full: adds settings introduced by newer versions (no write
-        // if nothing changed)
-        cfg.save();
-        cfg
+        let defaults = serde_json::to_value(Config::default()).unwrap_or_default();
+        let _ = settings::fill_missing("weather", &defaults);
+        Config::read()
     }
 
-    /// Saves these settings into the weather section; other keys there (Block's `compact`) and
-    /// the other sections are left as they are. No write if nothing changed.
-    pub fn save(&self) {
-        let Ok(Value::Object(mine)) = serde_json::to_value(self) else { return };
-        let _ = settings::update(|root| {
-            if !root.is_object() {
-                *root = json!({});
-            }
-            let sec = &mut root["weather"];
-            if !sec.is_object() {
-                *sec = json!({});
-            }
-            for (k, v) in mine {
-                sec[k.as_str()] = v;
-            }
-        });
+    /// Reads the weather section without writing it. A broken file uses defaults.
+    pub fn read() -> Config {
+        let Ok(root) = settings::read() else { return Config::default() };
+        root.get("weather").and_then(|w| serde_json::from_value(w.clone()).ok()).unwrap_or_default()
     }
 
     /// Saves only the four location keys (city, latitude, longitude, location_name), in one

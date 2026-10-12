@@ -36,7 +36,7 @@ Everything about the strip window, dock, panels, tray icon and the standard menu
   column's right end and faded by how much of the column is left (`over`), so a compact switch keeps
   the buttons right and fades evenly both ways),
   `tint`, `tray_logo`, panel layout + hit test, `paint_panel`.
-- config.rs: the `discord` section; `save` merges (Block owns `compact` and `show_on_taskbar`).
+- config.rs: the `discord` section; fills missing defaults on start and reads without writing on reload.
 - open.rs: brings Discord's window to the front (the logo's click).
 
 ## Testing
