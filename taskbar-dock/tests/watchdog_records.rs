@@ -17,10 +17,8 @@ fn records_can_be_read_and_cleared_and_invalid_files_are_empty() {
     watchdog::clear_with_lock(&lock, "weather").unwrap();
     assert!(watchdog::read().is_empty());
 
-    let missing = std::env::temp_dir().join(format!(
-        "tdock-watchdog-missing-{}",
-        std::process::id()
-    ));
+    let missing =
+        std::env::temp_dir().join(format!("tdock-watchdog-missing-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&missing);
     std::fs::create_dir_all(&missing).unwrap();
     std::env::set_var("APPDATA", &missing);

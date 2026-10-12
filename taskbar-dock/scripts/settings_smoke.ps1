@@ -75,6 +75,14 @@ try {
         Start-Sleep -Milliseconds 100
     }
     Assert-Ok $initial 'settings state within 5 seconds'
+    if ($initial.title -ne 'Taskbar Dock') { Fail "expected window title 'Taskbar Dock', got '$($initial.title)'" }
+    if ($initial.visible -ne $true -or -not $initial.rect) { Fail 'settings window does not exist as a visible window' }
+    if ($initial.runtime.family -like 'Microsoft.WindowsAppRuntime.CBS.*') {
+        $resources = Join-Path (Split-Path $app) 'resources.pri'
+        if (-not (Test-Path -LiteralPath $resources)) { Fail "CBS runtime is active but resources.pri is missing beside the app: $resources" }
+    }
+    if ($null -ne $initial.focused) { Fail 'state.focused must be null for the WinUI app' }
+    Write-Output 'PASS visible Taskbar Dock window and runtime resources'
     Write-Output 'PASS settings state responds within 5 seconds'
 
     $widgets = @()
@@ -85,13 +93,13 @@ try {
         Assert-Ok $state "$page page state"
         if ($state.page -ne $page) { Fail "expected page $page, got $($state.page)" }
         if ($page -eq 'widgets') {
-            # The registry loads on a worker after the window appears: wait for its rows.
+            # The registry loads on a worker after the window appears: wait for its widgets.
             $listed = [Diagnostics.Stopwatch]::StartNew()
-            while (-not @($state.rows).Count -and $listed.Elapsed.TotalSeconds -lt 5) {
+            while (-not @($state.widgets).Count -and $listed.Elapsed.TotalSeconds -lt 5) {
                 Start-Sleep -Milliseconds 200
                 $state = Invoke-Dockctl @('settings', 'state')
             }
-            $widgets = @($state.rows)
+            $widgets = @($state.widgets)
             if (-not $widgets.Count) { Fail 'the Widgets page lists no registered widget' }
         }
         Write-Output "PASS page $page and state"
@@ -102,6 +110,9 @@ try {
     $developer = Invoke-Dockctl @('settings', 'state')
     Assert-Ok $developer 'Developer state'
     if ($developer.page -ne 'developer') { Fail "expected Developer page, got $($developer.page)" }
+    foreach ($card in @('advanced', 'details', 'registered', 'raw', 'commands')) {
+        if ($null -eq $developer.cards.$card) { Fail "Developer state is missing cards.$card" }
+    }
     Write-Output 'PASS page developer and state'
 
     foreach ($widget in $widgets) {

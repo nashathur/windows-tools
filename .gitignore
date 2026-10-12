@@ -19,3 +19,7 @@ __pycache__/
 _tmp/
 thread.txt
 local-llm/shots/
+
+# settings app runtime copy (taken from Windows at start) and the throwaway WinUI test
+taskbar-dock/resources.pri
+winui-test/

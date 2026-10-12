@@ -80,7 +80,14 @@ impl Core {
 
     /// The button came up (`click`) or the capture was lost (Esc, a window took the mouse): a
     /// drag ends like a drop either way; only a real release over what was pressed acts.
-    pub fn up(&mut self, click: bool, at: Hit, content: &mut dyn Content, ctx: &mut Ctx, now: Instant) -> Up {
+    pub fn up(
+        &mut self,
+        click: bool,
+        at: Hit,
+        content: &mut dyn Content,
+        ctx: &mut Ctx,
+        now: Instant,
+    ) -> Up {
         let release = self.motion.release(now);
         let on = self.pressed_on.take();
         match release {
@@ -137,15 +144,29 @@ pub(crate) fn fit_width(resize: Option<i32>, target: i32, natural: i32, zoom: f3
 /// Whether a new `target` width should animate: a compact switch (`switched`) always; any other
 /// change of the target with [`Spec::glide_width`], or while an animation runs (it heads for the
 /// new target from where it is). `prev`: the target last drawn (None: a new strip).
-pub(crate) fn animate_width(switched: bool, prev: Option<i32>, target: i32, glide_width: bool, running: bool) -> bool {
+pub(crate) fn animate_width(
+    switched: bool,
+    prev: Option<i32>,
+    target: i32,
+    glide_width: bool,
+    running: bool,
+) -> bool {
     switched || (prev.is_some_and(|p| p != target) && (glide_width || running))
 }
 
 /// The widths the dock fits by: in the chosen mode, and compact (`full` when it must never go
 /// compact for room).
 pub(crate) fn size(chosen: i32, compact: i32, spec: &Spec) -> dock::Size {
-    let min = if spec.compact_when_crowded { compact.min(chosen) } else { chosen };
-    dock::Size { full: chosen, min, stretch: spec.stretch }
+    let min = if spec.compact_when_crowded {
+        compact.min(chosen)
+    } else {
+        chosen
+    };
+    dock::Size {
+        full: chosen,
+        min,
+        stretch: spec.stretch,
+    }
 }
 
 /// Where a right-click row goes.
@@ -204,7 +225,12 @@ pub(crate) fn route(id: usize) -> Route {
 }
 
 /// The right-click panel for `content` (`show_on` None: no tray icon, no Show on taskbar row).
-pub(crate) fn menu(content: &mut dyn Content, show_on: Option<bool>, compact_on: bool, startup_on: bool) -> Menu {
+pub(crate) fn menu(
+    content: &mut dyn Content,
+    show_on: Option<bool>,
+    compact_on: bool,
+    startup_on: bool,
+) -> Menu {
     let mut m = MenuBuilder::new(show_on, compact_on, startup_on);
     content.menu(&mut m);
     m.finish()
@@ -224,7 +250,14 @@ pub(crate) fn tray_shown(switch: bool, visible: bool, has_tray: bool) -> bool {
 
 /// The highlight box under the strip: a hovered button's box, else the whole strip (inset), or
 /// none when the mouse isn't on it or it's being dragged.
-pub(crate) fn highlight(hover: bool, dragging: bool, hot: Hit, width: i32, height: i32, inset: i32) -> Option<Box4> {
+pub(crate) fn highlight(
+    hover: bool,
+    dragging: bool,
+    hot: Hit,
+    width: i32,
+    height: i32,
+    inset: i32,
+) -> Option<Box4> {
     match (hover && !dragging, hot) {
         (false, _) => None,
         (true, Hit::Button(_, b)) => Some(b),
@@ -243,7 +276,11 @@ pub(crate) struct Shade {
 impl Shade {
     pub(crate) fn of(t: Tint, levels: &crate::theme::TintLevels) -> Shade {
         let (rest, hover) = t.strengths(levels);
-        Shade { rgb: t.rgb, rest, hover }
+        Shade {
+            rgb: t.rgb,
+            rest,
+            hover,
+        }
     }
 }
 
@@ -252,14 +289,27 @@ impl Shade {
 /// tint, else the strip's) at hover strength, then the whole strip (inset) at rest or hover
 /// strength. As [`highlight`], no hover while dragged. (box, 0xRRGGBB, opacity); boxes with
 /// opacity 0 are left out.
-pub(crate) fn tints(strip: Shade, button: Option<Shade>, hover: bool, dragging: bool, hot: Hit, width: i32, height: i32, inset: i32) -> Vec<(Box4, u32, f32)> {
+pub(crate) fn tints(
+    strip: Shade,
+    button: Option<Shade>,
+    hover: bool,
+    dragging: bool,
+    hot: Hit,
+    width: i32,
+    height: i32,
+    inset: i32,
+) -> Vec<(Box4, u32, f32)> {
     let hover = hover && !dragging;
     let mut out = Vec::new();
     if let (true, Hit::Button(_, b)) = (hover, hot) {
         let t = button.unwrap_or(strip);
         out.push((b, t.rgb, t.hover));
     }
-    out.push(((0, inset, width, height - inset), strip.rgb, if hover { strip.hover } else { strip.rest }));
+    out.push((
+        (0, inset, width, height - inset),
+        strip.rgb,
+        if hover { strip.hover } else { strip.rest },
+    ));
     out.retain(|t| t.2 > 0.0);
     out
 }
@@ -271,20 +321,54 @@ pub(crate) fn menu_anchor(strip: Option<Box4>, pt: (i32, i32)) -> Box4 {
 
 /// Where a `w`×`h` panel opened without a strip (from the tray icon) goes: centred on the
 /// pointer's x, at the bottom of the work area `work`, kept `margin` inside it.
-pub(crate) fn panel_at_pointer(pt: (i32, i32), w: i32, h: i32, work: Box4, margin: i32) -> (i32, i32) {
+pub(crate) fn panel_at_pointer(
+    pt: (i32, i32),
+    w: i32,
+    h: i32,
+    work: Box4,
+    margin: i32,
+) -> (i32, i32) {
     use crate::panel::{position, RECT};
     let (left, top, right, bottom) = work;
-    let at = RECT { left: pt.0, top: bottom, right: pt.0, bottom: bottom + 1 };
-    position(at, w, h, RECT { left, top, right, bottom }, margin)
+    let at = RECT {
+        left: pt.0,
+        top: bottom,
+        right: pt.0,
+        bottom: bottom + 1,
+    };
+    position(
+        at,
+        w,
+        h,
+        RECT {
+            left,
+            top,
+            right,
+            bottom,
+        },
+        margin,
+    )
 }
 
 /// Where a `w`×`h` panel opened from the tray icon goes ([`tray::place`]). On the taskbar:
 /// above it, centred on the icon. In the tray overflow panel `o`: never over it, as Windows'
 /// own flyouts: above it, else beside it (left, then right) with the bottoms lined up; it
 /// covers the overflow only if nothing else fits. All kept `margin` inside the work area.
-pub(crate) fn panel_at_tray(icon: Box4, overflow: Option<Box4>, w: i32, h: i32, work: Box4, margin: i32) -> (i32, i32) {
+pub(crate) fn panel_at_tray(
+    icon: Box4,
+    overflow: Option<Box4>,
+    w: i32,
+    h: i32,
+    work: Box4,
+    margin: i32,
+) -> (i32, i32) {
     use crate::panel::{position, RECT};
-    let r = |b: Box4| RECT { left: b.0, top: b.1, right: b.2, bottom: b.3 };
+    let r = |b: Box4| RECT {
+        left: b.0,
+        top: b.1,
+        right: b.2,
+        bottom: b.3,
+    };
     let Some(o) = overflow else {
         return position(r(icon), w, h, r(work), margin);
     };
@@ -376,7 +460,10 @@ mod tests {
             ctx.after(|| {});
         }
         fn menu(&mut self, m: &mut MenuBuilder) {
-            m.title("Fake").item(Row::action(1, menu_panel::glyph::REFRESH, "Refresh now")).sep().item(Row::switch(2, "Mine", self.switch_on));
+            m.title("Fake")
+                .item(Row::action(1, menu_panel::glyph::REFRESH, "Refresh now"))
+                .sep()
+                .item(Row::switch(2, "Mine", self.switch_on));
         }
     }
 
@@ -402,10 +489,16 @@ mod tests {
     fn a_click_on_the_strip_toggles_the_panel() {
         let (mut c, mut f) = (Core::default(), Fake::default());
         c.down(Hit::Strip, 100, 500);
-        assert_eq!(release(&mut c, &mut f, true, Hit::Strip).0, Up::Panel(Action::OpenByClick));
+        assert_eq!(
+            release(&mut c, &mut f, true, Hit::Strip).0,
+            Up::Panel(Action::OpenByClick)
+        );
         assert!(f.calls.is_empty());
         c.down(Hit::Strip, 100, 500);
-        assert_eq!(release(&mut c, &mut f, true, Hit::Strip).0, Up::Panel(Action::Close));
+        assert_eq!(
+            release(&mut c, &mut f, true, Hit::Strip).0,
+            Up::Panel(Action::Close)
+        );
     }
 
     #[test]
@@ -421,7 +514,11 @@ mod tests {
         assert_eq!(f.calls.len(), 1, "released off the button: nothing");
         c.down(Hit::Strip, 100, 500);
         release(&mut c, &mut f, true, BTN);
-        assert_eq!(f.calls.len(), 1, "pressed elsewhere, released on it: not a button press");
+        assert_eq!(
+            f.calls.len(),
+            1,
+            "pressed elsewhere, released on it: not a button press"
+        );
     }
 
     #[test]
@@ -429,7 +526,10 @@ mod tests {
         let (mut c, mut f) = (Core::default(), Fake::default());
         c.down(COVER, 10, 500);
         let (_, reqs) = release(&mut c, &mut f, true, COVER);
-        assert_eq!((f.calls.clone(), reqs), (vec!["cover".to_string()], vec!["After(..)".to_string()]));
+        assert_eq!(
+            (f.calls.clone(), reqs),
+            (vec!["cover".to_string()], vec!["After(..)".to_string()])
+        );
         assert!(!c.panel.is_open());
     }
 
@@ -438,9 +538,11 @@ mod tests {
         let (lk, t0) = (look(true), Instant::now());
         let (mut c, mut f) = (Core::default(), Fake::default());
         c.down(BTN, 100, 500);
-        c.motion.mouse_move(102, 80, crate::strip::Limits::NONE, &lk, t0);
+        c.motion
+            .mouse_move(102, 80, crate::strip::Limits::NONE, &lk, t0);
         assert!(!c.motion.dragging(), "2 px is still a click");
-        c.motion.mouse_move(110, 80, crate::strip::Limits::NONE, &lk, t0);
+        c.motion
+            .mouse_move(110, 80, crate::strip::Limits::NONE, &lk, t0);
         assert!(c.motion.dragging());
         assert_eq!(release(&mut c, &mut f, true, BTN).0, Up::Drop);
         assert!(f.calls.is_empty());
@@ -453,7 +555,11 @@ mod tests {
     #[test]
     fn the_cover_feels_the_mouse_only_at_rest() {
         let lk = look(true);
-        let mut c = Core { hover: true, hot: COVER, ..Default::default() };
+        let mut c = Core {
+            hover: true,
+            hot: COVER,
+            ..Default::default()
+        };
         assert!(c.update_feel(true), "hovered: grows");
         c.feel.snap();
         assert!((c.feel.value() - crate::anim::HOVER_GROW).abs() < 1e-6);
@@ -462,11 +568,16 @@ mod tests {
         c.feel.snap();
         assert!((c.feel.value() - crate::anim::PRESS_SHRINK).abs() < 1e-6);
         // dragged from the cover: back to normal, the drag zoom has it
-        c.motion.mouse_move(40, 80, crate::strip::Limits::NONE, &lk, Instant::now());
+        c.motion
+            .mouse_move(40, 80, crate::strip::Limits::NONE, &lk, Instant::now());
         c.update_feel(false);
         assert_eq!(c.feel.value(), 1.0);
         // on the strip, not the cover: normal
-        let mut c = Core { hover: true, hot: Hit::Strip, ..Default::default() };
+        let mut c = Core {
+            hover: true,
+            hot: Hit::Strip,
+            ..Default::default()
+        };
         assert!(!c.update_feel(true));
     }
 
@@ -475,9 +586,17 @@ mod tests {
         let mut c = Core::default();
         assert_eq!(c.mode(false, 40), (false, None));
         c.fit.update(Fit::Shrunk(40));
-        assert_eq!(c.mode(false, 40), (true, None), "fixed width: compact for room");
+        assert_eq!(
+            c.mode(false, 40),
+            (true, None),
+            "fixed width: compact for room"
+        );
         c.fit.update(Fit::Shrunk(70));
-        assert_eq!(c.mode(true, 40), (false, Some(70)), "stretchable: cut, still full");
+        assert_eq!(
+            c.mode(true, 40),
+            (false, Some(70)),
+            "stretchable: cut, still full"
+        );
         c.fit.update(Fit::Shrunk(40));
         assert_eq!(c.mode(true, 40), (true, Some(40)));
         c.compact = true;
@@ -488,60 +607,148 @@ mod tests {
     #[test]
     fn size_for_the_dock() {
         let mut spec = Spec::new("C", "s", "t", |_| {});
-        assert_eq!(size(100, 40, &spec), dock::Size { full: 100, min: 40, stretch: false });
+        assert_eq!(
+            size(100, 40, &spec),
+            dock::Size {
+                full: 100,
+                min: 40,
+                stretch: false
+            }
+        );
         spec.compact_when_crowded = false;
         spec.stretch = true;
-        assert_eq!(size(100, 40, &spec), dock::Size { full: 100, min: 100, stretch: true });
+        assert_eq!(
+            size(100, 40, &spec),
+            dock::Size {
+                full: 100,
+                min: 100,
+                stretch: true
+            }
+        );
         spec.compact_when_crowded = true;
         assert_eq!(size(40, 40, &spec).min, 40, "already compact");
     }
 
     #[test]
     fn menu_gets_the_standard_rows() {
-        let mut f = Fake { switch_on: true, ..Default::default() };
+        let mut f = Fake {
+            switch_on: true,
+            ..Default::default()
+        };
         let m = menu(&mut f, None, true, false);
         assert_eq!(m.title, "Fake");
-        let ids: Vec<String> = m.items.iter().map(|i| match i {
-            Item::Row(r) => format!("{}{}", r.id, r.switch.map_or("", |on| if on { "+" } else { "-" })),
-            Item::Pair(a, b) => format!("{}|{}", a.id, b.id),
-            Item::Sep => "sep".into(),
-        }).collect();
-        let (c, s, e, q) = (std_ids::COMPACT, std_ids::STARTUP, std_ids::SETTINGS, std_ids::QUIT);
+        let ids: Vec<String> = m
+            .items
+            .iter()
+            .map(|i| match i {
+                Item::Row(r) => format!(
+                    "{}{}",
+                    r.id,
+                    r.switch.map_or("", |on| if on { "+" } else { "-" })
+                ),
+                Item::Pair(a, b) => format!("{}|{}", a.id, b.id),
+                Item::Sep => "sep".into(),
+            })
+            .collect();
+        let (c, s, e, q) = (
+            std_ids::COMPACT,
+            std_ids::STARTUP,
+            std_ids::SETTINGS,
+            std_ids::QUIT,
+        );
         // ended on its own switch: the standard switches join that group
-        assert_eq!(ids, ["1", "sep", "2+", &format!("{c}+"), &format!("{s}-"), "sep", &format!("{e}|{q}")]);
+        assert_eq!(
+            ids,
+            [
+                "1",
+                "sep",
+                "2+",
+                &format!("{c}+"),
+                &format!("{s}-"),
+                "sep",
+                &format!("{e}|{q}")
+            ]
+        );
         assert_eq!(route(c), Route::Compact);
         assert_eq!(route(q), Route::Quit);
         assert_eq!(route(2), Route::Content(2));
     }
 
     fn ids(m: &Menu) -> Vec<String> {
-        m.items.iter().map(|i| match i {
-            Item::Row(r) => format!("{}{}", r.id, r.switch.map_or("", |on| if on { "+" } else { "-" })),
-            Item::Pair(a, b) => format!("{}|{}", a.id, b.id),
-            Item::Sep => "sep".into(),
-        }).collect()
+        m.items
+            .iter()
+            .map(|i| match i {
+                Item::Row(r) => format!(
+                    "{}{}",
+                    r.id,
+                    r.switch.map_or("", |on| if on { "+" } else { "-" })
+                ),
+                Item::Pair(a, b) => format!("{}|{}", a.id, b.id),
+                Item::Sep => "sep".into(),
+            })
+            .collect()
     }
 
     #[test]
     fn with_a_tray_icon_show_on_taskbar_leads_the_standard_switches() {
-        let (sh, c, s, e, q) = (std_ids::SHOW, std_ids::COMPACT, std_ids::STARTUP, std_ids::SETTINGS, std_ids::QUIT);
-        let mut f = Fake { switch_on: true, ..Default::default() };
+        let (sh, c, s, e, q) = (
+            std_ids::SHOW,
+            std_ids::COMPACT,
+            std_ids::STARTUP,
+            std_ids::SETTINGS,
+            std_ids::QUIT,
+        );
+        let mut f = Fake {
+            switch_on: true,
+            ..Default::default()
+        };
         let m = menu(&mut f, Some(false), true, false);
-        assert_eq!(ids(&m), ["1", "sep", "2+", &format!("{sh}-"), &format!("{c}+"), &format!("{s}-"), "sep", &format!("{e}|{q}")]);
+        assert_eq!(
+            ids(&m),
+            [
+                "1",
+                "sep",
+                "2+",
+                &format!("{sh}-"),
+                &format!("{c}+"),
+                &format!("{s}-"),
+                "sep",
+                &format!("{e}|{q}")
+            ]
+        );
         assert_eq!(route(sh), Route::Show);
         // placed by the widget: stays there, not added twice
         struct Placed;
         impl Content for Placed {
-            fn measure(&mut self, _: &Frame, _: bool) -> i32 { 1 }
+            fn measure(&mut self, _: &Frame, _: bool) -> i32 {
+                1
+            }
             fn draw(&mut self, _: &mut Canvas, _: &Frame) {}
             fn menu(&mut self, m: &mut MenuBuilder) {
-                m.item(Row::action(1, menu_panel::glyph::REFRESH, "Refresh")).sep().show().item(Row::switch(2, "Mine", false));
+                m.item(Row::action(1, menu_panel::glyph::REFRESH, "Refresh"))
+                    .sep()
+                    .show()
+                    .item(Row::switch(2, "Mine", false));
             }
         }
         let m = menu(&mut Placed, Some(true), false, false);
-        assert_eq!(ids(&m), ["1", "sep", &format!("{sh}+"), "2-", &format!("{c}-"), &format!("{s}-"), "sep", &format!("{e}|{q}")]);
+        assert_eq!(
+            ids(&m),
+            [
+                "1",
+                "sep",
+                &format!("{sh}+"),
+                "2-",
+                &format!("{c}-"),
+                &format!("{s}-"),
+                "sep",
+                &format!("{e}|{q}")
+            ]
+        );
         // no tray icon: show() places nothing
-        assert!(!ids(&menu(&mut Placed, None, false, false)).iter().any(|i| i.starts_with(&sh.to_string())));
+        assert!(!ids(&menu(&mut Placed, None, false, false))
+            .iter()
+            .any(|i| i.starts_with(&sh.to_string())));
     }
 
     #[test]
@@ -549,14 +756,18 @@ mod tests {
         // (switch, visible, has_tray) -> (strip, tray icon)
         let cases = [
             ((true, true, true), (true, false)),
-            ((false, true, true), (false, true)),  // switched off: tray icon
-            ((true, false, true), (false, true)),  // idle (no call): tray icon stays
+            ((false, true, true), (false, true)), // switched off: tray icon
+            ((true, false, true), (false, true)), // idle (no call): tray icon stays
             ((false, false, true), (false, true)),
             ((false, true, false), (true, false)), // no tray icon: the switch can't hide it
             ((true, false, false), (false, false)),
         ];
         for ((sw, vis, tray), want) in cases {
-            assert_eq!((shown(sw, vis, tray), tray_shown(sw, vis, tray)), want, "switch {sw}, visible {vis}, tray {tray}");
+            assert_eq!(
+                (shown(sw, vis, tray), tray_shown(sw, vis, tray)),
+                want,
+                "switch {sw}, visible {vis}, tray {tray}"
+            );
         }
     }
 
@@ -564,21 +775,37 @@ mod tests {
     fn menu_rows_placed_by_the_widget_stay_put() {
         struct Placed;
         impl Content for Placed {
-            fn measure(&mut self, _: &Frame, _: bool) -> i32 { 1 }
+            fn measure(&mut self, _: &Frame, _: bool) -> i32 {
+                1
+            }
             fn draw(&mut self, _: &mut Canvas, _: &Frame) {}
             fn menu(&mut self, m: &mut MenuBuilder) {
-                m.compact().item(Row::switch(5, "Show when idle", false)).startup().sep().item(Row::action(6, menu_panel::glyph::OPEN, "Sign in"));
+                m.compact()
+                    .item(Row::switch(5, "Show when idle", false))
+                    .startup()
+                    .sep()
+                    .item(Row::action(6, menu_panel::glyph::OPEN, "Sign in"));
             }
         }
         let m = menu(&mut Placed, None, false, true);
         assert!(matches!(&m.items[0], Item::Row(r) if r.id == std_ids::COMPACT));
-        assert!(matches!(&m.items[2], Item::Row(r) if r.id == std_ids::STARTUP && r.switch == Some(true)));
-        assert_eq!(m.items.iter().filter(|i| matches!(i, Item::Row(r) if r.id == std_ids::COMPACT)).count(), 1);
+        assert!(
+            matches!(&m.items[2], Item::Row(r) if r.id == std_ids::STARTUP && r.switch == Some(true))
+        );
+        assert_eq!(
+            m.items
+                .iter()
+                .filter(|i| matches!(i, Item::Row(r) if r.id == std_ids::COMPACT))
+                .count(),
+            1
+        );
         assert!(matches!(m.items.last(), Some(Item::Pair(..))));
         // only actions: the switches get their own group
         struct Actions;
         impl Content for Actions {
-            fn measure(&mut self, _: &Frame, _: bool) -> i32 { 1 }
+            fn measure(&mut self, _: &Frame, _: bool) -> i32 {
+                1
+            }
             fn draw(&mut self, _: &mut Canvas, _: &Frame) {}
             fn menu(&mut self, m: &mut MenuBuilder) {
                 m.item(Row::action(1, menu_panel::glyph::REFRESH, "Refresh"));
@@ -589,36 +816,77 @@ mod tests {
         // nothing of its own: no leading separator
         struct Empty;
         impl Content for Empty {
-            fn measure(&mut self, _: &Frame, _: bool) -> i32 { 1 }
+            fn measure(&mut self, _: &Frame, _: bool) -> i32 {
+                1
+            }
             fn draw(&mut self, _: &mut Canvas, _: &Frame) {}
         }
-        assert!(matches!(&menu(&mut Empty, None, false, false).items[0], Item::Row(r) if r.id == std_ids::COMPACT));
+        assert!(
+            matches!(&menu(&mut Empty, None, false, false).items[0], Item::Row(r) if r.id == std_ids::COMPACT)
+        );
     }
 
     #[test]
     fn highlight_box() {
         assert_eq!(highlight(false, false, Hit::Strip, 100, 48, 4), None);
-        assert_eq!(highlight(true, false, Hit::Strip, 100, 48, 4), Some((0, 4, 100, 44)));
-        assert_eq!(highlight(true, false, COVER, 100, 48, 4), Some((0, 4, 100, 44)));
-        assert_eq!(highlight(true, false, BTN, 100, 48, 4), Some((50, 4, 74, 28)), "a button: its own box");
-        assert_eq!(highlight(true, true, Hit::Strip, 100, 48, 4), None, "not while dragged");
+        assert_eq!(
+            highlight(true, false, Hit::Strip, 100, 48, 4),
+            Some((0, 4, 100, 44))
+        );
+        assert_eq!(
+            highlight(true, false, COVER, 100, 48, 4),
+            Some((0, 4, 100, 44))
+        );
+        assert_eq!(
+            highlight(true, false, BTN, 100, 48, 4),
+            Some((50, 4, 74, 28)),
+            "a button: its own box"
+        );
+        assert_eq!(
+            highlight(true, true, Hit::Strip, 100, 48, 4),
+            None,
+            "not while dragged"
+        );
     }
 
     #[test]
     fn tinted_boxes() {
-        let blurple = Shade { rgb: 0x5865F2, rest: 0.3, hover: 0.5 };
-        let red = Shade { rgb: 0xED4245, rest: 0.0, hover: 0.6 };
+        let blurple = Shade {
+            rgb: 0x5865F2,
+            rest: 0.3,
+            hover: 0.5,
+        };
+        let red = Shade {
+            rgb: 0xED4245,
+            rest: 0.0,
+            hover: 0.6,
+        };
         let whole = (0, 4, 100, 44);
         // at rest: the whole strip, rest strength
-        assert_eq!(tints(blurple, None, false, false, Hit::Strip, 100, 48, 4), vec![(whole, 0x5865F2, 0.3)]);
+        assert_eq!(
+            tints(blurple, None, false, false, Hit::Strip, 100, 48, 4),
+            vec![(whole, 0x5865F2, 0.3)]
+        );
         // hovered: stronger
-        assert_eq!(tints(blurple, None, true, false, COVER, 100, 48, 4), vec![(whole, 0x5865F2, 0.5)]);
+        assert_eq!(
+            tints(blurple, None, true, false, COVER, 100, 48, 4),
+            vec![(whole, 0x5865F2, 0.5)]
+        );
         // a hovered button: its box first (on top), in its own tint
-        assert_eq!(tints(blurple, Some(red), true, false, BTN, 100, 48, 4), vec![((50, 4, 74, 28), 0xED4245, 0.6), (whole, 0x5865F2, 0.5)]);
+        assert_eq!(
+            tints(blurple, Some(red), true, false, BTN, 100, 48, 4),
+            vec![((50, 4, 74, 28), 0xED4245, 0.6), (whole, 0x5865F2, 0.5)]
+        );
         // ... or the strip's when it has none
-        assert_eq!(tints(blurple, None, true, false, BTN, 100, 48, 4)[0], ((50, 4, 74, 28), 0x5865F2, 0.5));
+        assert_eq!(
+            tints(blurple, None, true, false, BTN, 100, 48, 4)[0],
+            ((50, 4, 74, 28), 0x5865F2, 0.5)
+        );
         // dragged: rest strength, no button box
-        assert_eq!(tints(blurple, Some(red), true, true, BTN, 100, 48, 4), vec![(whole, 0x5865F2, 0.3)]);
+        assert_eq!(
+            tints(blurple, Some(red), true, true, BTN, 100, 48, 4),
+            vec![(whole, 0x5865F2, 0.3)]
+        );
         // a tint only on hover leaves nothing at rest
         assert!(tints(red, None, false, false, Hit::Strip, 100, 48, 4).is_empty());
     }
@@ -626,22 +894,95 @@ mod tests {
     #[test]
     fn tint_strength_comes_from_the_levels_by_state() {
         use crate::theme::TintLevels;
-        let l = TintLevels { quiet: 0.2, active: 0.4, hover: 0.6 };
+        let l = TintLevels {
+            quiet: 0.2,
+            active: 0.4,
+            hover: 0.6,
+        };
         let at = |t: Tint| Shade::of(t, &l);
-        assert_eq!(at(Tint::new(0x123456, false)), Shade { rgb: 0x123456, rest: 0.2, hover: 0.6 }, "paused / muted");
-        assert_eq!(at(Tint::new(0x123456, true)), Shade { rgb: 0x123456, rest: 0.4, hover: 0.6 }, "playing / unmuted");
+        assert_eq!(
+            at(Tint::new(0x123456, false)),
+            Shade {
+                rgb: 0x123456,
+                rest: 0.2,
+                hover: 0.6
+            },
+            "paused / muted"
+        );
+        assert_eq!(
+            at(Tint::new(0x123456, true)),
+            Shade {
+                rgb: 0x123456,
+                rest: 0.4,
+                hover: 0.6
+            },
+            "playing / unmuted"
+        );
         // fading between them, and the widget's own multiplier (media's tint_strength)
-        let half = at(Tint { rgb: 1, active: 0.5, strength: 2.0 });
-        assert!((half.rest - 0.6).abs() < 1e-6 && (half.hover - 1.0).abs() < 1e-6, "{half:?}");
-        assert_eq!(at(Tint { rgb: 1, active: 1.0, strength: 0.0 }), Shade { rgb: 1, rest: 0.0, hover: 0.0 });
+        let half = at(Tint {
+            rgb: 1,
+            active: 0.5,
+            strength: 2.0,
+        });
+        assert!(
+            (half.rest - 0.6).abs() < 1e-6 && (half.hover - 1.0).abs() < 1e-6,
+            "{half:?}"
+        );
+        assert_eq!(
+            at(Tint {
+                rgb: 1,
+                active: 1.0,
+                strength: 0.0
+            }),
+            Shade {
+                rgb: 1,
+                rest: 0.0,
+                hover: 0.0
+            }
+        );
         // tint_fixed: one strength for every state, 0 = none, 1 = solid
         for v in [0.0, 1.0] {
-            let f = TintLevels { quiet: v, active: v, hover: v };
-            assert_eq!(Shade::of(Tint::new(1, false), &f), Shade { rgb: 1, rest: v, hover: v });
-            assert_eq!(Shade::of(Tint::new(1, true), &f), Shade { rgb: 1, rest: v, hover: v });
+            let f = TintLevels {
+                quiet: v,
+                active: v,
+                hover: v,
+            };
+            assert_eq!(
+                Shade::of(Tint::new(1, false), &f),
+                Shade {
+                    rgb: 1,
+                    rest: v,
+                    hover: v
+                }
+            );
+            assert_eq!(
+                Shade::of(Tint::new(1, true), &f),
+                Shade {
+                    rgb: 1,
+                    rest: v,
+                    hover: v
+                }
+            );
         }
         // no tint at all leaves no boxes (Block's base highlight only)
-        assert!(tints(Shade::of(Tint::new(1, true), &TintLevels { quiet: 0.0, active: 0.0, hover: 0.0 }), None, true, false, Hit::Strip, 100, 48, 4).is_empty());
+        assert!(tints(
+            Shade::of(
+                Tint::new(1, true),
+                &TintLevels {
+                    quiet: 0.0,
+                    active: 0.0,
+                    hover: 0.0
+                }
+            ),
+            None,
+            true,
+            false,
+            Hit::Strip,
+            100,
+            48,
+            4
+        )
+        .is_empty());
     }
 
     #[test]
@@ -658,20 +999,54 @@ mod tests {
 
     #[test]
     fn a_compact_switch_lays_out_to_its_width() {
-        assert_eq!(fit_width(None, 258, 258, 1.0), None, "at rest, room: the natural width");
-        assert_eq!(fit_width(Some(150), 120, 258, 1.0), Some(150), "a switch running: its width");
-        assert_eq!(fit_width(None, 200, 258, 1.1), Some(220), "crowded, while dragged: zoomed");
-        assert_eq!(fit_width(None, 230, 180, 1.0), Some(230), "held wider than the content");
+        assert_eq!(
+            fit_width(None, 258, 258, 1.0),
+            None,
+            "at rest, room: the natural width"
+        );
+        assert_eq!(
+            fit_width(Some(150), 120, 258, 1.0),
+            Some(150),
+            "a switch running: its width"
+        );
+        assert_eq!(
+            fit_width(None, 200, 258, 1.1),
+            Some(220),
+            "crowded, while dragged: zoomed"
+        );
+        assert_eq!(
+            fit_width(None, 230, 180, 1.0),
+            Some(230),
+            "held wider than the content"
+        );
     }
 
     #[test]
     fn which_width_changes_animate() {
-        assert!(animate_width(true, Some(258), 120, false, false), "a compact switch, any widget");
-        assert!(!animate_width(false, None, 258, true, false), "a new strip: straight in");
-        assert!(!animate_width(false, Some(258), 258, true, false), "no change");
-        assert!(animate_width(false, Some(258), 200, true, false), "content width, gliding widget");
-        assert!(!animate_width(false, Some(80), 90, false, false), "bus's countdown grows: jumps");
-        assert!(animate_width(false, Some(258), 200, false, true), "mid-switch: heads for the new one");
+        assert!(
+            animate_width(true, Some(258), 120, false, false),
+            "a compact switch, any widget"
+        );
+        assert!(
+            !animate_width(false, None, 258, true, false),
+            "a new strip: straight in"
+        );
+        assert!(
+            !animate_width(false, Some(258), 258, true, false),
+            "no change"
+        );
+        assert!(
+            animate_width(false, Some(258), 200, true, false),
+            "content width, gliding widget"
+        );
+        assert!(
+            !animate_width(false, Some(80), 90, false, false),
+            "bus's countdown grows: jumps"
+        );
+        assert!(
+            animate_width(false, Some(258), 200, false, true),
+            "mid-switch: heads for the new one"
+        );
     }
 
     #[test]
@@ -682,7 +1057,11 @@ mod tests {
         assert_eq!(h.update(k, 197, 4), 200, "a little narrower: room to spare");
         assert_eq!(h.update(k, 196, 4), 200, "up to the slack");
         assert_eq!(h.update(k, 195, 4), 195, "narrower than the slack: taken");
-        assert_eq!(h.update(k, 198, 4), 198, "a little wider: taken, else the text is cut off");
+        assert_eq!(
+            h.update(k, 198, 4),
+            198,
+            "a little wider: taken, else the text is cut off"
+        );
         assert_eq!(h.update(k, 240, 4), 240);
         assert_eq!(h.update(k, 150, 4), 150, "much narrower: at once");
         // a new mode, height or scale: at once, even a little narrower
@@ -702,13 +1081,31 @@ mod tests {
         ctx.quit();
         assert_eq!(ctx.main_window(), 42);
         let s: Vec<String> = ctx.reqs.iter().map(|r| format!("{r:?}")).collect();
-        assert_eq!(s, ["Redraw", "RedrawPanel", "RedrawTray", "Every(1, 1000)", "Stop(1)", "ClosePanel", "Quit"]);
+        assert_eq!(
+            s,
+            [
+                "Redraw",
+                "RedrawPanel",
+                "RedrawTray",
+                "Every(1, 1000)",
+                "Stop(1)",
+                "ClosePanel",
+                "Quit"
+            ]
+        );
     }
 
     #[test]
     fn the_menu_goes_above_the_strip_or_else_the_pointer() {
-        assert_eq!(menu_anchor(Some((10, 20, 70, 68)), (500, 900)), (10, 20, 70, 68));
-        assert_eq!(menu_anchor(None, (500, 900)), (500, 900, 501, 901), "no strip (tray icon): the pointer");
+        assert_eq!(
+            menu_anchor(Some((10, 20, 70, 68)), (500, 900)),
+            (10, 20, 70, 68)
+        );
+        assert_eq!(
+            menu_anchor(None, (500, 900)),
+            (500, 900, 501, 901),
+            "no strip (tray icon): the pointer"
+        );
     }
 
     #[test]
@@ -717,18 +1114,28 @@ mod tests {
         // measured on screen: pointer x 864 → (684, 526) for 360×494, margin 12
         assert_eq!(panel_at_pointer((864, 761), 360, 494, work, 12), (684, 526));
         // the pointer's y doesn't matter (the tray is on the taskbar, below the work area)
-        assert_eq!(panel_at_pointer((864, 1060), 360, 494, work, 12), (684, 526));
+        assert_eq!(
+            panel_at_pointer((864, 1060), 360, 494, work, 12),
+            (684, 526)
+        );
         // kept inside the work area
-        assert_eq!(panel_at_pointer((1910, 1060), 360, 494, work, 12), (1920 - 12 - 360, 526));
+        assert_eq!(
+            panel_at_pointer((1910, 1060), 360, 494, work, 12),
+            (1920 - 12 - 360, 526)
+        );
         assert_eq!(panel_at_pointer((5, 1060), 360, 494, work, 12), (12, 526));
     }
 
     #[test]
     fn a_panel_from_the_tray_never_covers_the_overflow_panel() {
         let work = (0, 0, 1920, 1032);
-        let overlaps = |(x, y): (i32, i32), o: Box4| x < o.2 && x + 360 > o.0 && y < o.3 && y + 494 > o.1;
+        let overlaps =
+            |(x, y): (i32, i32), o: Box4| x < o.2 && x + 360 > o.0 && y < o.3 && y + 494 > o.1;
         // icon on the taskbar: above it, centred on the icon
-        assert_eq!(panel_at_tray((1600, 1040, 1624, 1072), None, 360, 494, work, 12), (1432, 526));
+        assert_eq!(
+            panel_at_tray((1600, 1040, 1624, 1072), None, 360, 494, work, 12),
+            (1432, 526)
+        );
         // in a small overflow panel above the chevron: above that
         let o = (1500, 860, 1700, 1020);
         let at = panel_at_tray((1520, 880, 1544, 904), Some(o), 360, 494, work, 12);

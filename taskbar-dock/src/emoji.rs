@@ -80,35 +80,78 @@ pub fn render(text: &str, px: f32, w: i32, h: i32) -> Option<Rc<Image>> {
 
 fn draw(f: &Factories, text: &str, px: f32, w: i32, h: i32) -> Option<Image> {
     unsafe {
-        let bmp = f.wic.CreateBitmap(w as u32, h as u32, &GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad).ok()?;
+        let bmp = f
+            .wic
+            .CreateBitmap(
+                w as u32,
+                h as u32,
+                &GUID_WICPixelFormat32bppPBGRA,
+                WICBitmapCacheOnLoad,
+            )
+            .ok()?;
         let props = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-            pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
+            pixelFormat: D2D1_PIXEL_FORMAT {
+                format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+            },
             dpiX: 96.0,
             dpiY: 96.0,
             ..Default::default()
         };
         let rt = f.d2d.CreateWicBitmapRenderTarget(&bmp, &props).ok()?;
         rt.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-        let format = f
-            .dw
-            .CreateTextFormat(&HSTRING::from(EMOJI_FONT), None, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, px, w!("en-us"))
+        let format =
+            f.dw.CreateTextFormat(
+                &HSTRING::from(EMOJI_FONT),
+                None,
+                DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                px,
+                w!("en-us"),
+            )
             .ok()?;
         format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER).ok()?;
-        format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER).ok()?;
+        format
+            .SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)
+            .ok()?;
         format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP).ok()?;
         // only for glyphs without colour layers
-        let black = D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
+        let black = D2D1_COLOR_F {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
         let brush = rt.CreateSolidColorBrush(&black, None).ok()?;
         let wide: Vec<u16> = text.encode_utf16().collect();
-        let rect = D2D_RECT_F { left: 0.0, top: 0.0, right: w as f32, bottom: h as f32 };
+        let rect = D2D_RECT_F {
+            left: 0.0,
+            top: 0.0,
+            right: w as f32,
+            bottom: h as f32,
+        };
         rt.BeginDraw();
-        rt.Clear(Some(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }));
-        rt.DrawText(&wide, &format, &rect, &brush, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, DWRITE_MEASURING_MODE_NATURAL);
+        rt.Clear(Some(&D2D1_COLOR_F {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        }));
+        rt.DrawText(
+            &wide,
+            &format,
+            &rect,
+            &brush,
+            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
         rt.EndDraw(None, None).ok()?;
         let mut px = vec![0u32; (w * h) as usize];
         let bytes = std::slice::from_raw_parts_mut(px.as_mut_ptr() as *mut u8, px.len() * 4);
-        bmp.CopyPixels(std::ptr::null(), (w * 4) as u32, bytes).ok()?;
+        bmp.CopyPixels(std::ptr::null(), (w * 4) as u32, bytes)
+            .ok()?;
         Some(Image { w, h, px })
     }
 }
@@ -142,12 +185,18 @@ pub fn fit_over(dst: &mut [u32], dst_w: i32, x: i32, top: i32, size: i32, img: &
     let Some((l, t, r, b)) = ink(img) else { return };
     let (iw, ih) = ((r - l) as f32, (b - t) as f32);
     let k = iw.max(ih) / size.max(1) as f32; // source px per destination px
-    let (ox, oy) = (x as f32 + (size as f32 - iw / k) / 2.0, top as f32 + (size as f32 - ih / k) / 2.0);
+    let (ox, oy) = (
+        x as f32 + (size as f32 - iw / k) / 2.0,
+        top as f32 + (size as f32 - ih / k) / 2.0,
+    );
     let dst_h = dst.len() as i32 / dst_w.max(1);
     for dy in top.max(0)..(top + size).min(dst_h) {
         for dx in x.max(0)..(x + size).min(dst_w) {
             // the destination pixel's area in source coordinates; average each channel there
-            let (sx0, sy0) = (l as f32 + (dx as f32 - ox) * k, t as f32 + (dy as f32 - oy) * k);
+            let (sx0, sy0) = (
+                l as f32 + (dx as f32 - ox) * k,
+                t as f32 + (dy as f32 - oy) * k,
+            );
             let (sx1, sy1) = (sx0 + k, sy0 + k);
             let (mut sum, mut area) = ([0.0f32; 4], 0.0f32);
             let mut sy = sy0.floor() as i32;
@@ -178,7 +227,10 @@ pub fn fit_over(dst: &mut [u32], dst_w: i32, x: i32, top: i32, size: i32, img: &
 /// `img` on the opaque colour `bg`, as 0x00RRGGBB pixels (a DIB to BitBlt into a GDI panel).
 pub fn flatten(img: &Image, bg: Rgb) -> Vec<u32> {
     let base = bg.pixel();
-    img.px.iter().map(|&p| over(base, p) & 0x00ff_ffff).collect()
+    img.px
+        .iter()
+        .map(|&p| over(base, p) & 0x00ff_ffff)
+        .collect()
 }
 
 #[cfg(test)]
@@ -189,7 +241,11 @@ mod tests {
     fn over_and_flatten() {
         // half-transparent red over opaque white
         assert_eq!(over(0xffff_ffff, 0x8080_0000), 0xffff_7f7f);
-        let img = Image { w: 2, h: 1, px: vec![0, 0xff00_ff00] };
+        let img = Image {
+            w: 2,
+            h: 1,
+            px: vec![0, 0xff00_ff00],
+        };
         assert_eq!(flatten(&img, Rgb::hex(0x202020)), vec![0x202020, 0x00ff00]);
     }
 
@@ -205,7 +261,10 @@ mod tests {
         let img = Image { w: 8, h: 8, px };
         let mut dst = vec![0u32; 16];
         fit_over(&mut dst, 4, 1, 1, 2, &img);
-        assert_eq!((dst[5], dst[6], dst[9], dst[10]), (0xff11_2233, 0xff11_2233, 0xff11_2233, 0xff11_2233));
+        assert_eq!(
+            (dst[5], dst[6], dst[9], dst[10]),
+            (0xff11_2233, 0xff11_2233, 0xff11_2233, 0xff11_2233)
+        );
         assert_eq!((dst[0], dst[15]), (0, 0));
     }
 
@@ -216,7 +275,13 @@ mod tests {
         // some pixels show, and they're not all grey (colour layers were used)
         let shown: Vec<_> = img.px.iter().filter(|p| *p >> 24 > 200).collect();
         assert!(!shown.is_empty());
-        assert!(shown.iter().any(|p| { let (r, g, b) = ((*p >> 16) & 0xff, (*p >> 8) & 0xff, *p & 0xff); r.max(g).max(b) - r.min(g).min(b) > 40 }));
-        assert!(Rc::ptr_eq(&img, &render("🌧", 40.0, 48, 48).unwrap()), "cached");
+        assert!(shown.iter().any(|p| {
+            let (r, g, b) = ((*p >> 16) & 0xff, (*p >> 8) & 0xff, *p & 0xff);
+            r.max(g).max(b) - r.min(g).min(b) > 40
+        }));
+        assert!(
+            Rc::ptr_eq(&img, &render("🌧", 40.0, 48, 48).unwrap()),
+            "cached"
+        );
     }
 }

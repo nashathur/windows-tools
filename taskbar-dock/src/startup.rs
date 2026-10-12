@@ -28,7 +28,10 @@ pub fn list() -> Vec<Entry> {
         Some(Value::Array(items)) => items
             .iter()
             .filter_map(|v| {
-                Some(Entry { name: v.get("name")?.as_str()?.to_string(), exe: PathBuf::from(v.get("exe")?.as_str()?) })
+                Some(Entry {
+                    name: v.get("name")?.as_str()?.to_string(),
+                    exe: PathBuf::from(v.get("exe")?.as_str()?),
+                })
             })
             .collect(),
         _ => Vec::new(),
@@ -51,7 +54,11 @@ pub fn set_exe(name: &str, exe: &std::path::Path, on: bool) -> io::Result<()> {
     let exe = exe.to_string_lossy();
     crate::settings::update(|root| {
         if let Some(obj) = root.as_object_mut() {
-            apply(obj.entry(SECTION).or_insert_with(|| json!([])), name, on.then_some(&*exe));
+            apply(
+                obj.entry(SECTION).or_insert_with(|| json!([])),
+                name,
+                on.then_some(&*exe),
+            );
         }
     })
 }
@@ -63,7 +70,9 @@ fn apply(list: &mut Value, name: &str, exe: Option<&str>) {
         *list = json!([]);
     }
     let items = list.as_array_mut().unwrap();
-    let at = items.iter().position(|v| v.get("name").and_then(Value::as_str) == Some(name));
+    let at = items
+        .iter()
+        .position(|v| v.get("name").and_then(Value::as_str) == Some(name));
     match (at, exe) {
         (Some(i), Some(exe)) => items[i]["exe"] = json!(exe),
         (None, Some(exe)) => items.push(json!({ "name": name, "exe": exe })),
@@ -84,7 +93,10 @@ mod tests {
         apply(&mut l, "bus", Some("a.exe"));
         apply(&mut l, "weather", Some("b.exe"));
         apply(&mut l, "bus", Some("c.exe"));
-        assert_eq!(l, json!([{ "name": "bus", "exe": "c.exe" }, { "name": "weather", "exe": "b.exe" }]));
+        assert_eq!(
+            l,
+            json!([{ "name": "bus", "exe": "c.exe" }, { "name": "weather", "exe": "b.exe" }])
+        );
         apply(&mut l, "bus", None);
         apply(&mut l, "media", None);
         assert_eq!(l, json!([{ "name": "weather", "exe": "b.exe" }]));

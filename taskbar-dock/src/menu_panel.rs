@@ -31,7 +31,9 @@ use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Dwm::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 /// Panel width at 100%, px.
@@ -56,15 +58,30 @@ pub struct Row {
 
 impl Row {
     pub fn action(id: usize, glyph: char, label: &str) -> Item {
-        Item::Row(Row { id, glyph: Some(glyph), label: label.into(), switch: None })
+        Item::Row(Row {
+            id,
+            glyph: Some(glyph),
+            label: label.into(),
+            switch: None,
+        })
     }
 
     pub fn switch(id: usize, label: &str, on: bool) -> Item {
-        Item::Row(Row { id, glyph: None, label: label.into(), switch: Some(on) })
+        Item::Row(Row {
+            id,
+            glyph: None,
+            label: label.into(),
+            switch: Some(on),
+        })
     }
 
     fn act(id: usize, glyph: char, label: &str) -> Row {
-        Row { id, glyph: Some(glyph), label: label.into(), switch: None }
+        Row {
+            id,
+            glyph: Some(glyph),
+            label: label.into(),
+            switch: None,
+        }
     }
 }
 
@@ -78,7 +95,10 @@ pub enum Item {
 
 /// The usual last line: Edit settings… and Quit.
 pub fn settings_and_quit(settings_id: usize, quit_id: usize) -> Item {
-    Item::Pair(Row::act(settings_id, '\u{E713}', "Edit settings…"), Row::act(quit_id, '\u{E7E8}', "Quit"))
+    Item::Pair(
+        Row::act(settings_id, '\u{E713}', "Edit settings…"),
+        Row::act(quit_id, '\u{E7E8}', "Quit"),
+    )
 }
 
 /// Glyphs for common actions (Segoe Fluent Icons).
@@ -113,7 +133,12 @@ impl Rc {
     }
 
     fn rect(&self) -> RECT {
-        RECT { left: self.x, top: self.y, right: self.x + self.w, bottom: self.y + self.h }
+        RECT {
+            left: self.x,
+            top: self.y,
+            right: self.x + self.w,
+            bottom: self.y + self.h,
+        }
     }
 }
 
@@ -132,7 +157,10 @@ pub struct Layout {
 
 impl Layout {
     pub fn hit(&self, x: i32, y: i32) -> Option<usize> {
-        self.rows.iter().find(|(r, _)| r.contains(x, y)).map(|(_, row)| row.id)
+        self.rows
+            .iter()
+            .find(|(r, _)| r.contains(x, y))
+            .map(|(_, row)| row.id)
     }
 }
 
@@ -140,11 +168,28 @@ pub fn layout(menu: &Menu, scale: f32) -> Layout {
     let s = |v: f32| (v * scale).round() as i32;
     let w = s(WIDTH);
     let (inset, rh, pad) = (s(INSET), s(ROW_H), s(space::MENU_PADDING));
-    let mut l = Layout { w, h: 0, title: Rc::default(), subtitle: Rc::default(), rows: Vec::new(), seps: Vec::new() };
+    let mut l = Layout {
+        w,
+        h: 0,
+        title: Rc::default(),
+        subtitle: Rc::default(),
+        rows: Vec::new(),
+        seps: Vec::new(),
+    };
     let mut y = s(6.0);
     if !menu.title.is_empty() {
-        l.title = Rc { x: pad, y: s(10.0), w: w - 2 * pad, h: s(20.0) };
-        l.subtitle = Rc { x: pad, y: s(30.0), w: w - 2 * pad, h: s(18.0) };
+        l.title = Rc {
+            x: pad,
+            y: s(10.0),
+            w: w - 2 * pad,
+            h: s(20.0),
+        };
+        l.subtitle = Rc {
+            x: pad,
+            y: s(30.0),
+            w: w - 2 * pad,
+            h: s(18.0),
+        };
         y = s(54.0);
         l.seps.push(y + s(space::SECTION_GAP / 2.0));
         y += s(space::SECTION_GAP);
@@ -152,13 +197,37 @@ pub fn layout(menu: &Menu, scale: f32) -> Layout {
     for item in &menu.items {
         match item {
             Item::Row(r) => {
-                l.rows.push((Rc { x: inset, y, w: w - 2 * inset, h: rh }, r.clone()));
+                l.rows.push((
+                    Rc {
+                        x: inset,
+                        y,
+                        w: w - 2 * inset,
+                        h: rh,
+                    },
+                    r.clone(),
+                ));
                 y += rh;
             }
             Item::Pair(a, b) => {
                 let half = (w - 2 * inset) / 2;
-                l.rows.push((Rc { x: inset, y, w: half, h: rh }, a.clone()));
-                l.rows.push((Rc { x: inset + half, y, w: w - 2 * inset - half, h: rh }, b.clone()));
+                l.rows.push((
+                    Rc {
+                        x: inset,
+                        y,
+                        w: half,
+                        h: rh,
+                    },
+                    a.clone(),
+                ));
+                l.rows.push((
+                    Rc {
+                        x: inset + half,
+                        y,
+                        w: w - 2 * inset - half,
+                        h: rh,
+                    },
+                    b.clone(),
+                ));
                 y += rh;
             }
             Item::Sep => {
@@ -174,7 +243,13 @@ pub fn layout(menu: &Menu, scale: f32) -> Layout {
 // ---------------------------------------------------------------- drawing
 
 /// Fills a rounded rectangle (fractional px) with `c`, anti-aliased, over the opaque pixels there.
-fn fill_round(buf: &mut [u32], width: i32, rect: (f32, f32, f32, f32), radius: f32, c: (u32, u32, u32)) {
+fn fill_round(
+    buf: &mut [u32],
+    width: i32,
+    rect: (f32, f32, f32, f32),
+    radius: f32,
+    c: (u32, u32, u32),
+) {
     crate::draw::fill_round(buf, width, rect, radius, c, 1.0);
 }
 
@@ -186,18 +261,51 @@ fn switch(buf: &mut [u32], width: i32, right: f32, cy: f32, on: bool, pal: &Colo
     let kx = if on { right - h / 2.0 } else { l + h / 2.0 };
     if on {
         fill_round(buf, width, (l, t, right, t + h), h / 2.0, pal.fill.tuple());
-        fill_round(buf, width, (kx - knob, cy - knob, kx + knob, cy + knob), knob, pal.bg.tuple());
+        fill_round(
+            buf,
+            width,
+            (kx - knob, cy - knob, kx + knob, cy + knob),
+            knob,
+            pal.bg.tuple(),
+        );
     } else {
         let b = 1.0 * scale;
         fill_round(buf, width, (l, t, right, t + h), h / 2.0, pal.knob.tuple());
-        fill_round(buf, width, (l + b, t + b, right - b, t + h - b), h / 2.0 - b, pal.bg.tuple());
-        fill_round(buf, width, (kx - knob, cy - knob, kx + knob, cy + knob), knob, pal.knob.tuple());
+        fill_round(
+            buf,
+            width,
+            (l + b, t + b, right - b, t + h - b),
+            h / 2.0 - b,
+            pal.bg.tuple(),
+        );
+        fill_round(
+            buf,
+            width,
+            (kx - knob, cy - knob, kx + knob, cy + knob),
+            knob,
+            pal.knob.tuple(),
+        );
     }
 }
 
 unsafe fn font(t: TextStyle, scale: f32, face: &str) -> HFONT {
     let face = wide(face);
-    CreateFontW(-t.px_at(scale), 0, 0, 0, t.weight, 0, 0, 0, 1, 0, 0, 5 /* CLEARTYPE_QUALITY */, 0, face.as_ptr())
+    CreateFontW(
+        -t.px_at(scale),
+        0,
+        0,
+        0,
+        t.weight,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        5, /* CLEARTYPE_QUALITY */
+        0,
+        face.as_ptr(),
+    )
 }
 
 /// Draws `text` in `r` (never empty text: DrawTextW crashes on it).
@@ -209,7 +317,13 @@ unsafe fn text(dc: HDC, f: HFONT, s: &str, color: u32, r: RECT, flags: u32) {
     let w: Vec<u16> = s.encode_utf16().collect();
     SelectObject(dc, f);
     SetTextColor(dc, color);
-    DrawTextW(dc, w.as_ptr(), w.len() as i32, &mut r, flags | DT_NOPREFIX | DT_SINGLELINE);
+    DrawTextW(
+        dc,
+        w.as_ptr(),
+        w.len() as i32,
+        &mut r,
+        flags | DT_NOPREFIX | DT_SINGLELINE,
+    );
 }
 
 /// Paints the panel into `dc` (its client area).
@@ -234,33 +348,120 @@ unsafe fn paint(dc: HDC, l: &Layout, menu: &Menu, look: &Look, scale: f32, hover
     let buf = std::slice::from_raw_parts_mut(bits as *mut u32, (l.w * l.h) as usize);
     buf.fill(pal.bg.pixel());
     for &y in &l.seps {
-        fill_round(buf, l.w, (s(space::M) as f32, y as f32, (l.w - s(space::M)) as f32, (y + s(1.0).max(1)) as f32), 0.0, pal.line.tuple());
+        fill_round(
+            buf,
+            l.w,
+            (
+                s(space::M) as f32,
+                y as f32,
+                (l.w - s(space::M)) as f32,
+                (y + s(1.0).max(1)) as f32,
+            ),
+            0.0,
+            pal.line.tuple(),
+        );
     }
     // rows sit `rc.x` px inside the panel: concentric with its corner, never below the control radius
-    let row_radius = |inset: i32| crate::draw::concentric(crate::draw::PANEL_RADIUS * scale, inset as f32, (look.control_radius * scale).round());
+    let row_radius = |inset: i32| {
+        crate::draw::concentric(
+            crate::draw::PANEL_RADIUS * scale,
+            inset as f32,
+            (look.control_radius * scale).round(),
+        )
+    };
     for (rc, row) in &l.rows {
         if hover == Some(row.id) {
-            fill_round(buf, l.w, (rc.x as f32, rc.y as f32 + 1.0, (rc.x + rc.w) as f32, (rc.y + rc.h) as f32 - 1.0), row_radius(rc.x), pal.hover.tuple());
+            fill_round(
+                buf,
+                l.w,
+                (
+                    rc.x as f32,
+                    rc.y as f32 + 1.0,
+                    (rc.x + rc.w) as f32,
+                    (rc.y + rc.h) as f32 - 1.0,
+                ),
+                row_radius(rc.x),
+                pal.hover.tuple(),
+            );
         }
         if let Some(on) = row.switch {
-            switch(buf, l.w, (rc.x + rc.w - s(10.0)) as f32, rc.y as f32 + rc.h as f32 / 2.0, on, pal, scale);
+            switch(
+                buf,
+                l.w,
+                (rc.x + rc.w - s(10.0)) as f32,
+                rc.y as f32 + rc.h as f32 / 2.0,
+                on,
+                pal,
+                scale,
+            );
         }
     }
     // the text over the shapes
     SetBkMode(mem, TRANSPARENT as _);
     let f = &theme.font;
-    let (title_f, sub_f, body_f, icon_f) =
-        (font(TITLE_SMALL, scale, &f.text), font(CAPTION, scale, &f.text), font(ROW, scale, &f.text), font(ICON, scale, f.icon));
-    text(mem, title_f, &menu.title, pal.fg.colorref(), l.title.rect(), DT_LEFT | DT_TOP | DT_END_ELLIPSIS);
-    text(mem, sub_f, &menu.subtitle, pal.dim.colorref(), l.subtitle.rect(), DT_LEFT | DT_TOP | DT_END_ELLIPSIS);
+    let (title_f, sub_f, body_f, icon_f) = (
+        font(TITLE_SMALL, scale, &f.text),
+        font(CAPTION, scale, &f.text),
+        font(ROW, scale, &f.text),
+        font(ICON, scale, f.icon),
+    );
+    text(
+        mem,
+        title_f,
+        &menu.title,
+        pal.fg.colorref(),
+        l.title.rect(),
+        DT_LEFT | DT_TOP | DT_END_ELLIPSIS,
+    );
+    text(
+        mem,
+        sub_f,
+        &menu.subtitle,
+        pal.dim.colorref(),
+        l.subtitle.rect(),
+        DT_LEFT | DT_TOP | DT_END_ELLIPSIS,
+    );
     for (rc, row) in &l.rows {
         if let Some(g) = row.glyph {
-            let r = RECT { left: rc.x + s(8.0), top: rc.y, right: rc.x + s(32.0), bottom: rc.y + rc.h };
-            text(mem, icon_f, &g.to_string(), pal.fg.colorref(), r, DT_CENTER | DT_VCENTER);
+            let r = RECT {
+                left: rc.x + s(8.0),
+                top: rc.y,
+                right: rc.x + s(32.0),
+                bottom: rc.y + rc.h,
+            };
+            text(
+                mem,
+                icon_f,
+                &g.to_string(),
+                pal.fg.colorref(),
+                r,
+                DT_CENTER | DT_VCENTER,
+            );
         }
-        let left = if row.glyph.is_some() { rc.x + s(38.0) } else { rc.x + s(10.0) };
-        let right = rc.x + rc.w - if row.switch.is_some() { s(56.0) } else { s(8.0) };
-        text(mem, body_f, &row.label, pal.fg.colorref(), RECT { left, top: rc.y, right, bottom: rc.y + rc.h }, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
+        let left = if row.glyph.is_some() {
+            rc.x + s(38.0)
+        } else {
+            rc.x + s(10.0)
+        };
+        let right = rc.x + rc.w
+            - if row.switch.is_some() {
+                s(56.0)
+            } else {
+                s(8.0)
+            };
+        text(
+            mem,
+            body_f,
+            &row.label,
+            pal.fg.colorref(),
+            RECT {
+                left,
+                top: rc.y,
+                right,
+                bottom: rc.y + rc.h,
+            },
+            DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS,
+        );
     }
     GdiFlush();
     BitBlt(dc, 0, 0, l.w, l.h, mem, 0, 0, SRCCOPY);
@@ -313,14 +514,24 @@ pub fn close() {
 
 /// The open menu panel's window and rows (for dockctl).
 pub fn rows() -> Option<(HWND, Vec<Row>)> {
-    with(|s| (s.hwnd, s.layout.rows.iter().map(|(_, r)| r.clone()).collect()))
+    with(|s| {
+        (
+            s.hwnd,
+            s.layout.rows.iter().map(|(_, r)| r.clone()).collect(),
+        )
+    })
 }
 
 /// Clicks a row of the open menu panel as the mouse does: a switch flips (the panel stays
 /// open), an action is chosen and closes it. False: no panel, or no such row.
 pub fn click(id: usize) -> bool {
-    let Some(Some((h, is_switch))) = with(|s| s.layout.rows.iter().find(|(_, r)| r.id == id).map(|(_, r)| (s.hwnd, r.switch.is_some())))
-    else {
+    let Some(Some((h, is_switch))) = with(|s| {
+        s.layout
+            .rows
+            .iter()
+            .find(|(_, r)| r.id == id)
+            .map(|(_, r)| (s.hwnd, r.switch.is_some()))
+    }) else {
         return false;
     };
     unsafe {
@@ -365,35 +576,83 @@ fn class() -> *const u16 {
 /// the panel stays open. Like a menu, it runs its own message loop meanwhile.
 /// A right click that closed the panel a moment ago (the click on the strip took its focus)
 /// returns None at once, so that right click closes it rather than reopening it.
-pub unsafe fn run(anchor: RECT, menu: Menu, look: &Look, scale: f32, on_switch: &mut dyn FnMut(usize) -> bool) -> Option<usize> {
+pub unsafe fn run(
+    anchor: RECT,
+    menu: Menu,
+    look: &Look,
+    scale: f32,
+    on_switch: &mut dyn FnMut(usize) -> bool,
+) -> Option<usize> {
     if is_open() {
         close();
         return None;
     }
-    if CLOSED_BY_FOCUS.with(|c| c.borrow_mut().take()).is_some_and(|t| t.elapsed() < REOPEN_GUARD) {
+    if CLOSED_BY_FOCUS
+        .with(|c| c.borrow_mut().take())
+        .is_some_and(|t| t.elapsed() < REOPEN_GUARD)
+    {
         return None;
     }
     let lay = layout(&menu, scale);
     let mut mi: MONITORINFO = std::mem::zeroed();
     mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
     GetMonitorInfoW(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST), &mut mi);
-    let (x, y) = panel::position(anchor, lay.w, lay.h, mi.rcWork, (look.panel_margin * scale).round() as i32);
+    let (x, y) = panel::position(
+        anchor,
+        lay.w,
+        lay.h,
+        mi.rcWork,
+        (look.panel_margin * scale).round() as i32,
+    );
     let title = wide("Menu");
-    let hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED, class(), title.as_ptr(), WS_POPUP,
-        x, y, lay.w, lay.h, 0, 0, GetModuleHandleW(std::ptr::null()), std::ptr::null());
+    let hwnd = CreateWindowExW(
+        WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
+        class(),
+        title.as_ptr(),
+        WS_POPUP,
+        x,
+        y,
+        lay.w,
+        lay.h,
+        0,
+        0,
+        GetModuleHandleW(std::ptr::null()),
+        std::ptr::null(),
+    );
     if hwnd == 0 {
         return None;
     }
     let round = DWMWCP_ROUND;
-    DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE as u32, &round as *const _ as *const _, 4);
+    DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+        &round as *const _ as *const _,
+        4,
+    );
     let dark: BOOL = (!look.light).into();
-    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, &dark as *const _ as *const _, 4);
+    DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+        &dark as *const _ as *const _,
+        4,
+    );
     SetLayeredWindowAttributes(hwnd, 0, 0, LWA_ALPHA); // fades in
     let mut fade = panel::Fade::default();
     fade.start(Instant::now());
     STATE.with(|s| {
-        *s.borrow_mut() = Some(State { hwnd, menu, layout: lay, look: look.clone(), scale, hover: None, pressed: None, tracking: false,
-                                       fade, chosen: None, flip: None })
+        *s.borrow_mut() = Some(State {
+            hwnd,
+            menu,
+            layout: lay,
+            look: look.clone(),
+            scale,
+            hover: None,
+            pressed: None,
+            tracking: false,
+            fade,
+            chosen: None,
+            flip: None,
+        })
     });
     ShowWindow(hwnd, SW_SHOW);
     SetForegroundWindow(hwnd);
@@ -435,7 +694,10 @@ pub unsafe fn run(anchor: RECT, menu: Menu, look: &Look, scale: f32, on_switch: 
 }
 
 fn client_pt(lp: LPARAM) -> (i32, i32) {
-    ((lp & 0xFFFF) as i16 as i32, ((lp >> 16) & 0xFFFF) as i16 as i32)
+    (
+        (lp & 0xFFFF) as i16 as i32,
+        ((lp >> 16) & 0xFFFF) as i16 as i32,
+    )
 }
 
 unsafe extern "system" fn proc_(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
@@ -443,7 +705,15 @@ unsafe extern "system" fn proc_(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESUL
         WM_PAINT => {
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
             let dc = BeginPaint(h, &mut ps);
-            if let Some((layout, menu, look, scale, hover)) = with(|s| (s.layout.clone(), s.menu.clone(), s.look.clone(), s.scale, s.hover)) {
+            if let Some((layout, menu, look, scale, hover)) = with(|s| {
+                (
+                    s.layout.clone(),
+                    s.menu.clone(),
+                    s.look.clone(),
+                    s.scale,
+                    s.hover,
+                )
+            }) {
                 paint(dc, &layout, &menu, &look, scale, hover);
             }
             EndPaint(h, &ps);
@@ -471,7 +741,12 @@ unsafe extern "system" fn proc_(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESUL
             })
             .unwrap_or((false, false));
             if track {
-                let mut tme = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: h, dwHoverTime: 0 };
+                let mut tme = TRACKMOUSEEVENT {
+                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: h,
+                    dwHoverTime: 0,
+                };
                 TrackMouseEvent(&mut tme);
             }
             if changed {
@@ -499,7 +774,11 @@ unsafe extern "system" fn proc_(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESUL
                 let here = s.layout.hit(x, y);
                 let pressed = s.pressed.take();
                 let id = here.filter(|_| here == pressed)?;
-                let is_switch = s.layout.rows.iter().any(|(_, r)| r.id == id && r.switch.is_some());
+                let is_switch = s
+                    .layout
+                    .rows
+                    .iter()
+                    .any(|(_, r)| r.id == id && r.switch.is_some());
                 if is_switch {
                     s.flip = Some(id);
                     None
@@ -555,12 +834,23 @@ mod tests {
         let ids: Vec<usize> = l.rows.iter().map(|(_, r)| r.id).collect();
         assert_eq!(ids, [1, 2, 3, 4, 5]);
         // header 62, row 32, sep 8, two rows, sep, pair row, bottom 6
-        assert_eq!(l.rows[0].0, Rc { x: 4, y: 62, w: 272, h: 32 });
+        assert_eq!(
+            l.rows[0].0,
+            Rc {
+                x: 4,
+                y: 62,
+                w: 272,
+                h: 32
+            }
+        );
         assert_eq!(l.rows[1].0.y, 102);
         assert_eq!(l.rows[2].0.y, 134);
         assert_eq!(l.seps, [58, 98, 170]);
         // the pair: two halves on one line
-        assert_eq!((l.rows[3].0.y, l.rows[3].0.w, l.rows[4].0.x), (174, 136, 140));
+        assert_eq!(
+            (l.rows[3].0.y, l.rows[3].0.w, l.rows[4].0.x),
+            (174, 136, 140)
+        );
         assert_eq!(l.h, 212);
     }
 
@@ -576,7 +866,10 @@ mod tests {
 
     #[test]
     fn no_header_starts_at_the_top_and_scales() {
-        let m = Menu { items: vec![Row::action(1, glyph::REFRESH, "Refresh")], ..Default::default() };
+        let m = Menu {
+            items: vec![Row::action(1, glyph::REFRESH, "Refresh")],
+            ..Default::default()
+        };
         let l = layout(&m, 1.5);
         assert_eq!((l.w, l.rows[0].0.y, l.h), (420, 9, 9 + 48 + 9));
         assert!(l.seps.is_empty());

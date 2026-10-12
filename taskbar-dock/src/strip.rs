@@ -50,8 +50,8 @@ use std::time::Instant;
 use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetParent, GetSystemMetrics, GetWindowLongW, GetWindowRect, SetWindowPos, GWL_STYLE, HWND_TOP, HWND_TOPMOST,
-    SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, WS_CHILD,
+    GetParent, GetSystemMetrics, GetWindowLongW, GetWindowRect, SetWindowPos, GWL_STYLE, HWND_TOP,
+    HWND_TOPMOST, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, WS_CHILD,
 };
 
 /// Px the mouse must move with the button down before a press counts as a drag.
@@ -60,7 +60,10 @@ pub const DRAG_THRESHOLD: i32 = 3;
 /// The client (x, y) in a mouse message's `lparam` (signed: a captured mouse can be left of or
 /// above the window).
 pub fn client_pos(lparam: isize) -> (i32, i32) {
-    ((lparam & 0xFFFF) as i16 as i32, ((lparam >> 16) & 0xFFFF) as i16 as i32)
+    (
+        (lparam & 0xFFFF) as i16 as i32,
+        ((lparam >> 16) & 0xFFFF) as i16 as i32,
+    )
 }
 
 #[cfg(test)]
@@ -68,7 +71,10 @@ mod pos_tests {
     #[test]
     fn client_pos_is_signed() {
         assert_eq!(super::client_pos(0x0018_0064), (100, 24));
-        assert_eq!(super::client_pos(0xFFF6_FFECu32 as i32 as isize), (-20, -10));
+        assert_eq!(
+            super::client_pos(0xFFF6_FFECu32 as i32 as isize),
+            (-20, -10)
+        );
     }
 }
 
@@ -101,7 +107,14 @@ pub struct Motion {
 
 impl Default for Motion {
     fn default() -> Self {
-        Motion { glide: None, zoom: 1.0, zoom_anim: None, press: None, resize: None, resize_w: None }
+        Motion {
+            glide: None,
+            zoom: 1.0,
+            zoom_anim: None,
+            press: None,
+            resize: None,
+            resize_w: None,
+        }
     }
 }
 
@@ -114,11 +127,17 @@ pub struct Limits {
 }
 
 impl Limits {
-    pub const NONE: Limits = Limits { min: None, max: None };
+    pub const NONE: Limits = Limits {
+        min: None,
+        max: None,
+    };
 
     #[cfg(test)]
     pub fn up_to(max: i32) -> Limits {
-        Limits { min: None, max: Some(max) }
+        Limits {
+            min: None,
+            max: Some(max),
+        }
     }
 }
 
@@ -203,12 +222,26 @@ impl Motion {
     }
 
     pub fn press(&mut self, cursor_x: i32, strip_x: i32) {
-        self.press = Some(Press { cursor_x, strip_x, moved: false, base_w: 0 });
+        self.press = Some(Press {
+            cursor_x,
+            strip_x,
+            moved: false,
+            base_w: 0,
+        });
     }
 
     /// `limits`: how far the strip may go (see [`Limits`]).
-    pub fn mouse_move(&mut self, cursor_x: i32, width: i32, limits: Limits, look: &Look, now: Instant) -> DragMove {
-        let Some(mut p) = self.press else { return DragMove::None };
+    pub fn mouse_move(
+        &mut self,
+        cursor_x: i32,
+        width: i32,
+        limits: Limits,
+        look: &Look,
+        now: Instant,
+    ) -> DragMove {
+        let Some(mut p) = self.press else {
+            return DragMove::None;
+        };
         if p.moved {
             return DragMove::Moved(self.drag_x(cursor_x, width, limits).unwrap_or(p.strip_x));
         }
@@ -277,7 +310,10 @@ impl Motion {
     /// the last frame: then draw the new mode). None: nothing running, stop the timer.
     pub fn resize_step(&mut self, look: &Look, now: Instant) -> Option<Step<i32>> {
         let r = self.resize?;
-        let t = anim::progress(now.duration_since(r.t0).as_secs_f32() * 1000.0, look.glide_ms);
+        let t = anim::progress(
+            now.duration_since(r.t0).as_secs_f32() * 1000.0,
+            look.glide_ms,
+        );
         let value = r.from + ((r.to - r.from) as f32 * anim::ease_dock(t)).round() as i32;
         let done = t >= 1.0;
         self.resize_w = if done { None } else { Some(value) };
@@ -288,7 +324,14 @@ impl Motion {
     }
 
     /// Head for `x` from `current`. See the rules at the top.
-    pub fn glide_to(&mut self, current: i32, x: i32, always_slide: bool, look: &Look, now: Instant) -> Glide {
+    pub fn glide_to(
+        &mut self,
+        current: i32,
+        x: i32,
+        always_slide: bool,
+        look: &Look,
+        now: Instant,
+    ) -> Glide {
         if self.dragging() {
             return Glide::Stay; // the mouse has it
         }
@@ -297,9 +340,17 @@ impl Motion {
         }
         if x == current || (x < current && !always_slide) || !look.animations {
             self.glide = None;
-            return if x == current { Glide::Stay } else { Glide::Jump(x) };
+            return if x == current {
+                Glide::Stay
+            } else {
+                Glide::Jump(x)
+            };
         }
-        self.glide = Some(Tween { from: current, to: x, t0: now });
+        self.glide = Some(Tween {
+            from: current,
+            to: x,
+            t0: now,
+        });
         Glide::Slide
     }
 
@@ -311,7 +362,11 @@ impl Motion {
             return Glide::Stay;
         }
         self.glide = None;
-        if x == current { Glide::Stay } else { Glide::Jump(x) }
+        if x == current {
+            Glide::Stay
+        } else {
+            Glide::Jump(x)
+        }
     }
 
     /// Stop a slide where it is (e.g. the window went away).
@@ -325,7 +380,10 @@ impl Motion {
             self.glide = None;
         }
         let g = self.glide?;
-        let t = anim::progress(now.duration_since(g.t0).as_secs_f32() * 1000.0, look.glide_ms);
+        let t = anim::progress(
+            now.duration_since(g.t0).as_secs_f32() * 1000.0,
+            look.glide_ms,
+        );
         let value = g.from + ((g.to - g.from) as f32 * anim::ease_dock(t)).round() as i32;
         let done = t >= 1.0;
         if done {
@@ -336,24 +394,36 @@ impl Motion {
 
     /// Grow or shrink the content smoothly to `target`. True: start the zoom timer.
     pub fn zoom_to(&mut self, target: f32, now: Instant) -> bool {
-        if self.zoom_anim.map(|z| z.to) == Some(target) || (self.zoom_anim.is_none() && self.zoom == target) {
+        if self.zoom_anim.map(|z| z.to) == Some(target)
+            || (self.zoom_anim.is_none() && self.zoom == target)
+        {
             return false;
         }
-        self.zoom_anim = Some(Tween { from: self.zoom, to: target, t0: now });
+        self.zoom_anim = Some(Tween {
+            from: self.zoom,
+            to: target,
+            t0: now,
+        });
         true
     }
 
     /// One frame of the zoom: the new [`zoom`](Self::zoom), redraw at it. None: stop the timer.
     pub fn zoom_step(&mut self, look: &Look, now: Instant) -> Option<Step<f32>> {
         let z = self.zoom_anim?;
-        let t = anim::progress(now.duration_since(z.t0).as_secs_f32() * 1000.0, look.zoom_ms);
+        let t = anim::progress(
+            now.duration_since(z.t0).as_secs_f32() * 1000.0,
+            look.zoom_ms,
+        );
         self.zoom = z.from + (z.to - z.from) * anim::ease_out_cubic(t);
         let done = t >= 1.0;
         if done {
             self.zoom = z.to;
             self.zoom_anim = None;
         }
-        Some(Step { value: self.zoom, done })
+        Some(Step {
+            value: self.zoom,
+            done,
+        })
     }
 }
 
@@ -383,11 +453,17 @@ pub unsafe fn keep_right_edge(h: HWND, tb: HWND, before: RECT) {
 /// # Safety
 /// Win32 calls on `h`.
 pub unsafe fn right_anchored(h: HWND, before: RECT, width: i32) -> Option<POINT> {
-    if before.right - before.left == width || width <= 0 || GetWindowLongW(h, GWL_STYLE) as u32 & WS_CHILD == 0 {
+    if before.right - before.left == width
+        || width <= 0
+        || GetWindowLongW(h, GWL_STYLE) as u32 & WS_CHILD == 0
+    {
         return None;
     }
     // child window: coordinates relative to the parent (the taskbar)
-    let mut pt = POINT { x: before.right - width, y: before.top };
+    let mut pt = POINT {
+        x: before.right - width,
+        y: before.top,
+    };
     ScreenToClient(GetParent(h), &mut pt);
     Some(pt)
 }
@@ -410,11 +486,22 @@ pub unsafe fn move_strip(h: HWND, tb: HWND, screen_x: i32, raise: bool) {
         let parent = GetParent(h);
         let mut pr: RECT = std::mem::zeroed();
         GetWindowRect(parent, &mut pr);
-        let mut pt = POINT { x: screen_x, y: pr.top + (pr.bottom - pr.top - height) / 2 };
+        let mut pt = POINT {
+            x: screen_x,
+            y: pr.top + (pr.bottom - pr.top - height) / 2,
+        };
         ScreenToClient(parent, &mut pt);
         // raised only when the taskbar's content is above it (see dock::raise_flag)
         let z = if raise { crate::dock::raise_flag(h) } else { z };
-        SetWindowPos(h, HWND_TOP, pt.x, pt.y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | z);
+        SetWindowPos(
+            h,
+            HWND_TOP,
+            pt.x,
+            pt.y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOACTIVATE | z,
+        );
     } else {
         let y = if tb != 0 {
             let mut t: RECT = std::mem::zeroed();
@@ -423,7 +510,15 @@ pub unsafe fn move_strip(h: HWND, tb: HWND, screen_x: i32, raise: bool) {
         } else {
             GetSystemMetrics(SM_CYSCREEN) - height - 4
         };
-        SetWindowPos(h, HWND_TOPMOST, screen_x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | z);
+        SetWindowPos(
+            h,
+            HWND_TOPMOST,
+            screen_x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOACTIVATE | z,
+        );
     }
 }
 
@@ -455,11 +550,21 @@ mod tests {
         assert_eq!(m.glide_to(100, 50, true, &lk, t0), Glide::Slide);
         let mut m = Motion::default();
         assert_eq!(m.glide_to(100, 160, false, &lk, t0), Glide::Slide);
-        assert_eq!(m.glide_to(100, 160, false, &lk, t0), Glide::Stay, "already heading there");
+        assert_eq!(
+            m.glide_to(100, 160, false, &lk, t0),
+            Glide::Stay,
+            "already heading there"
+        );
         let mid = m.glide_step(&lk, ms(t0, 100)).unwrap();
         assert!(mid.value > 100 && mid.value < 160 && !mid.done);
         let end = m.glide_step(&lk, ms(t0, 1000)).unwrap();
-        assert_eq!(end, Step { value: 160, done: true });
+        assert_eq!(
+            end,
+            Step {
+                value: 160,
+                done: true
+            }
+        );
         assert!(m.glide_step(&lk, ms(t0, 1010)).is_none() && !m.gliding());
     }
 
@@ -480,9 +585,15 @@ mod tests {
         assert_eq!(m.release(t0), Release::None);
 
         m.press(500, 400);
-        assert_eq!(m.mouse_move(510, 80, Limits::NONE, &lk, t0), DragMove::Started(410));
+        assert_eq!(
+            m.mouse_move(510, 80, Limits::NONE, &lk, t0),
+            DragMove::Started(410)
+        );
         assert!(m.dragging());
-        assert_eq!(m.mouse_move(520, 80, Limits::NONE, &lk, t0), DragMove::Moved(420));
+        assert_eq!(
+            m.mouse_move(520, 80, Limits::NONE, &lk, t0),
+            DragMove::Moved(420)
+        );
         assert_eq!(m.release(t0), Release::Drop);
         assert!(!m.pressed());
     }
@@ -509,11 +620,23 @@ mod tests {
         let mut m = Motion::default();
         m.press(500, 400);
         // limit 450: the strip stops there while the mouse goes on
-        assert_eq!(m.mouse_move(510, 80, Limits::up_to(450), &lk, t0), DragMove::Started(410));
-        assert_eq!(m.mouse_move(600, 80, Limits::up_to(450), &lk, t0), DragMove::Moved(450));
-        assert_eq!(m.mouse_move(700, 80, Limits::up_to(450), &lk, t0), DragMove::Moved(450));
+        assert_eq!(
+            m.mouse_move(510, 80, Limits::up_to(450), &lk, t0),
+            DragMove::Started(410)
+        );
+        assert_eq!(
+            m.mouse_move(600, 80, Limits::up_to(450), &lk, t0),
+            DragMove::Moved(450)
+        );
+        assert_eq!(
+            m.mouse_move(700, 80, Limits::up_to(450), &lk, t0),
+            DragMove::Moved(450)
+        );
         // turning back 10 px moves it 10 px, not only once the mouse is back where it stopped
-        assert_eq!(m.mouse_move(690, 80, Limits::up_to(450), &lk, t0), DragMove::Moved(440));
+        assert_eq!(
+            m.mouse_move(690, 80, Limits::up_to(450), &lk, t0),
+            DragMove::Moved(440)
+        );
     }
 
     #[test]
@@ -521,12 +644,18 @@ mod tests {
         let (lk, t0) = (look(true), Instant::now());
         let mut m = Motion::default();
         m.press(500, 400);
-        let lim = Limits { min: Some(380), max: Some(450) };
+        let lim = Limits {
+            min: Some(380),
+            max: Some(450),
+        };
         assert_eq!(m.mouse_move(490, 80, lim, &lk, t0), DragMove::Started(390));
         assert_eq!(m.mouse_move(400, 80, lim, &lk, t0), DragMove::Moved(380));
         assert_eq!(m.mouse_move(410, 80, lim, &lk, t0), DragMove::Moved(390));
         // no room between the limits: the tray side wins
-        let tight = Limits { min: Some(470), max: Some(450) };
+        let tight = Limits {
+            min: Some(470),
+            max: Some(450),
+        };
         assert_eq!(m.drag_x(410, 80, tight), Some(450));
     }
 
@@ -535,16 +664,29 @@ mod tests {
         let (lk, t0) = (look(true), Instant::now());
         let mut m = Motion::default();
         assert!(m.resize(300, 120, &lk, t0));
-        assert_eq!(m.resize_width(), Some(300), "draws at the old width until the first frame");
+        assert_eq!(
+            m.resize_width(),
+            Some(300),
+            "draws at the old width until the first frame"
+        );
         let mid = m.resize_step(&lk, ms(t0, 100)).unwrap();
         assert!(mid.value < 300 && mid.value > 120 && !mid.done);
         assert_eq!(m.resize_width(), Some(mid.value));
         let end = m.resize_step(&lk, ms(t0, 1000)).unwrap();
-        assert_eq!(end, Step { value: 120, done: true });
+        assert_eq!(
+            end,
+            Step {
+                value: 120,
+                done: true
+            }
+        );
         assert_eq!(m.resize_width(), None, "the last frame draws the new mode");
         assert!(m.resize_step(&lk, ms(t0, 1010)).is_none());
         assert!(!m.resize(120, 120, &lk, t0));
-        assert!(!Motion::default().resize(120, 300, &look(false), t0), "instant without animations");
+        assert!(
+            !Motion::default().resize(120, 300, &look(false), t0),
+            "instant without animations"
+        );
     }
 
     #[test]
@@ -568,7 +710,11 @@ mod tests {
         let (lk, t0) = (look(true), Instant::now());
         let mut m = Motion::default();
         assert_eq!(m.glide_to(100, 160, false, &lk, t0), Glide::Slide);
-        assert_eq!(m.follow(100, 104), Glide::Jump(104), "right: no slide, and the slide ends");
+        assert_eq!(
+            m.follow(100, 104),
+            Glide::Jump(104),
+            "right: no slide, and the slide ends"
+        );
         assert!(!m.gliding());
         assert_eq!(m.follow(104, 98), Glide::Jump(98));
         assert_eq!(m.follow(98, 98), Glide::Stay);

@@ -3,7 +3,9 @@
 
 use crate::dock;
 use windows_sys::Win32::Foundation::{HWND, RECT};
-use windows_sys::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    GetClassNameW, GetForegroundWindow, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN,
+};
 
 /// Width of Windows' own Widgets button at the taskbar's left end, px at 100%.
 const WIDGETS_BUTTON: f32 = 170.0;
@@ -35,7 +37,11 @@ pub(crate) fn corner(screen: (i32, i32), width: i32, margin: i32) -> i32 {
 /// Left side, live: x for a strip `me` drawn `width` wide on taskbar `tb`.
 pub(crate) unsafe fn left_side(tb: HWND, me: HWND, width: i32, gap: i32, scale: f32) -> i32 {
     let t = dock::rect(tb);
-    let widgets = if !dock::left_aligned() && dock::widgets_button() { (WIDGETS_BUTTON * scale) as i32 } else { 0 };
+    let widgets = if !dock::left_aligned() && dock::widgets_button() {
+        (WIDGETS_BUTTON * scale) as i32
+    } else {
+        0
+    };
     let occupied = dock::children(tb)
         .iter()
         .filter(|c| c.hwnd != me && !c.squeezed && !dock::is_taskbar_part(c, t.right - t.left))
@@ -47,9 +53,17 @@ pub(crate) unsafe fn left_side(tb: HWND, me: HWND, width: i32, gap: i32, scale: 
 /// Floating, live: x for a strip `width` wide beside the dock on `tb` (0: no taskbar).
 pub(crate) unsafe fn floating_x(tb: HWND, width: i32, gap: i32, scale: f32) -> i32 {
     if tb == 0 {
-        return corner((GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)), width, (8.0 * scale).round() as i32);
+        return corner(
+            (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)),
+            width,
+            (8.0 * scale).round() as i32,
+        );
     }
-    let lefts: Vec<i32> = dock::children(tb).iter().filter(|c| c.member && !c.squeezed).map(|c| c.rc.left).collect();
+    let lefts: Vec<i32> = dock::children(tb)
+        .iter()
+        .filter(|c| c.member && !c.squeezed)
+        .map(|c| c.rc.left)
+        .collect();
     beside_dock(dock::tray_boundary(tb, scale), &lefts, width, gap)
 }
 
@@ -77,10 +91,20 @@ pub(crate) unsafe fn fullscreen_app_active() -> bool {
     let mut cls = [0u16; 64];
     let n = GetClassNameW(h, cls.as_mut_ptr(), cls.len() as i32).max(0) as usize;
     let cls = String::from_utf16_lossy(&cls[..n]);
-    if ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"].contains(&cls.as_str()) {
+    if [
+        "Progman",
+        "WorkerW",
+        "Shell_TrayWnd",
+        "Shell_SecondaryTrayWnd",
+    ]
+    .contains(&cls.as_str())
+    {
         return false;
     }
-    covers_screen(dock::rect(h), (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)))
+    covers_screen(
+        dock::rect(h),
+        (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)),
+    )
 }
 
 pub(crate) fn covers_screen(r: RECT, screen: (i32, i32)) -> bool {
@@ -111,9 +135,20 @@ mod tests {
 
     #[test]
     fn full_screen_means_covering_the_screen() {
-        let r = |l, t, rr, b| RECT { left: l, top: t, right: rr, bottom: b };
+        let r = |l, t, rr, b| RECT {
+            left: l,
+            top: t,
+            right: rr,
+            bottom: b,
+        };
         assert!(covers_screen(r(0, 0, 1920, 1080), (1920, 1080)));
-        assert!(covers_screen(r(-8, -8, 1928, 1088), (1920, 1080)), "maximised borders");
-        assert!(!covers_screen(r(0, 0, 1920, 1032), (1920, 1080)), "above the taskbar");
+        assert!(
+            covers_screen(r(-8, -8, 1928, 1088), (1920, 1080)),
+            "maximised borders"
+        );
+        assert!(
+            !covers_screen(r(0, 0, 1920, 1032), (1920, 1080)),
+            "above the taskbar"
+        );
     }
 }

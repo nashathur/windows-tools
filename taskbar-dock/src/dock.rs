@@ -19,7 +19,9 @@ use crate::{settings, wide};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
-use windows_sys::Win32::UI::Accessibility::{NotifyWinEvent, SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK, WINEVENTPROC};
+use windows_sys::Win32::UI::Accessibility::{
+    NotifyWinEvent, SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK, WINEVENTPROC,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 pub const PROP_MEMBER: &str = "TaskbarDock.Member";
@@ -67,7 +69,16 @@ pub unsafe fn mark_member(h: HWND) {
 
 /// Leaves the stack (e.g. a widget moved to the other end of the taskbar).
 pub unsafe fn leave(h: HWND) {
-    for p in [PROP_MEMBER, PROP_SQUEEZED, PROP_FULL, PROP_MIN, PROP_STRETCH, PROP_DRAWN, PROP_ICONS, PROP_SLOT] {
+    for p in [
+        PROP_MEMBER,
+        PROP_SQUEEZED,
+        PROP_FULL,
+        PROP_MIN,
+        PROP_STRETCH,
+        PROP_DRAWN,
+        PROP_ICONS,
+        PROP_SLOT,
+    ] {
         RemovePropW(h, wide(p).as_ptr());
     }
 }
@@ -108,7 +119,11 @@ pub unsafe fn needs_raise(h: HWND) -> bool {
 /// other in turn (each raise is a WinEvent the others react to): ~7 restacks a second, and every
 /// strip on the taskbar flickered now and then. OR it into every member's `SetWindowPos` flags.
 pub unsafe fn raise_flag(h: HWND) -> u32 {
-    if needs_raise(h) { 0 } else { SWP_NOZORDER }
+    if needs_raise(h) {
+        0
+    } else {
+        SWP_NOZORDER
+    }
 }
 
 /// A number in a window property, readable by the other widgets' processes. Bit 32 marks it
@@ -136,7 +151,10 @@ unsafe fn get_num(h: HWND, name: &str) -> Option<i32> {
 /// current (maybe narrowed) size.
 pub unsafe fn publish_widths(h: HWND, s: Size) {
     let stretch = Some(s.stretch as i32);
-    if get_num(h, PROP_FULL) != Some(s.full) || get_num(h, PROP_MIN) != Some(s.min) || get_num(h, PROP_STRETCH) != stretch {
+    if get_num(h, PROP_FULL) != Some(s.full)
+        || get_num(h, PROP_MIN) != Some(s.min)
+        || get_num(h, PROP_STRETCH) != stretch
+    {
         set_num(h, PROP_FULL, Some(s.full));
         set_num(h, PROP_MIN, Some(s.min));
         set_num(h, PROP_STRETCH, Some(s.stretch as i32));
@@ -165,7 +183,11 @@ pub unsafe fn set_squeezed(h: HWND, on: bool) {
 /// A member's published widths; its window width when it hasn't published any.
 unsafe fn size_of(h: HWND, rc: RECT) -> Size {
     let full = get_num(h, PROP_FULL).unwrap_or(rc.right - rc.left);
-    Size { full, min: get_num(h, PROP_MIN).unwrap_or(full).min(full), stretch: get_num(h, PROP_STRETCH) == Some(1) }
+    Size {
+        full,
+        min: get_num(h, PROP_MIN).unwrap_or(full).min(full),
+        stretch: get_num(h, PROP_STRETCH) == Some(1),
+    }
 }
 
 /// The message a widget's strip receives when another widget opens its panel: close yours.
@@ -217,7 +239,8 @@ pub unsafe fn children(tb: HWND) -> Vec<Child> {
     }
     let mut found: Vec<HWND> = Vec::new();
     EnumChildWindows(tb, Some(collect), &mut found as *mut _ as LPARAM);
-    let (member, dragging, squeezed) = (wide(PROP_MEMBER), wide(PROP_DRAGGING), wide(PROP_SQUEEZED));
+    let (member, dragging, squeezed) =
+        (wide(PROP_MEMBER), wide(PROP_DRAGGING), wide(PROP_SQUEEZED));
     found
         .into_iter()
         .filter(|h| GetParent(*h) == tb)
@@ -237,8 +260,16 @@ pub unsafe fn children(tb: HWND) -> Vec<Child> {
                 member: is_member,
                 dragging: GetPropW(h, dragging.as_ptr()) != 0,
                 squeezed: is_squeezed,
-                size: if is_member { size_of(h, rc) } else { Size::fixed(rc.right - rc.left) },
-                drawn: if is_member { get_num(h, PROP_DRAWN).filter(|w| *w > 0) } else { None },
+                size: if is_member {
+                    size_of(h, rc)
+                } else {
+                    Size::fixed(rc.right - rc.left)
+                },
+                drawn: if is_member {
+                    get_num(h, PROP_DRAWN).filter(|w| *w > 0)
+                } else {
+                    None
+                },
             })
         })
         .collect()
@@ -282,8 +313,20 @@ unsafe fn explorer_setting(name: &str, default: u32) -> u32 {
     let (mut v, mut sz) = (0u32, 4u32);
     let key = wide(r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced");
     let n = wide(name);
-    let r = RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), n.as_ptr(), RRF_RT_REG_DWORD, std::ptr::null_mut(), &mut v as *mut u32 as *mut _, &mut sz);
-    if r == 0 { v } else { default }
+    let r = RegGetValueW(
+        HKEY_CURRENT_USER,
+        key.as_ptr(),
+        n.as_ptr(),
+        RRF_RT_REG_DWORD,
+        std::ptr::null_mut(),
+        &mut v as *mut u32 as *mut _,
+        &mut sz,
+    );
+    if r == 0 {
+        v
+    } else {
+        default
+    }
 }
 
 /// Taskbar icons are left-aligned (Settings > Personalization > Taskbar > Taskbar alignment).
@@ -299,8 +342,12 @@ pub unsafe fn widgets_button() -> bool {
 /// Is this one of the taskbar's own parts (rather than a docked widget or other app's window)?
 /// Its XAML surface spans the whole bar; only narrower windows count as occupied space.
 pub fn is_taskbar_part(c: &Child, taskbar_width: i32) -> bool {
-    c.class == "Start" || c.class.starts_with("Windows.UI.") || c.class.starts_with("MSTask")
-        || c.class == "ReBarWindow32" || c.class == "TrayNotifyWnd" || c.rc.right - c.rc.left >= taskbar_width / 2
+    c.class == "Start"
+        || c.class.starts_with("Windows.UI.")
+        || c.class.starts_with("MSTask")
+        || c.class == "ReBarWindow32"
+        || c.class == "TrayNotifyWnd"
+        || c.rc.right - c.rc.left >= taskbar_width / 2
 }
 
 /// Screen x of the tray boundary: the tray area's left edge, minus Windows' own Widgets button
@@ -324,7 +371,12 @@ pub unsafe fn tray_boundary(tb: HWND, scale: f32) -> i32 {
             last.filter(|(h, _)| *h == tb).map_or(t.right, |(_, x)| x)
         }
     };
-    tray_left - if left_aligned() && widgets_button() { (170.0 * scale) as i32 } else { 0 }
+    tray_left
+        - if left_aligned() && widgets_button() {
+            (170.0 * scale) as i32
+        } else {
+            0
+        }
 }
 
 // ---- layout -----------------------------------------------------------------------
@@ -356,14 +408,30 @@ pub fn place(b: i32, gap: i32, obstacles: &[RECT], widths: &[i32]) -> Vec<i32> {
 /// With neighbours of any size this swaps when the dragged one is halfway over its neighbour,
 /// i.e. when its leading edge passes the neighbour's centre. It also holds for a wide widget
 /// held against the tray (its left edge can't get far, but the far-right slot is the nearest).
-pub fn insert_index(b: i32, gap: i32, obstacles: &[RECT], widths: &[i32], d_left: i32, d_width: i32) -> usize {
+pub fn insert_index(
+    b: i32,
+    gap: i32,
+    obstacles: &[RECT],
+    widths: &[i32],
+    d_left: i32,
+    d_width: i32,
+) -> usize {
     sticky_index(b, gap, obstacles, widths, d_left, d_width, None, 0)
 }
 
 /// [`insert_index`] that keeps the slot `prev` until another one is nearer by more than `hold`
 /// px (hysteresis, as TaskbarWidgets' sticky gap): held right at the halfway point, the
 /// neighbours don't swap back and forth.
-pub fn sticky_index(b: i32, gap: i32, obstacles: &[RECT], widths: &[i32], d_left: i32, d_width: i32, prev: Option<usize>, hold: i32) -> usize {
+pub fn sticky_index(
+    b: i32,
+    gap: i32,
+    obstacles: &[RECT],
+    widths: &[i32],
+    d_left: i32,
+    d_width: i32,
+    prev: Option<usize>,
+    hold: i32,
+) -> usize {
     let dist = |k: usize| {
         let mut w = widths.to_vec();
         w.insert(k, d_width);
@@ -392,7 +460,11 @@ pub struct Size {
 impl Size {
     /// A width that can't change.
     pub fn fixed(w: i32) -> Size {
-        Size { full: w, min: w, stretch: false }
+        Size {
+            full: w,
+            min: w,
+            stretch: false,
+        }
     }
 }
 
@@ -431,7 +503,10 @@ pub fn fit(b: i32, gap: i32, obstacles: &[RECT], edge: Option<i32>, sizes: &[Siz
     let mut fits = vec![Fit::Full; n];
     let Some(edge) = edge else { return fits };
     let left_end = |fits: &[Fit]| {
-        let ws: Vec<i32> = (0..n).filter(|&i| fits[i] != Fit::Hidden).map(|i| fits[i].width(sizes[i].full)).collect();
+        let ws: Vec<i32> = (0..n)
+            .filter(|&i| fits[i] != Fit::Hidden)
+            .map(|i| fits[i].width(sizes[i].full))
+            .collect();
         place(b, gap, obstacles, &ws).last().copied().unwrap_or(b)
     };
     loop {
@@ -455,7 +530,11 @@ pub fn fit(b: i32, gap: i32, obstacles: &[RECT], edge: Option<i32>, sizes: &[Siz
                     if short <= 0 || w <= s.min {
                         break;
                     }
-                    fits[i] = Fit::Shrunk(if stretch { (w - short).max(s.min) } else { s.min });
+                    fits[i] = Fit::Shrunk(if stretch {
+                        (w - short).max(s.min)
+                    } else {
+                        s.min
+                    });
                 }
             }
         }
@@ -503,7 +582,6 @@ impl FitState {
     pub fn hidden(&self) -> bool {
         self.get() == Fit::Hidden
     }
-
 }
 
 /// The taskbar's buttons' right edge as last seen in this process, per taskbar: for the drag
@@ -520,8 +598,13 @@ unsafe fn read_icons(tb: HWND, me: HWND, members: &[&Child], boundary: i32) -> O
         crate::icons::want(tb);
         // test aid: TASKBAR_DOCK_TEST_ICONS_RIGHT=<screen x> in the leader's environment stands
         // in for the buttons' right edge (a collision without changing the taskbar)
-        let test = std::env::var("TASKBAR_DOCK_TEST_ICONS_RIGHT").ok().and_then(|v| v.trim().parse().ok());
-        let e = test.or_else(|| crate::icons::buttons(tb).and_then(|(b, at)| crate::icons::right_edge(&b, boundary.min(at))));
+        let test = std::env::var("TASKBAR_DOCK_TEST_ICONS_RIGHT")
+            .ok()
+            .and_then(|v| v.trim().parse().ok());
+        let e = test.or_else(|| {
+            crate::icons::buttons(tb)
+                .and_then(|(b, at)| crate::icons::right_edge(&b, boundary.min(at)))
+        });
         if get_num(me, PROP_ICONS) != e {
             set_num(me, PROP_ICONS, e);
             notify(me); // the others fit again now, not at their next tick
@@ -537,7 +620,11 @@ unsafe fn read_icons(tb: HWND, me: HWND, members: &[&Child], boundary: i32) -> O
 /// The right edge of the taskbar's own buttons, as last read (None: not known). A dragged strip
 /// stays right of it (plus the gap).
 pub fn icons_right(tb: HWND) -> Option<i32> {
-    ICONS.lock().unwrap().filter(|(h, _)| *h == tb).and_then(|(_, e)| e)
+    ICONS
+        .lock()
+        .unwrap()
+        .filter(|(h, _)| *h == tb)
+        .and_then(|(_, e)| e)
 }
 
 /// A dock member as seen in a [`Layout`], with its fit.
@@ -587,7 +674,16 @@ pub unsafe fn layout(tb: HWND, me: HWND, mine: Option<Size>, boundary: i32, gap:
     // hides doesn't change in the middle of a drag
     let mut members: Vec<&Child> = kids.iter().filter(|c| c.member || c.hwnd == me).collect();
     members.sort_by_key(|c| (rank(&order, &c.class), -c.rc.right));
-    let sizes: Vec<Size> = members.iter().map(|c| if c.hwnd == me { mine.unwrap_or(c.size) } else { c.size }).collect();
+    let sizes: Vec<Size> = members
+        .iter()
+        .map(|c| {
+            if c.hwnd == me {
+                mine.unwrap_or(c.size)
+            } else {
+                c.size
+            }
+        })
+        .collect();
     let icons = read_icons(tb, me, &members, boundary);
     let fits = fit(boundary, gap, &obstacles, icons.map(|r| r + gap), &sizes);
     let stack: Vec<usize> = (0..members.len())
@@ -596,14 +692,33 @@ pub unsafe fn layout(tb: HWND, me: HWND, mine: Option<Size>, boundary: i32, gap:
     Layout {
         hwnds: stack.iter().map(|&i| members[i].hwnd).collect(),
         classes: stack.iter().map(|&i| members[i].class.clone()).collect(),
-        widths: stack.iter().map(|&i| placed_width(fits[i], sizes[i], members[i].drawn)).collect(),
-        resizing: stack.iter().any(|&i| members[i].hwnd != me && members[i].drawn.is_some()),
+        widths: stack
+            .iter()
+            .map(|&i| placed_width(fits[i], sizes[i], members[i].drawn))
+            .collect(),
+        resizing: stack
+            .iter()
+            .any(|&i| members[i].hwnd != me && members[i].drawn.is_some()),
         obstacles,
         dragged: kids
             .iter()
             .find(|c| c.member && c.dragging && c.hwnd != me)
-            .map(|c| (c.hwnd, c.rc.right - c.rc.left, c.rc.left, c.rc.right, rank(&order, &c.class))),
-        all: (0..members.len()).map(|i| Member { hwnd: members[i].hwnd, class: members[i].class.clone(), fit: fits[i] }).collect(),
+            .map(|c| {
+                (
+                    c.hwnd,
+                    c.rc.right - c.rc.left,
+                    c.rc.left,
+                    c.rc.right,
+                    rank(&order, &c.class),
+                )
+            }),
+        all: (0..members.len())
+            .map(|i| Member {
+                hwnd: members[i].hwnd,
+                class: members[i].class.clone(),
+                fit: fits[i],
+            })
+            .collect(),
     }
 }
 
@@ -636,11 +751,23 @@ pub unsafe fn slot(tb: HWND, me: HWND, size: Size, boundary: i32, gap: i32) -> O
     let fit = l.all.iter().find(|m| m.hwnd == me)?.fit;
     let Some(mine) = l.hwnds.iter().position(|h| *h == me) else {
         let r = rect(me);
-        return Some(Slot { x: r.left, width: r.right - r.left, slide: false, follow: false, fit });
+        return Some(Slot {
+            x: r.left,
+            width: r.right - r.left,
+            slide: false,
+            follow: false,
+            fit,
+        });
     };
     let Some((dh, dw, d_left, _, _)) = l.dragged else {
         let x = place(boundary, gap, &l.obstacles, &l.widths)[mine];
-        return Some(Slot { x, width: l.widths[mine], slide: false, follow: l.resizing, fit });
+        return Some(Slot {
+            x,
+            width: l.widths[mine],
+            slide: false,
+            follow: l.resizing,
+            fit,
+        });
     };
     let width = l.widths[mine];
     // the slot the dragged one published; computed here only if it hasn't (yet)
@@ -648,12 +775,20 @@ pub unsafe fn slot(tb: HWND, me: HWND, size: Size, boundary: i32, gap: i32) -> O
         .unwrap_or_else(|| insert_index(boundary, gap, &l.obstacles, &l.widths, d_left, dw));
     l.widths.insert(ins, dw);
     let xs = place(boundary, gap, &l.obstacles, &l.widths);
-    Some(Slot { x: xs[if mine >= ins { mine + 1 } else { mine }], width, slide: true, follow: false, fit })
+    Some(Slot {
+        x: xs[if mine >= ins { mine + 1 } else { mine }],
+        width,
+        slide: true,
+        follow: false,
+        fit,
+    })
 }
 
 /// The slot dragged member `h` published ([`track_drag`]), if it's a valid index for `n` others.
 unsafe fn published_slot(h: HWND, n: usize) -> Option<usize> {
-    get_num(h, PROP_SLOT).and_then(|s| usize::try_from(s).ok()).filter(|&s| s <= n)
+    get_num(h, PROP_SLOT)
+        .and_then(|s| usize::try_from(s).ok())
+        .filter(|&s| s <= n)
 }
 
 /// While `me` is dragged: decides the slot it would drop into, sticky ([`sticky_index`]), and
@@ -665,13 +800,25 @@ pub unsafe fn track_drag(tb: HWND, me: HWND, boundary: i32, gap: i32) {
         return;
     }
     let l = layout(tb, me, None, boundary, gap);
-    let widths: Vec<i32> = (0..l.hwnds.len()).filter(|&i| l.hwnds[i] != me).map(|i| l.widths[i]).collect();
+    let widths: Vec<i32> = (0..l.hwnds.len())
+        .filter(|&i| l.hwnds[i] != me)
+        .map(|i| l.widths[i])
+        .collect();
     let prev = published_slot(me, widths.len());
     let scale = windows_sys::Win32::UI::HiDpi::GetDpiForWindow(tb).max(96) as f32 / 96.0;
     // the gap between two slots' distances grows twice as fast as the strip moves
     let hold = (2.0 * STICKY_PX * scale).round() as i32;
     let r = rect(me);
-    let idx = sticky_index(boundary, gap, &l.obstacles, &widths, r.left, r.right - r.left, prev, hold);
+    let idx = sticky_index(
+        boundary,
+        gap,
+        &l.obstacles,
+        &widths,
+        r.left,
+        r.right - r.left,
+        prev,
+        hold,
+    );
     if prev != Some(idx) {
         set_num(me, PROP_SLOT, Some(idx as i32));
         notify(me); // the others may have reflowed for this move already: look again
@@ -687,9 +834,22 @@ pub unsafe fn drop_reorder(tb: HWND, me: HWND, my_class: &str, boundary: i32, ga
     let others: Vec<usize> = (0..l.hwnds.len()).filter(|&i| l.hwnds[i] != me).collect();
     let widths: Vec<i32> = others.iter().map(|&i| l.widths[i]).collect();
     let r = rect(me);
-    let idx = published_slot(me, widths.len())
-        .unwrap_or_else(|| insert_index(boundary, gap, &l.obstacles, &widths, r.left, r.right - r.left));
-    let mut order: Vec<String> = l.all.iter().filter(|m| m.hwnd != me).map(|m| m.class.clone()).collect();
+    let idx = published_slot(me, widths.len()).unwrap_or_else(|| {
+        insert_index(
+            boundary,
+            gap,
+            &l.obstacles,
+            &widths,
+            r.left,
+            r.right - r.left,
+        )
+    });
+    let mut order: Vec<String> = l
+        .all
+        .iter()
+        .filter(|m| m.hwnd != me)
+        .map(|m| m.class.clone())
+        .collect();
     // the slot among the shown ones, as a place in the whole order
     let pos = |i: usize| order.iter().position(|c| *c == l.classes[i]);
     let at = match others.get(idx) {
@@ -742,7 +902,15 @@ impl Hooks {
         for pid in pids {
             if pid != 0 && !self.0.contains_key(&pid) {
                 // DESTROY..LOCATIONCHANGE covers create/show/hide/reorder/move/resize
-                let hook = SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_LOCATIONCHANGE, 0, callback, pid, 0, WINEVENT_OUTOFCONTEXT);
+                let hook = SetWinEventHook(
+                    EVENT_OBJECT_DESTROY,
+                    EVENT_OBJECT_LOCATIONCHANGE,
+                    0,
+                    callback,
+                    pid,
+                    0,
+                    WINEVENT_OUTOFCONTEXT,
+                );
                 if hook != 0 {
                     self.0.insert(pid, hook);
                 }
@@ -753,7 +921,9 @@ impl Hooks {
 
 /// The process is still running.
 unsafe fn alive(pid: u32) -> bool {
-    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
     const STILL_ACTIVE: u32 = 259;
     let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
     if h == 0 {
@@ -793,8 +963,14 @@ mod tests {
         assert_eq!(s(1386, 0), 0); // and back the same way
         assert_eq!(s(1382, 0), 1);
         // no memory yet, or a memory from a different stack size: the nearest slot
-        assert_eq!(sticky_index(B, GAP, &[], &[179, 75], 1400, 258, None, 20), 0);
-        assert_eq!(sticky_index(B, GAP, &[], &[179, 75], 1400, 258, Some(5), 20), 0);
+        assert_eq!(
+            sticky_index(B, GAP, &[], &[179, 75], 1400, 258, None, 20),
+            0
+        );
+        assert_eq!(
+            sticky_index(B, GAP, &[], &[179, 75], 1400, 258, Some(5), 20),
+            0
+        );
     }
 
     #[test]
@@ -827,16 +1003,32 @@ mod tests {
 
     #[test]
     fn dragged_left_past_everyone_goes_last() {
-        assert_eq!(ins(&[258, 75], 1500, 179), 0, "bus still in its slot (1563)");
+        assert_eq!(
+            ins(&[258, 75], 1500, 179),
+            0,
+            "bus still in its slot (1563)"
+        );
         assert_eq!(ins(&[258, 75], 1300, 179), 1);
         assert_eq!(ins(&[258, 75], 1100, 179), 2);
     }
 
     // measured: bus 179 (compact 52), media 258 (compact 112, any width between), weather 88
     // (compact 61); stack order bus, media, weather from the tray
-    const BUS: Size = Size { full: 179, min: 52, stretch: false };
-    const MEDIA: Size = Size { full: 258, min: 112, stretch: true };
-    const WEATHER: Size = Size { full: 88, min: 61, stretch: false };
+    const BUS: Size = Size {
+        full: 179,
+        min: 52,
+        stretch: false,
+    };
+    const MEDIA: Size = Size {
+        full: 258,
+        min: 112,
+        stretch: true,
+    };
+    const WEATHER: Size = Size {
+        full: 88,
+        min: 61,
+        stretch: false,
+    };
     const ALL: [Size; 3] = [BUS, MEDIA, WEATHER];
 
     fn fits(edge: i32) -> Vec<Fit> {
@@ -861,17 +1053,32 @@ mod tests {
     #[test]
     fn then_the_others_go_compact_farthest_first_and_media_takes_the_rest() {
         // media compact starts at 1357; weather compact gives 27 more (1384), bus 127 (1511)
-        assert_eq!(fits(1384), vec![Fit::Full, Fit::Shrunk(112), Fit::Shrunk(61)]);
+        assert_eq!(
+            fits(1384),
+            vec![Fit::Full, Fit::Shrunk(112), Fit::Shrunk(61)]
+        );
         // weather compact leaves 14 px to spare: media gets them back
-        assert_eq!(fits(1370), vec![Fit::Full, Fit::Shrunk(126), Fit::Shrunk(61)]);
-        assert_eq!(fits(1400), vec![Fit::Shrunk(52), Fit::Shrunk(223), Fit::Shrunk(61)]);
-        assert_eq!(fits(1511), vec![Fit::Shrunk(52), Fit::Shrunk(112), Fit::Shrunk(61)]);
+        assert_eq!(
+            fits(1370),
+            vec![Fit::Full, Fit::Shrunk(126), Fit::Shrunk(61)]
+        );
+        assert_eq!(
+            fits(1400),
+            vec![Fit::Shrunk(52), Fit::Shrunk(223), Fit::Shrunk(61)]
+        );
+        assert_eq!(
+            fits(1511),
+            vec![Fit::Shrunk(52), Fit::Shrunk(112), Fit::Shrunk(61)]
+        );
     }
 
     #[test]
     fn then_the_farthest_hides_and_the_rest_start_from_full() {
         // all compact start at 1511: past that weather hides, and bus and media fit again
-        assert_eq!(fits(1520), vec![Fit::Shrunk(52), Fit::Shrunk(167), Fit::Hidden]);
+        assert_eq!(
+            fits(1520),
+            vec![Fit::Shrunk(52), Fit::Shrunk(167), Fit::Hidden]
+        );
         // only bus, compact (1690); then nothing
         assert_eq!(fits(1690), vec![Fit::Shrunk(52), Fit::Hidden, Fit::Hidden]);
         assert_eq!(fits(1700), vec![Fit::Hidden; 3]);
@@ -880,7 +1087,10 @@ mod tests {
     #[test]
     fn a_member_in_compact_mode_already_cant_shrink() {
         let sizes = [Size::fixed(52), MEDIA, WEATHER];
-        assert_eq!(fit(B, GAP, &[], Some(1520), &sizes), vec![Fit::Full, Fit::Shrunk(167), Fit::Hidden]);
+        assert_eq!(
+            fit(B, GAP, &[], Some(1520), &sizes),
+            vec![Fit::Full, Fit::Shrunk(167), Fit::Hidden]
+        );
     }
 
     #[test]
@@ -899,7 +1109,10 @@ mod tests {
         // bus against the tray switches to compact (179 → 52) and back, weather on its left; at
         // each frame bus is drawn `w` wide and keeps its right edge
         let flush = |w: i32| {
-            let ws = [placed_width(Fit::Full, BUS, Some(w)), placed_width(Fit::Full, WEATHER, None)];
+            let ws = [
+                placed_width(Fit::Full, BUS, Some(w)),
+                placed_width(Fit::Full, WEATHER, None),
+            ];
             let xs = place(B, GAP, &[], &ws);
             assert_eq!(xs[0] + w, B - GAP, "bus keeps its right edge");
             assert_eq!(xs[1] + 88 + GAP, xs[0], "weather flush with bus at {w} px");
@@ -921,7 +1134,12 @@ mod tests {
     #[test]
     fn slots_step_around_obstacles() {
         // another app's window at 1500..1600: the stack goes around it
-        let obstacles = [RECT { left: 1500, top: 0, right: 1600, bottom: 48 }];
+        let obstacles = [RECT {
+            left: 1500,
+            top: 0,
+            right: 1600,
+            bottom: 48,
+        }];
         assert_eq!(place(B, GAP, &obstacles, &[100, 75]), vec![1642, 1422]);
         assert_eq!(insert_index(B, GAP, &obstacles, &[100, 75], 1400, 75), 1);
     }

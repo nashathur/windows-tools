@@ -15,7 +15,8 @@ fn concurrent_updates_lose_nothing() {
         .map(|_| {
             std::thread::spawn(|| {
                 for _ in 0..25 {
-                    settings::update(|root| root["n"] = json!(root["n"].as_i64().unwrap() + 1)).unwrap();
+                    settings::update(|root| root["n"] = json!(root["n"].as_i64().unwrap() + 1))
+                        .unwrap();
                 }
             })
         })
@@ -26,7 +27,11 @@ fn concurrent_updates_lose_nothing() {
 
     assert_eq!(settings::read().unwrap()["n"], json!(200));
     // no temp files left behind
-    let left: Vec<_> = std::fs::read_dir(settings::dir()).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name()).collect();
+    let left: Vec<_> = std::fs::read_dir(settings::dir())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name())
+        .collect();
     assert_eq!(left, vec![std::ffi::OsString::from("settings.json")]);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -25,25 +25,29 @@ A widget is a `Spec` + a `Content` given to `block::run` (see "Building a new wi
 | `window` | `raise`: bring another app's window to the front; `exe_path`, `is_exe`. |
 | `dock`, `icons`, `panel`, `menu_panel`, `strip`, `startup`, `crash`, `watchdog`, `ctl` | Block's internals; stacking and fit, panel behaviour, strip motion, startup list, crash handling and dockctl command parsing. `watchdog` stores launcher give-up records. |
 
-The settings app is not a library module: `src\bin\taskbar-dock-settings.rs` with its own
-modules in `src\settings_app\` (`model.rs` pages and rows, `layout.rs` rects and hit testing,
-`keys.rs`, `win.rs` window, `paint.rs`, `remote.rs` answers `dockctl settings`, `work.rs`
-writer and worker threads).
+The settings app is its own crate in `settings-app\`, with a path dependency on this library. Its
+WinUI window, page and row model, `dockctl settings` protocol, and worker threads live there.
 
 ## Settings app
 
 `taskbar-dock-settings.exe` is the control panel for registered widgets and shared Dock settings.
-It has a Widgets overview, a page for each widget, a Dock page, and a Developer tab. It applies
-validated edits immediately and follows settings-file changes while open.
+It has a Widgets overview, a page for each widget, a Dock page, and a Developer page. Developer
+contains advanced settings and details for each registered widget, registry management, masked raw
+settings, and copyable console commands. It applies validated edits immediately and follows
+settings-file changes while open.
 
-Build and install it from this crate:
+Build and install it from `taskbar-dock\settings-app\`:
 
 ```powershell
-cargo build --release --bin taskbar-dock-settings
-Copy-Item target\release\taskbar-dock-settings.exe .
+cargo build --release
+Copy-Item target\release\taskbar-dock-settings.exe ..\taskbar-dock-settings.exe
 ```
 
-Block's Edit settings… runs the installed copy in this folder.
+Block's Edit settings runs `taskbar-dock\taskbar-dock-settings.exe`. On Windows, the app uses
+the Windows-provided `Microsoft.WindowsAppRuntime.CBS.2` when available and copies its
+`resources.pri` beside the executable on first start. Otherwise it uses the installed
+`Microsoft.WindowsAppRuntime.2` Store package; if neither runtime is available, it shows a message
+with Microsoft's download link and exits.
 
 Launch with no arguments for Widgets, `--widget <name>` for a widget page, `--dock` for Dock,
 `--developer` for Developer, or `--register <exe>` to register a widget without opening a window.
@@ -52,11 +56,11 @@ Launch with no arguments for Widgets, `--widget <name>` for a widget page, `--do
 
 | Command | Does |
 |---|---|
-| `state` | Read the current page, rows, window and app status. |
+| `state` | Read page, rows, window and app status. Row kinds are `switch`, `dropdown`, `slider`, `numberbox`, `text`, `color`, `secret`, and `auto`. Developer `cards` contains `advanced`, `details`, `registered`, `raw`, and `commands`; `focused` is null. |
 | `page <widgets\|dock\|developer\|name>` | Navigate to a page. |
 | `row <id> set <text>`, `row <id> reset`, `row <id> toggle` | Edit or reset a setting row. |
-| `click <id>` | Activate a page action such as `start:<name>`, `quit:<name>`, `restart:<name>`, `remove:<name>`, `copy:<n>` (Developer's console line n, from 0) or `notepad`. |
-| `key <name>`, `type <text>` | Send supported keyboard input. |
+| `click <id>` | Activate actions such as `open:<name>`, `restore:<section>:<group>`, `start:<name>`, `quit:<name>`, `restart:<name>`, `remove:<name>`, `copy:<n>`, `refresh-log:<name>`, or `notepad`. |
+| `key <name>`, `type <text>` | Bring the app to the front, then send supported keyboard input. |
 | `quit` | Close the settings app. |
 
 After installing the app and `dockctl.exe`, run `scripts\settings_smoke.ps1` for the read-only

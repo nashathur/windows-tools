@@ -228,17 +228,28 @@ pub fn read_developer(
         let details = entries
             .iter()
             .map(|item| {
+                if let Err(reason) = &item.describe {
+                    return serde_json::json!({
+                        "name": item.entry.name,
+                        "exe": item.entry.exe.to_string_lossy(),
+                        "error": reason,
+                        "build": modified_unix(&item.entry.exe).map(format_local_time).unwrap_or_else(|| "unknown".into()),
+                        "pid": statuses.iter().find(|status| status.name == item.entry.name).and_then(|status| status.pid).map_or_else(|| "not running".into(), |pid| pid.to_string()),
+                        "log_lines": [reason],
+                    });
+                }
                 let status = statuses
                     .iter()
                     .find(|status| status.name == item.entry.name);
                 let build = status
                     .and_then(|status| status.build)
                     .or_else(|| modified_unix(&item.entry.exe));
-                let log_lines = item
+                let log_path = item
                     .describe
                     .as_ref()
                     .ok()
-                    .and_then(|desc| desc.log_file.as_ref())
+                    .and_then(|desc| desc.log_file.as_ref());
+                let log_lines = log_path
                     .and_then(|path| std::fs::read_to_string(path).ok())
                     .map(|text| {
                         let mut lines = text.lines().map(str::to_string).collect::<Vec<_>>();
@@ -248,16 +259,17 @@ pub fn read_developer(
                         lines
                             .into_iter()
                             .rev()
-                            .take(super::layout::LOG_LINES)
+                            .take(20)
                             .collect::<Vec<_>>()
                             .into_iter()
                             .rev()
                             .collect()
                     })
-                    .unwrap_or_else(|| vec!["no log".into()]);
+                    .unwrap_or_else(|| vec![if log_path.is_none() { "no log file".into() } else { "log unavailable".into() }]);
                 serde_json::json!({
                     "name": item.entry.name,
                     "exe": item.entry.exe.to_string_lossy(),
+                    "error": serde_json::Value::Null,
                     "build": build
                         .map(format_local_time)
                         .unwrap_or_else(|| "unknown".into()),

@@ -17,8 +17,14 @@ use taskbar_dock::crash::{is_crash, Restarts};
 use taskbar_dock::{settings, startup, watchdog};
 
 fn log(line: &str) {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(settings::dir().join("startup.log")) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(settings::dir().join("startup.log"))
+    {
         let _ = writeln!(f, "{now} {line}");
     }
 }
@@ -55,11 +61,24 @@ fn main() {
             continue;
         }
         if let Some(child) = spawn(&e.name, &e.exe) {
-            watched.push(Watched { name: e.name, exe: e.exe, child: Some(child), restart_at: None, restarts: Restarts::default() });
+            watched.push(Watched {
+                name: e.name,
+                exe: e.exe,
+                child: Some(child),
+                restart_at: None,
+                restarts: Restarts::default(),
+            });
         }
     }
     let names: Vec<&str> = watched.iter().map(|w| w.name.as_str()).collect();
-    log(&format!("started {}", if names.is_empty() { "nothing".to_string() } else { names.join(", ") }));
+    log(&format!(
+        "started {}",
+        if names.is_empty() {
+            "nothing".to_string()
+        } else {
+            names.join(", ")
+        }
+    ));
 
     while !watched.is_empty() {
         std::thread::sleep(Duration::from_secs(1));

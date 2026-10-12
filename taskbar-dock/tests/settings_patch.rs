@@ -27,21 +27,40 @@ fn settings_patch_contract() {
     assert_eq!(stale_copy["label"], json!("old"));
     settings::set_key("bus", "label", json!("new")).unwrap();
     settings::fill_missing("bus", &json!({"label": "default", "dest": ""})).unwrap();
-    assert_eq!(settings::read().unwrap()["bus"], json!({"label": "new", "dest": ""}));
+    assert_eq!(
+        settings::read().unwrap()["bus"],
+        json!({"label": "new", "dest": ""})
+    );
 
     // A complete section is a true no-op, including the file contents and timestamp.
     let before = std::fs::read(settings::path()).unwrap();
-    let mtime = std::fs::metadata(settings::path()).unwrap().modified().unwrap();
+    let mtime = std::fs::metadata(settings::path())
+        .unwrap()
+        .modified()
+        .unwrap();
     settings::fill_missing("bus", &json!({"label": "ignored", "dest": "ignored"})).unwrap();
     assert_eq!(std::fs::read(settings::path()).unwrap(), before);
-    assert_eq!(std::fs::metadata(settings::path()).unwrap().modified().unwrap(), mtime);
+    assert_eq!(
+        std::fs::metadata(settings::path())
+            .unwrap()
+            .modified()
+            .unwrap(),
+        mtime
+    );
 
     std::fs::remove_file(settings::path()).unwrap();
     assert_eq!(settings::read().unwrap(), json!({}));
     std::fs::write(settings::path(), "{").unwrap();
-    assert_eq!(settings::read().unwrap_err().kind(), io::ErrorKind::InvalidData);
+    assert_eq!(
+        settings::read().unwrap_err().kind(),
+        io::ErrorKind::InvalidData
+    );
     settings::write(&json!({"safe": true})).unwrap();
-    let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(settings::path()).unwrap();
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(settings::path())
+        .unwrap();
     assert!(settings::read().is_err());
     drop(held);
 

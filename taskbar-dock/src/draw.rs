@@ -8,7 +8,12 @@ use crate::style::{Look, CLOCK_BASELINES, TRAY_ICON};
 
 /// Text drawn white on black (alpha 0) becomes premultiplied colour, its brightness the
 /// coverage. `color(y)` picks the colour per row (e.g. a dimmer first line).
-pub fn text_to_color(buf: &mut [u32], width: i32, height: i32, color: impl Fn(i32) -> (u32, u32, u32)) {
+pub fn text_to_color(
+    buf: &mut [u32],
+    width: i32,
+    height: i32,
+    color: impl Fn(i32) -> (u32, u32, u32),
+) {
     for y in 0..height {
         let c = color(y);
         for x in 0..width {
@@ -65,26 +70,43 @@ pub fn shape_cover(fx: f32, fy: f32, (l, t, r, b): (f32, f32, f32, f32), radius:
         }
         (0.5 - (un + vn - 1.0) / g).clamp(0.0, 1.0)
     } else {
-        let (cx, cy) = (fx.clamp(l + radius, r - radius), fy.clamp(t + radius, b - radius));
+        let (cx, cy) = (
+            fx.clamp(l + radius, r - radius),
+            fy.clamp(t + radius, b - radius),
+        );
         (radius - ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() + 0.5).clamp(0.0, 1.0)
     }
 }
 
 /// Fills a rounded rectangle (fractional px) with `c` at `alpha` (0..1), anti-aliased, over the
 /// opaque pixels already there (buffer rows of `width` px).
-pub fn fill_round(buf: &mut [u32], width: i32, (l, t, r, b): (f32, f32, f32, f32), radius: f32, c: (u32, u32, u32), alpha: f32) {
+pub fn fill_round(
+    buf: &mut [u32],
+    width: i32,
+    (l, t, r, b): (f32, f32, f32, f32),
+    radius: f32,
+    c: (u32, u32, u32),
+    alpha: f32,
+) {
     let height = buf.len() as i32 / width.max(1);
     for y in (t.floor() as i32).max(0)..(b.ceil() as i32).min(height) {
         for x in (l.floor() as i32).max(0)..(r.ceil() as i32).min(width) {
             let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
             // coverage: inside the rounded part, and within the straight edges
-            let edge = (fx - l + 0.5).min(r - fx + 0.5).min(fy - t + 0.5).min(b - fy + 0.5).clamp(0.0, 1.0);
+            let edge = (fx - l + 0.5)
+                .min(r - fx + 0.5)
+                .min(fy - t + 0.5)
+                .min(b - fy + 0.5)
+                .clamp(0.0, 1.0);
             let a = (shape_cover(fx, fy, (l, t, r, b), radius) * edge * alpha).clamp(0.0, 1.0);
             if a <= 0.0 {
                 continue;
             }
             let p = &mut buf[(y * width + x) as usize];
-            let ch = |s: u32, v: u32| ((((*p >> s) & 0xff) as f32 * (1.0 - a) + v as f32 * a).round() as u32).min(255) << s;
+            let ch = |s: u32, v: u32| {
+                ((((*p >> s) & 0xff) as f32 * (1.0 - a) + v as f32 * a).round() as u32).min(255)
+                    << s
+            };
             *p = 0xff00_0000 | ch(16, c.0) | ch(8, c.1) | ch(0, c.2);
         }
     }
@@ -125,30 +147,97 @@ pub fn button_box(col: (i32, i32), height: i32, scale: f32) -> (i32, i32, i32, i
 }
 
 /// Draws the shared Windows 11 style text field into an opaque panel buffer.
-pub fn text_box(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), look: &Look, scale: f32, focused: bool) {
+pub fn text_box(
+    buf: &mut [u32],
+    width: i32,
+    rect: (i32, i32, i32, i32),
+    look: &Look,
+    scale: f32,
+    focused: bool,
+) {
     let t = crate::theme::Theme::new(look);
     let radius = (look.control_radius * scale).round();
-    fill_round(buf, width, (rect.0 as f32, rect.1 as f32, rect.2 as f32, rect.3 as f32), radius, t.color.input.tuple(), 1.0);
+    fill_round(
+        buf,
+        width,
+        (rect.0 as f32, rect.1 as f32, rect.2 as f32, rect.3 as f32),
+        radius,
+        t.color.input.tuple(),
+        1.0,
+    );
     let line_h = (if focused { 2.0 } else { 1.0 } * scale).round().max(1.0);
-    let c = if focused { t.status.accent } else { t.color.input_border };
-    fill_round(buf, width, (rect.0 as f32, rect.3 as f32 - line_h, rect.2 as f32, rect.3 as f32), radius.min(line_h), c.tuple(), 1.0);
+    let c = if focused {
+        t.status.accent
+    } else {
+        t.color.input_border
+    };
+    fill_round(
+        buf,
+        width,
+        (
+            rect.0 as f32,
+            rect.3 as f32 - line_h,
+            rect.2 as f32,
+            rect.3 as f32,
+        ),
+        radius.min(line_h),
+        c.tuple(),
+        1.0,
+    );
 }
 
 /// Draws a highlighted scrolling-list row using the shared control radius.
-pub fn list_row(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), look: &Look, scale: f32, highlighted: bool) {
+pub fn list_row(
+    buf: &mut [u32],
+    width: i32,
+    rect: (i32, i32, i32, i32),
+    look: &Look,
+    scale: f32,
+    highlighted: bool,
+) {
     if highlighted {
         let t = crate::theme::Theme::new(look);
-        fill_round(buf, width, (rect.0 as f32, rect.1 as f32, rect.2 as f32, rect.3 as f32),
-            (look.control_radius * scale).round(), t.color.hover.tuple(), 1.0);
+        fill_round(
+            buf,
+            width,
+            (rect.0 as f32, rect.1 as f32, rect.2 as f32, rect.3 as f32),
+            (look.control_radius * scale).round(),
+            t.color.hover.tuple(),
+            1.0,
+        );
     }
 }
 
 /// Draws a shared plain or accent button surface.
-pub fn button(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), look: &Look, scale: f32, accent: bool, hovered: bool) {
+pub fn button(
+    buf: &mut [u32],
+    width: i32,
+    rect: (i32, i32, i32, i32),
+    look: &Look,
+    scale: f32,
+    accent: bool,
+    hovered: bool,
+) {
     let t = crate::theme::Theme::new(look);
-    let c = if accent { if hovered { t.status.accent_hover } else { t.status.accent } } else if hovered { t.color.button_hover } else { t.color.button };
-    fill_round(buf, width, (rect.0 as f32, rect.1 as f32, rect.2 as f32, rect.3 as f32),
-        (look.control_radius * scale).round(), c.tuple(), 1.0);
+    let c = if accent {
+        if hovered {
+            t.status.accent_hover
+        } else {
+            t.status.accent
+        }
+    } else if hovered {
+        t.color.button_hover
+    } else {
+        t.color.button
+    };
+    fill_round(
+        buf,
+        width,
+        (rect.0 as f32, rect.1 as f32, rect.2 as f32, rect.3 as f32),
+        (look.control_radius * scale).round(),
+        c.tuple(),
+        1.0,
+    );
 }
 
 /// The box (left, top, right, bottom) of a `size` px square at x `left`, centred vertically on
@@ -177,7 +266,12 @@ pub fn grow_pixels(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), k: f
         return;
     }
     let height = buf.len() as i32 / width;
-    let (l, t, r, b) = (rect.0.max(0), rect.1.max(0), rect.2.min(width), rect.3.min(height));
+    let (l, t, r, b) = (
+        rect.0.max(0),
+        rect.1.max(0),
+        rect.2.min(width),
+        rect.3.min(height),
+    );
     let (w, h) = (r - l, b - t);
     if w <= 0 || h <= 0 {
         return;
@@ -190,8 +284,17 @@ pub fn grow_pixels(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), k: f
             src[(y * w + x) as usize] = std::mem::take(p);
         }
     }
-    let at = |x: i32, y: i32| if x < 0 || y < 0 || x >= w || y >= h { 0 } else { src[(y * w + x) as usize] };
-    let (cx, cy) = ((rect.0 + rect.2) as f32 / 2.0, (rect.1 + rect.3) as f32 / 2.0);
+    let at = |x: i32, y: i32| {
+        if x < 0 || y < 0 || x >= w || y >= h {
+            0
+        } else {
+            src[(y * w + x) as usize]
+        }
+    };
+    let (cx, cy) = (
+        (rect.0 + rect.2) as f32 / 2.0,
+        (rect.1 + rect.3) as f32 / 2.0,
+    );
     // (1 px wider than the rounded grown box: the scaled edge is fractional)
     let (gl, gt, gr, gb) = grow_box(rect, k);
     for y in (gt - 1).max(0)..(gb + 1).min(height) {
@@ -201,9 +304,24 @@ pub fn grow_pixels(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), k: f
             let sy = (y as f32 + 0.5 - cy) / k + cy - t as f32 - 0.5;
             let (x0, y0) = (sx.floor() as i32, sy.floor() as i32);
             let (fx, fy) = (sx - x0 as f32, sy - y0 as f32);
-            let ws = [(1.0 - fx) * (1.0 - fy), fx * (1.0 - fy), (1.0 - fx) * fy, fx * fy];
-            let ps = [at(x0, y0), at(x0 + 1, y0), at(x0, y0 + 1), at(x0 + 1, y0 + 1)];
-            let ch = |s: u32| ps.iter().zip(ws).map(|(p, w)| ((p >> s) & 0xff) as f32 * w).sum::<f32>();
+            let ws = [
+                (1.0 - fx) * (1.0 - fy),
+                fx * (1.0 - fy),
+                (1.0 - fx) * fy,
+                fx * fy,
+            ];
+            let ps = [
+                at(x0, y0),
+                at(x0 + 1, y0),
+                at(x0, y0 + 1),
+                at(x0 + 1, y0 + 1),
+            ];
+            let ch = |s: u32| {
+                ps.iter()
+                    .zip(ws)
+                    .map(|(p, w)| ((p >> s) & 0xff) as f32 * w)
+                    .sum::<f32>()
+            };
             let sa = ch(24);
             if sa <= 0.0 {
                 continue;
@@ -211,7 +329,8 @@ pub fn grow_pixels(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), k: f
             // over what is there (premultiplied "source over")
             let d = &mut buf[(y * width + x) as usize];
             let inv = 1.0 - sa / 255.0;
-            let mix = |s: u32| ((ch(s) + ((*d >> s) & 0xff) as f32 * inv).round() as u32).min(255) << s;
+            let mix =
+                |s: u32| ((ch(s) + ((*d >> s) & 0xff) as f32 * inv).round() as u32).min(255) << s;
             *d = mix(24) | mix(16) | mix(8) | mix(0);
         }
     }
@@ -226,7 +345,14 @@ pub fn contains((l, t, r, b): (i32, i32, i32, i32), x: i32, y: i32) -> bool {
 /// stay on top), inside `rect` = (left, top, right, bottom) with `radius` corners, anti-aliased
 /// like the hover highlight. For brand tints, backdrops and highlights in a widget's own colour
 /// (the highlight itself is [`background_rect`]).
-pub fn tint_box(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), (r, g, b): (u32, u32, u32), alpha: f32, radius: f32) {
+pub fn tint_box(
+    buf: &mut [u32],
+    width: i32,
+    rect: (i32, i32, i32, i32),
+    (r, g, b): (u32, u32, u32),
+    alpha: f32,
+    radius: f32,
+) {
     let height = buf.len() as i32 / width.max(1);
     let shape = (rect.0 as f32, rect.1 as f32, rect.2 as f32, rect.3 as f32);
     for y in rect.1.max(0)..rect.3.min(height) {
@@ -239,7 +365,9 @@ pub fn tint_box(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), (r, g, 
             let p = &mut buf[(y * width + x) as usize];
             let a = (*p >> 24) as f32 / 255.0;
             let under = ta * (1.0 - a); // only where the strip's own pixels don't cover
-            let ch = |s: u32, c: u32| ((((*p >> s) & 0xff) as f32 + c as f32 * under).round() as u32).min(255) << s;
+            let ch = |s: u32, c: u32| {
+                ((((*p >> s) & 0xff) as f32 + c as f32 * under).round() as u32).min(255) << s
+            };
             let na = ((a + under) * 255.0).round().min(255.0) as u32;
             *p = na << 24 | ch(16, r) | ch(8, g) | ch(0, b);
         }
@@ -250,7 +378,14 @@ pub fn tint_box(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), (r, g, 
 /// clickable), with a rounded highlight like the taskbar's buttons (white ~10% on a dark taskbar,
 /// black ~6% on a light one) over the rectangle `hover` = (left, top, right, bottom); None = no
 /// highlight. The whole strip uses (0, inset, width, height - inset); a button uses [`button_box`].
-pub fn background_rect(buf: &mut [u32], width: i32, height: i32, hover: Option<(i32, i32, i32, i32)>, light: bool, radius: f32) {
+pub fn background_rect(
+    buf: &mut [u32],
+    width: i32,
+    height: i32,
+    hover: Option<(i32, i32, i32, i32)>,
+    light: bool,
+    radius: f32,
+) {
     let (bg_c, bg_a): (u32, u32) = match (hover.is_some(), light) {
         (true, false) => (255, 0x1a),
         (true, true) => (0, 0x10),
@@ -262,8 +397,12 @@ pub fn background_rect(buf: &mut [u32], width: i32, height: i32, hover: Option<(
     for y in 0..height {
         for x in 0..width {
             let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
-            let (cx, cy) = (fx.clamp(x0 + radius, x1 - radius), fy.clamp(y0 + radius, y1 - radius));
-            let inside = fy >= y0 && fy <= y1 && (fx - cx).powi(2) + (fy - cy).powi(2) <= radius * radius;
+            let (cx, cy) = (
+                fx.clamp(x0 + radius, x1 - radius),
+                fy.clamp(y0 + radius, y1 - radius),
+            );
+            let inside =
+                fy >= y0 && fy <= y1 && (fx - cx).powi(2) + (fy - cy).powi(2) <= radius * radius;
             let ba = if inside { bg_a } else { 1 };
             let bc = bg_c * ba / 255;
             let p = &mut buf[(y * width + x) as usize];
@@ -288,7 +427,10 @@ pub fn two_line_tops(height: i32, scale: f32, ascent1: i32, ascent2: i32) -> (i3
 
 /// The hover highlight's corner radius and inset (px) for a look at `scale`.
 pub fn highlight_shape(look: &Look, scale: f32) -> (f32, i32) {
-    ((look.control_radius * scale).round(), (4.0 * scale).round() as i32)
+    (
+        (look.control_radius * scale).round(),
+        (4.0 * scale).round() as i32,
+    )
 }
 
 /// The box (top y, size) for a widget's icon or badge, so it lines up with the tray icons:
@@ -323,17 +465,34 @@ fn cover(p: u32) -> u32 {
 /// large, white on black (e.g. an emoji or symbol-font glyph at ~64 px). Its visible part is
 /// scaled to fit the `size` px square at (`x`, `top`) (from [`icon_box`]), centred, and smoothly
 /// downsampled into `dst`, also white on black, before [`text_to_color`].
-pub fn fit_icon(dst: &mut [u32], dst_w: i32, x: i32, top: i32, size: i32, src: &[u32], src_w: i32, src_h: i32) {
-    let Some((l, t, r, b)) = ink_bounds(src, src_w, src_h) else { return };
+pub fn fit_icon(
+    dst: &mut [u32],
+    dst_w: i32,
+    x: i32,
+    top: i32,
+    size: i32,
+    src: &[u32],
+    src_w: i32,
+    src_h: i32,
+) {
+    let Some((l, t, r, b)) = ink_bounds(src, src_w, src_h) else {
+        return;
+    };
     let (iw, ih) = ((r - l) as f32, (b - t) as f32);
     let k = iw.max(ih) / size as f32; // source px per destination px
-    // centred in the box
-    let (ox, oy) = (x as f32 + (size as f32 - iw / k) / 2.0, top as f32 + (size as f32 - ih / k) / 2.0);
+                                      // centred in the box
+    let (ox, oy) = (
+        x as f32 + (size as f32 - iw / k) / 2.0,
+        top as f32 + (size as f32 - ih / k) / 2.0,
+    );
     let dst_h = dst.len() as i32 / dst_w.max(1);
     for dy in top.max(0)..(top + size).min(dst_h) {
         for dx in x.max(0)..(x + size).min(dst_w) {
             // the destination pixel's area in source coordinates; average the coverage there
-            let (sx0, sy0) = (l as f32 + (dx as f32 - ox) * k, t as f32 + (dy as f32 - oy) * k);
+            let (sx0, sy0) = (
+                l as f32 + (dx as f32 - ox) * k,
+                t as f32 + (dy as f32 - oy) * k,
+            );
             let (sx1, sy1) = (sx0 + k, sy0 + k);
             let (mut sum, mut area) = (0.0f32, 0.0f32);
             let mut sy = sy0.floor() as i32;
@@ -375,9 +534,15 @@ fn outline_position(px: f32, py: f32, hw: f32, hh: f32, r: f32) -> (f32, f32) {
     let total = 4.0 * (ex + ey + arc);
     // starts of the segments, clockwise: top right half, corner, right, corner, bottom,
     // corner, left, corner, top left half
-    let (tr, right, br, bottom, bl, left, tl) =
-        (ex, ex + arc, ex + arc + 2.0 * ey, ex + 2.0 * arc + 2.0 * ey, 3.0 * ex + 2.0 * arc + 2.0 * ey,
-         3.0 * ex + 3.0 * arc + 2.0 * ey, 3.0 * ex + 3.0 * arc + 4.0 * ey);
+    let (tr, right, br, bottom, bl, left, tl) = (
+        ex,
+        ex + arc,
+        ex + arc + 2.0 * ey,
+        ex + 2.0 * arc + 2.0 * ey,
+        3.0 * ex + 2.0 * arc + 2.0 * ey,
+        3.0 * ex + 3.0 * arc + 2.0 * ey,
+        3.0 * ex + 3.0 * arc + 4.0 * ey,
+    );
     let s = match (px > ex, px < -ex, py > ey, py < -ey) {
         (true, _, _, true) => tr + (px - ex).atan2(-(py + ey)) * r,
         (true, _, true, _) => br + (py - ey).atan2(px - ex) * r,
@@ -388,7 +553,11 @@ fn outline_position(px: f32, py: f32, hw: f32, hh: f32, r: f32) -> (f32, f32) {
             let (dx, dy) = (hw - px.abs(), hh - py.abs());
             if dy <= dx {
                 if py < 0.0 {
-                    if px >= 0.0 { px } else { total + px }
+                    if px >= 0.0 {
+                        px
+                    } else {
+                        total + px
+                    }
                 } else {
                     bottom + (ex - px)
                 }
@@ -407,8 +576,16 @@ fn outline_position(px: f32, py: f32, hw: f32, hh: f32, r: f32) -> (f32, f32) {
 /// centre clockwise, the first `fraction` (0..1) of it is `fill`, the rest `track`, each as
 /// (r, g, b, alpha) with straight colour. Anti-aliased and painted over the premultiplied buffer
 /// (after [`text_to_color`]).
-pub fn progress_ring(buf: &mut [u32], width: i32, rect: (f32, f32, f32, f32), thickness: f32, radius: f32,
-                     fraction: f32, fill: (u32, u32, u32, u32), track: (u32, u32, u32, u32)) {
+pub fn progress_ring(
+    buf: &mut [u32],
+    width: i32,
+    rect: (f32, f32, f32, f32),
+    thickness: f32,
+    radius: f32,
+    fraction: f32,
+    fill: (u32, u32, u32, u32),
+    track: (u32, u32, u32, u32),
+) {
     let (l, t, r, b) = rect;
     let height = buf.len() as i32 / width.max(1);
     let (cx, cy) = ((l + r) / 2.0, (t + b) / 2.0);
@@ -416,26 +593,42 @@ pub fn progress_ring(buf: &mut [u32], width: i32, rect: (f32, f32, f32, f32), th
     let radius = radius.min(hw.min(hh));
     let inner_r = (radius - thickness).max(0.0);
     // the outline along the middle of the ring decides how far round each pixel is
-    let (mw, mh, mr) = (hw - thickness / 2.0, hh - thickness / 2.0, (radius - thickness / 2.0).max(0.0));
+    let (mw, mh, mr) = (
+        hw - thickness / 2.0,
+        hh - thickness / 2.0,
+        (radius - thickness / 2.0).max(0.0),
+    );
     let fraction = fraction.clamp(0.0, 1.0);
     for y in (t.floor() as i32).max(0)..(b.ceil() as i32).min(height) {
         for x in (l.floor() as i32).max(0)..(r.ceil() as i32).min(width) {
             let (px, py) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
             let outer = (0.5 - rounded_rect_distance(px, py, hw, hh, radius)).clamp(0.0, 1.0);
-            let inner = (0.5 + rounded_rect_distance(px, py, hw - thickness, hh - thickness, inner_r)).clamp(0.0, 1.0);
+            let inner = (0.5
+                + rounded_rect_distance(px, py, hw - thickness, hh - thickness, inner_r))
+            .clamp(0.0, 1.0);
             let cover = outer * inner;
             if cover <= 0.0 {
                 continue;
             }
             let (s, total) = outline_position(px, py, mw, mh, mr);
             // soft edge (about 1 px) where the filled part ends
-            let f = if fraction >= 1.0 { 1.0 } else { (fraction * total - s + 0.5).clamp(0.0, 1.0) };
+            let f = if fraction >= 1.0 {
+                1.0
+            } else {
+                (fraction * total - s + 0.5).clamp(0.0, 1.0)
+            };
             let mix = |a: u32, b: u32| a as f32 * f + b as f32 * (1.0 - f);
             let alpha = mix(fill.3, track.3) / 255.0 * cover;
-            let (cr, cg, cb) = (mix(fill.0, track.0), mix(fill.1, track.1), mix(fill.2, track.2));
+            let (cr, cg, cb) = (
+                mix(fill.0, track.0),
+                mix(fill.1, track.1),
+                mix(fill.2, track.2),
+            );
             let p = &mut buf[(y * width + x) as usize];
             let keep = 1.0 - alpha;
-            let ch = |c: f32, shift: u32| ((c * alpha + ((*p >> shift) & 0xff) as f32 * keep).round() as u32).min(255);
+            let ch = |c: f32, shift: u32| {
+                ((c * alpha + ((*p >> shift) & 0xff) as f32 * keep).round() as u32).min(255)
+            };
             *p = ch(255.0, 24) << 24 | ch(cr, 16) << 16 | ch(cg, 8) << 8 | ch(cb, 0);
         }
     }
@@ -452,7 +645,16 @@ mod tests {
         let red = (255, 0, 0, 255);
         let ring = |fraction: f32| {
             let mut buf = vec![0u32; (w * h) as usize];
-            progress_ring(&mut buf, w, (0.0, 0.0, w as f32, h as f32), 2.0, 6.0, fraction, white, red);
+            progress_ring(
+                &mut buf,
+                w,
+                (0.0, 0.0, w as f32, h as f32),
+                2.0,
+                6.0,
+                fraction,
+                white,
+                red,
+            );
             buf
         };
         let px = |buf: &[u32], x: i32, y: i32| buf[(y * w + x) as usize];
@@ -505,7 +707,10 @@ mod tests {
         assert_eq!(grow_box(ring, 1.0), ring);
         let g = grow_box(ring, 1.14); // 25 px
         assert_eq!((g.2 - g.0, g.3 - g.1), (25, 25));
-        assert!((g.0 + g.2 - (ring.0 + ring.2)).abs() <= 1 && (g.1 + g.3 - (ring.1 + ring.3)).abs() <= 1);
+        assert!(
+            (g.0 + g.2 - (ring.0 + ring.2)).abs() <= 1
+                && (g.1 + g.3 - (ring.1 + ring.3)).abs() <= 1
+        );
         let s = grow_box(ring, 0.92); // 20 px
         assert_eq!((s.2 - s.0, s.3 - s.1), (20, 20));
     }
@@ -541,7 +746,12 @@ mod tests {
         let b = centered_box(4, 22, 48);
         assert_eq!(b, (4, 13, 26, 35));
         assert!(contains(b, 4, 13) && contains(b, 25, 34));
-        assert!(!contains(b, 3, 20) && !contains(b, 26, 20) && !contains(b, 10, 12) && !contains(b, 10, 35));
+        assert!(
+            !contains(b, 3, 20)
+                && !contains(b, 26, 20)
+                && !contains(b, 10, 12)
+                && !contains(b, 10, 35)
+        );
     }
 
     #[test]
@@ -599,16 +809,26 @@ mod tests {
         assert_eq!(shape_cover(48.5, 48.5, r, radius), 1.0); // middle
         assert_eq!(shape_cover(48.5, 0.5, r, radius), 1.0); // straight edge, as far in as a pixel centre
         assert_eq!(shape_cover(0.5, 0.5, r, radius), 0.0); // the very corner is cut
-        // along the top row the coverage rises monotonically and is full where the curve ends
-        let row: Vec<f32> = (0..40).map(|x| shape_cover(x as f32 + 0.5, 0.5, r, radius)).collect();
+                                                           // along the top row the coverage rises monotonically and is full where the curve ends
+        let row: Vec<f32> = (0..40)
+            .map(|x| shape_cover(x as f32 + 0.5, 0.5, r, radius))
+            .collect();
         assert!(row.windows(2).all(|w| w[1] >= w[0] - 1e-4));
         assert!(row[18] > 0.99); // reach = 1.5 × radius = 18 px
-        // on the diagonal it cuts about as deep as a circular corner of the same radius
-        let diag = |f: &dyn Fn(f32, f32) -> f32| (0..30).map(|k| k as f32 + 0.5).find(|&k| f(k, k) >= 0.5).unwrap();
+                                 // on the diagonal it cuts about as deep as a circular corner of the same radius
+        let diag = |f: &dyn Fn(f32, f32) -> f32| {
+            (0..30)
+                .map(|k| k as f32 + 0.5)
+                .find(|&k| f(k, k) >= 0.5)
+                .unwrap()
+        };
         let smooth = diag(&|x, y| shape_cover(x, y, r, radius));
         let circle = diag(&|x, y| shape_cover(x, y, r, 8.0)); // radius ≤ SMOOTH_ABOVE: circular arc
         let circle12 = circle * radius / 8.0;
-        assert!((smooth - circle12).abs() <= 1.0, "smooth {smooth} vs circle {circle12}");
+        assert!(
+            (smooth - circle12).abs() <= 1.0,
+            "smooth {smooth} vs circle {circle12}"
+        );
         // symmetric on all four corners
         let a = shape_cover(3.5, 5.5, r, radius);
         assert!((shape_cover(96.0 - 3.5, 5.5, r, radius) - a).abs() < 1e-5);
@@ -620,12 +840,26 @@ mod tests {
     fn fill_round_blends_and_stays_inside() {
         let (w, h) = (20, 20);
         let mut buf = vec![0xff00_0000u32; (w * h) as usize];
-        fill_round(&mut buf, w, (2.0, 2.0, 18.0, 18.0), 4.0, (255, 255, 255), 1.0);
+        fill_round(
+            &mut buf,
+            w,
+            (2.0, 2.0, 18.0, 18.0),
+            4.0,
+            (255, 255, 255),
+            1.0,
+        );
         assert_eq!(buf[(10 * w + 10) as usize], 0xffff_ffff);
         assert_eq!(buf[(0 * w + 0) as usize], 0xff00_0000); // outside
         assert_eq!(buf[(2 * w + 2) as usize], 0xff00_0000); // cut corner
         let mut half = vec![0xff00_0000u32; (w * h) as usize];
-        fill_round(&mut half, w, (2.0, 2.0, 18.0, 18.0), 4.0, (200, 200, 200), 0.5);
+        fill_round(
+            &mut half,
+            w,
+            (2.0, 2.0, 18.0, 18.0),
+            4.0,
+            (200, 200, 200),
+            0.5,
+        );
         assert_eq!(half[(10 * w + 10) as usize] & 0xff, 100);
     }
 

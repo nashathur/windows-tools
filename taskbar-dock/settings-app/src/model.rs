@@ -20,12 +20,12 @@ pub enum Page {
 pub enum Control {
     /// A switch.
     Switch,
-    /// Two or three inline options.
-    Segments,
     /// A popup list.
     Dropdown,
-    /// A numeric range control.
+    /// A numeric slider.
     Slider,
+    /// A bounded numeric editor.
+    NumberBox,
     /// A single-line editor.
     Text,
     /// A text editor with a swatch.
@@ -55,6 +55,8 @@ pub struct Row {
     pub choice_text_mode: bool,
     /// Sequence of the latest queued write.
     pub pending: Option<u64>,
+    /// The text the pending write was made from; a draft typed after it survives the result.
+    pub submitted: Option<String>,
     /// Validation or write error shown on this row.
     pub error: Option<String>,
     /// Whether user interaction is allowed.
@@ -74,6 +76,7 @@ impl Row {
             draft: None,
             choice_text_mode,
             pending: None,
+            submitted: None,
             error: None,
             enabled: true,
         }
@@ -93,8 +96,11 @@ impl Row {
             return false;
         }
         self.pending = None;
-        self.draft = None;
+        let submitted = self.submitted.take();
         if let Some(value) = value {
+            if self.draft == submitted {
+                self.draft = None;
+            }
             self.value = value;
             self.choice_text_mode =
                 control_for_value(&self.setting.kind, &self.value) == Control::Text;
@@ -172,11 +178,19 @@ pub fn widget_rows(
     startup: bool,
 ) -> Vec<Row> {
     let mut rows = Vec::new();
+    let startup_setting =
+        Setting::new("startup", "Start with Windows", Kind::Switch).group("General");
+    rows.push(Row::new(
+        section,
+        startup_setting,
+        Value::Bool(startup),
+        Value::Bool(false),
+    ));
     for (key, label, fallback) in [
         ("show_on_taskbar", "Show on taskbar", true),
         ("compact", "Compact mode", false),
     ] {
-        let setting = Setting::new(key, label, Kind::Switch);
+        let setting = Setting::new(key, label, Kind::Switch).group("General");
         rows.push(Row::new(
             section,
             setting,
@@ -184,13 +198,6 @@ pub fn widget_rows(
             defaults.get(key).cloned().unwrap_or(Value::Bool(fallback)),
         ));
     }
-    let setting = Setting::new("startup", "Start with Windows", Kind::Switch);
-    rows.push(Row::new(
-        section,
-        setting,
-        Value::Bool(startup),
-        Value::Bool(false),
-    ));
     for setting in settings.iter().filter(|setting| {
         !setting.advanced && setting.key != "show_on_taskbar" && setting.key != "compact"
     }) {
@@ -230,10 +237,7 @@ pub fn dock_rows(current: &Value, defaults: &Value) -> Vec<Row> {
 }
 
 /// Builds Developer advanced rows in registry order, preserving each widget's section id.
-pub fn advanced_rows(
-    entries: &[crate::settings_app::work::LoadedEntry],
-    settings: &Value,
-) -> Vec<Row> {
+pub fn advanced_rows(entries: &[crate::work::LoadedEntry], settings: &Value) -> Vec<Row> {
     entries
         .iter()
         .flat_map(|item| {
@@ -282,6 +286,8 @@ pub fn developer_commands() -> Vec<&'static str> {
 pub struct RegisteredWidget {
     /// Registered section name.
     pub name: String,
+    /// User-facing title, falling back to the section name.
+    pub title: String,
     /// Executable path shown to the user.
     pub exe: String,
     /// Describe failure for a broken registry entry.
@@ -289,13 +295,16 @@ pub struct RegisteredWidget {
 }
 
 /// Builds visible registry rows without dropping entries whose describe failed.
-pub fn registered_widgets(
-    entries: &[crate::settings_app::work::LoadedEntry],
-) -> Vec<RegisteredWidget> {
+pub fn registered_widgets(entries: &[crate::work::LoadedEntry]) -> Vec<RegisteredWidget> {
     entries
         .iter()
         .map(|item| RegisteredWidget {
             name: item.entry.name.clone(),
+            title: item
+                .describe
+                .as_ref()
+                .map(|desc| desc.title.clone())
+                .unwrap_or_else(|_| item.entry.name.clone()),
             exe: item.entry.exe.to_string_lossy().into_owned(),
             error: item.describe.as_ref().err().cloned(),
         })
@@ -303,10 +312,7 @@ pub fn registered_widgets(
 }
 
 /// Masks raw settings using all described Secret keys and formats the result as JSON text.
-pub fn masked_raw_settings(
-    settings: &Value,
-    entries: &[crate::settings_app::work::LoadedEntry],
-) -> String {
+pub fn masked_raw_settings(settings: &Value, entries: &[crate::work::LoadedEntry]) -> String {
     let secrets = entries
         .iter()
         .flat_map(|item| {
@@ -335,20 +341,39 @@ pub fn group_heading(rows: &[Row], index: usize) -> Option<&str> {
 pub fn control_for(kind: &Kind) -> Control {
     match kind {
         Kind::Switch => Control::Switch,
-        Kind::Number { .. } => Control::Slider,
+        Kind::Number { unit, integer, .. } => number_control(unit, *integer),
         Kind::Text { .. } => Control::Text,
         Kind::Color { .. } => Control::Color,
         Kind::Secret => Control::Secret,
-        Kind::Choice {
-            options,
-            other: false,
-        } if (2..=3).contains(&options.len()) => Control::Segments,
         Kind::Choice { .. } => Control::Dropdown,
         // A slider can't show "no value", so an optional number is typed (empty box = null).
-        Kind::Optional(inner) if matches!(**inner, Kind::Number { .. }) => Control::Text,
+        Kind::Optional(inner) if matches!(**inner, Kind::Number { .. }) => Control::NumberBox,
         Kind::Optional(inner) => control_for(inner),
         Kind::Auto { .. } => Control::Auto,
     }
+}
+
+/// Selects the native number control from the unit and whole-number contract.
+pub fn number_control(unit: &str, integer: bool) -> Control {
+    if matches!(unit, "ms" | "s" | "min") || (integer && unit.is_empty()) {
+        Control::NumberBox
+    } else {
+        Control::Slider
+    }
+}
+
+/// Returns every setting key in one group, preserving the group's displayed order.
+pub fn group_keys(rows: &[Row], group: &str) -> Vec<String> {
+    rows.iter()
+        .filter(|row| row.setting.group == group)
+        .map(|row| row.key.clone())
+        .collect()
+}
+
+/// Reports whether a Restore defaults action should be visible for a group.
+pub fn group_modified(rows: &[Row], group: &str) -> bool {
+    rows.iter()
+        .any(|row| row.setting.group == group && row.key != "startup" && row.value != row.default)
 }
 
 /// Chooses a control using the stored value, including the Choice-with-other text mode.
@@ -359,6 +384,27 @@ pub fn control_for_value(kind: &Kind, value: &Value) -> Control {
             other: true,
         } if !options.iter().any(|(option, _)| option == value) => Control::Text,
         _ => control_for(kind),
+    }
+}
+
+/// The text a box shows for a saved value: strings as they are, null as empty, others as JSON.
+pub fn display_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// A slider's value text: as many decimals as its step has, trailing zeros dropped.
+pub fn number_text(value: f64, step: f64) -> String {
+    let step_text = format!("{step}");
+    let decimals = step_text.split_once('.').map_or(0, |(_, d)| d.len());
+    let text = format!("{value:.decimals$}");
+    if text.contains('.') {
+        text.trim_end_matches('0').trim_end_matches('.').to_string()
+    } else {
+        text
     }
 }
 
@@ -390,6 +436,43 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// A box shows strings bare, null as empty and other values as JSON.
+    #[test]
+    fn display_text_matches_what_a_box_shows() {
+        assert_eq!(display_text(&json!("Utrecht")), "Utrecht");
+        assert_eq!(display_text(&Value::Null), "");
+        assert_eq!(display_text(&json!(52.09)), "52.09");
+        assert_eq!(display_text(&json!(true)), "true");
+    }
+
+    /// Text typed while a write is pending survives that write's result; the submitted text
+    /// itself is cleared.
+    #[test]
+    fn a_draft_typed_during_a_write_survives_its_result() {
+        let text = Kind::Text { placeholder: String::new(), empty_ok: true };
+        let mut row = Row::new("bus", Setting::new("dest", "Destination", text), json!(""), json!(""));
+        row.pending = Some(1);
+        row.submitted = Some("Centraal".into());
+        row.draft = Some("Centraal Station".into());
+        assert!(row.apply_result(1, Some(json!("Centraal")), None));
+        assert_eq!(row.value, json!("Centraal"));
+        assert_eq!(row.draft.as_deref(), Some("Centraal Station"));
+        row.pending = Some(2);
+        row.submitted = Some("Centraal Station".into());
+        assert!(row.apply_result(2, Some(json!("Centraal Station")), None));
+        assert_eq!(row.draft, None);
+    }
+
+    /// A slider shows its value to its step's precision without float noise.
+    #[test]
+    fn number_text_uses_the_step_precision() {
+        assert_eq!(number_text(12.0, 0.5), "12");
+        assert_eq!(number_text(12.5, 0.5), "12.5");
+        assert_eq!(number_text(1.0500000001, 0.05), "1.05");
+        assert_eq!(number_text(3.0, 1.0), "3");
+        assert_eq!(number_text(0.333, 0.01), "0.33");
+    }
+
     /// Checks Block rows, startup and advanced-row exclusion.
     #[test]
     fn builds_everyday_rows_in_description_order() {
@@ -414,9 +497,9 @@ mod tests {
         );
         assert_eq!(
             rows.iter().map(|row| row.key.as_str()).collect::<Vec<_>>(),
-            ["show_on_taskbar", "compact", "startup", "one", "two"]
+            ["startup", "show_on_taskbar", "compact", "one", "two"]
         );
-        assert_eq!(rows[2].value, json!(true));
+        assert_eq!(rows[0].value, json!(true));
     }
 
     /// Checks stale write results, reload protection and reset visibility.
@@ -545,7 +628,7 @@ mod tests {
     /// Developer models retain broken registry entries and mask every described secret.
     #[test]
     fn developer_rows_keep_advanced_broken_and_secret_data_safe() {
-        let good = crate::settings_app::work::LoadedEntry {
+        let good = crate::work::LoadedEntry {
             entry: taskbar_dock::registry::Entry {
                 name: "good".into(),
                 exe: "good.exe".into(),
@@ -561,7 +644,7 @@ mod tests {
                 log_file: None,
             }),
         };
-        let broken = crate::settings_app::work::LoadedEntry {
+        let broken = crate::work::LoadedEntry {
             entry: taskbar_dock::registry::Entry {
                 name: "broken".into(),
                 exe: "broken.exe".into(),
@@ -586,5 +669,53 @@ mod tests {
         let raw = masked_raw_settings(&settings, &entries);
         assert!(raw.contains("***"));
         assert!(!raw.contains("top-secret"));
+    }
+
+    #[test]
+    fn number_control_mapping_covers_the_step12_values() {
+        let cases = [
+            ("min", false, Control::NumberBox),
+            ("px", false, Control::Slider),
+            ("s", false, Control::NumberBox),
+            ("s", false, Control::NumberBox),
+            ("", true, Control::NumberBox),
+            ("", false, Control::Slider),
+            ("ms", false, Control::NumberBox),
+            ("", false, Control::Slider),
+            ("px", false, Control::Slider),
+            ("", false, Control::Slider),
+        ];
+        for (unit, integer, expected) in cases {
+            assert_eq!(number_control(unit, integer), expected);
+        }
+        assert_eq!(
+            control_for(&Kind::Optional(Box::new(Kind::Number {
+                min: -90.0,
+                max: 90.0,
+                step: 0.1,
+                integer: false,
+                unit: String::new()
+            }))),
+            Control::NumberBox
+        );
+    }
+
+    #[test]
+    fn general_group_restore_keys_and_visibility_are_exact() {
+        let rows = widget_rows("weather", &[], &json!({}), &json!({}), false);
+        assert_eq!(
+            group_keys(&rows, "General"),
+            ["startup", "show_on_taskbar", "compact"]
+        );
+        assert!(!group_modified(&rows, "General"));
+        let mut changed = rows;
+        changed[0].value = json!(true);
+        assert!(!group_modified(&changed, "General"));
+        changed[2].value = json!(true);
+        assert!(group_modified(&changed, "General"));
+        assert_eq!(
+            group_keys(&changed, "General"),
+            ["startup", "show_on_taskbar", "compact"]
+        );
     }
 }

@@ -6,8 +6,8 @@
 use super::*;
 use std::cell::Cell;
 use windows_sys::Win32::Graphics::Dwm::*;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU};
 use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU};
 
 thread_local! {
     /// A TME_LEAVE is pending for the open panel (the mouse is on it).
@@ -44,7 +44,13 @@ fn placement(strip: HWND, kind: PanelKind, say: bool) -> Option<(i32, i32, i32, 
         let tray_at = if strip == 0 { tray::place(main) } else { None };
         let mon = match tray_at {
             _ if strip != 0 => MonitorFromWindow(strip, MONITOR_DEFAULTTONEAREST),
-            Some((i, _)) => MonitorFromPoint(POINT { x: (i.0 + i.2) / 2, y: (i.1 + i.3) / 2 }, MONITOR_DEFAULTTONEAREST),
+            Some((i, _)) => MonitorFromPoint(
+                POINT {
+                    x: (i.0 + i.2) / 2,
+                    y: (i.1 + i.3) / 2,
+                },
+                MONITOR_DEFAULTTONEAREST,
+            ),
             None => MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST),
         };
         let mut mi: MONITORINFO = std::mem::zeroed();
@@ -57,7 +63,12 @@ fn placement(strip: HWND, kind: PanelKind, say: bool) -> Option<(i32, i32, i32, 
         if w <= 0 || h <= 0 {
             return None;
         }
-        let work = (mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom);
+        let work = (
+            mi.rcWork.left,
+            mi.rcWork.top,
+            mi.rcWork.right,
+            mi.rcWork.bottom,
+        );
         h = h.min((work.3 - work.1 - 2 * (look.panel_margin * scale).round() as i32).max(1));
         let (x, y) = if strip != 0 {
             crate::panel::place(strip, w, h, &look, scale)
@@ -70,7 +81,11 @@ fn placement(strip: HWND, kind: PanelKind, say: bool) -> Option<(i32, i32, i32, 
                 None => core::panel_at_pointer((pt.x, pt.y), w, h, work, margin),
             };
             if say {
-                log(&format!("panel from the tray: icon {:?}, overflow {:?} -> {at:?}", tray_at.map(|t| t.0), tray_at.and_then(|t| t.1)));
+                log(&format!(
+                    "panel from the tray: icon {:?}, overflow {:?} -> {at:?}",
+                    tray_at.map(|t| t.0),
+                    tray_at.and_then(|t| t.1)
+                ));
             }
             at
         };
@@ -81,19 +96,45 @@ fn placement(strip: HWND, kind: PanelKind, say: bool) -> Option<(i32, i32, i32, 
 /// Creates the main panel where [`placement`] says (layered, not shown yet: the caller shows and
 /// fades it). 0: the Content has no panel, or creating failed.
 pub(super) fn open(strip: HWND, kind: PanelKind) -> HWND {
-    let Some((class, title, look)) = st(|s| (s.spec.class, s.spec.title, s.look.clone())) else { return 0 };
-    let Some((x, y, w, h)) = placement(strip, kind, true) else { return 0 };
+    let Some((class, title, look)) = st(|s| (s.spec.class, s.spec.title, s.look.clone())) else {
+        return 0;
+    };
+    let Some((x, y, w, h)) = placement(strip, kind, true) else {
+        return 0;
+    };
     unsafe {
         let (cls, title) = (class_name(class), wide(title));
-        let p = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED, cls.as_ptr(), title.as_ptr(),
-            WS_POPUP, x, y, w, h, 0, 0, GetModuleHandleW(std::ptr::null()), std::ptr::null());
+        let p = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
+            cls.as_ptr(),
+            title.as_ptr(),
+            WS_POPUP,
+            x,
+            y,
+            w,
+            h,
+            0,
+            0,
+            GetModuleHandleW(std::ptr::null()),
+            std::ptr::null(),
+        );
         if p == 0 {
             return 0;
         }
         let round = DWMWCP_ROUND;
-        DwmSetWindowAttribute(p, DWMWA_WINDOW_CORNER_PREFERENCE as u32, &round as *const _ as *const _, 4);
+        DwmSetWindowAttribute(
+            p,
+            DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+            &round as *const _ as *const _,
+            4,
+        );
         let dark: BOOL = (!look.light).into();
-        DwmSetWindowAttribute(p, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, &dark as *const _ as *const _, 4);
+        DwmSetWindowAttribute(
+            p,
+            DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+            &dark as *const _ as *const _,
+            4,
+        );
         TRACKING.set(false);
         PRESSED.set(false);
         p
@@ -129,7 +170,12 @@ unsafe fn paint(h: HWND) {
     if let Some(mut cv) = Canvas::new(w, hh) {
         let scale = GetDpiForWindow(h).max(96) as f32 / 96.0;
         let drawn = st(|s| {
-            let f = PanelFrame { look: &s.look, scale, w, h: hh };
+            let f = PanelFrame {
+                look: &s.look,
+                scale,
+                w,
+                h: hh,
+            };
             let brush = CreateSolidBrush(f.theme().color.bg.colorref());
             FillRect(cv.dc, &rc, brush);
             DeleteObject(brush);
@@ -149,13 +195,25 @@ unsafe fn paint(h: HWND) {
 }
 
 fn mouse(ev: PanelMouse) {
-    let Some(kind) = st(|s| if s.panel != 0 { Some(s.panel_kind) } else { None }).flatten() else { return };
+    let Some(kind) = st(|s| {
+        if s.panel != 0 {
+            Some(s.panel_kind)
+        } else {
+            None
+        }
+    })
+    .flatten() else {
+        return;
+    };
     call(|c, ctx| c.panel_mouse(kind, ev, ctx));
 }
 
 /// (x, y) of a mouse message, client px.
 fn xy(lp: LPARAM) -> (i32, i32) {
-    ((lp & 0xFFFF) as i16 as i32, ((lp >> 16) & 0xFFFF) as i16 as i32)
+    (
+        (lp & 0xFFFF) as i16 as i32,
+        ((lp >> 16) & 0xFFFF) as i16 as i32,
+    )
 }
 
 unsafe extern "system" fn panel_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -174,15 +232,33 @@ unsafe extern "system" fn panel_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             0
         }
         WM_KEYDOWN if ours() => {
-            super::dispatch_panel_vk(wp as u32, GetKeyState(VK_CONTROL as i32) < 0, GetKeyState(VK_MENU as i32) < 0);
+            super::dispatch_panel_vk(
+                wp as u32,
+                GetKeyState(VK_CONTROL as i32) < 0,
+                GetKeyState(VK_MENU as i32) < 0,
+            );
             0
         }
         WM_SYSKEYDOWN if ours() => {
-            let key = super::panel_key_from_vk(wp as u32, GetKeyState(VK_CONTROL as i32) < 0, GetKeyState(VK_MENU as i32) < 0);
-            if super::dispatch_panel_key_with_fallback(key) { 0 } else { DefWindowProcW(h, msg, wp, lp) }
+            let key = super::panel_key_from_vk(
+                wp as u32,
+                GetKeyState(VK_CONTROL as i32) < 0,
+                GetKeyState(VK_MENU as i32) < 0,
+            );
+            if super::dispatch_panel_key_with_fallback(key) {
+                0
+            } else {
+                DefWindowProcW(h, msg, wp, lp)
+            }
         }
-        WM_CHAR if ours() => { super::dispatch_panel_utf16(wp as u16); 0 }
-        WM_MOUSEWHEEL if ours() => { super::dispatch_panel_wheel(((wp >> 16) as i16) as i32); 0 }
+        WM_CHAR if ours() => {
+            super::dispatch_panel_utf16(wp as u16);
+            0
+        }
+        WM_MOUSEWHEEL if ours() => {
+            super::dispatch_panel_wheel(((wp >> 16) as i16) as i32);
+            0
+        }
         WM_RBUTTONUP => {
             if ours() {
                 right_click(true);
@@ -191,7 +267,12 @@ unsafe extern "system" fn panel_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_MOUSEMOVE => {
             if !TRACKING.replace(true) {
-                let mut t = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: h, dwHoverTime: 0 };
+                let mut t = TRACKMOUSEEVENT {
+                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: h,
+                    dwHoverTime: 0,
+                };
                 TrackMouseEvent(&mut t);
             }
             let (x, y) = xy(lp);
@@ -203,7 +284,13 @@ unsafe extern "system" fn panel_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
             // a click in a hover-opened panel pins it (it stays until a click elsewhere), and
             // still does what it's on
-            if let Some(a) = st(|s| if s.core.panel.by_hover() { s.core.panel.click(Instant::now()) } else { Action::None }) {
+            if let Some(a) = st(|s| {
+                if s.core.panel.by_hover() {
+                    s.core.panel.click(Instant::now())
+                } else {
+                    Action::None
+                }
+            }) {
                 panel_do(a);
             }
             let (x, y) = xy(lp);

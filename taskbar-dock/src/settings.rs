@@ -12,12 +12,16 @@ use serde_json::{json, Value};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
 use windows_sys::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject};
 
 /// The folder shared by the widgets (settings, dock order).
 pub fn dir() -> PathBuf {
-    let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    let base = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
     base.join("TaskbarDock")
 }
 
@@ -41,13 +45,21 @@ pub fn redirected() -> bool {
 fn final_path(p: &Path) -> Option<String> {
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, GetFinalPathNameByHandleW, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        CreateFileW, GetFinalPathNameByHandleW, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
     };
     let name = crate::wide(&p.to_string_lossy());
     let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
     unsafe {
-        let h = CreateFileW(name.as_ptr(), FILE_READ_ATTRIBUTES, share, std::ptr::null(), OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
+        let h = CreateFileW(
+            name.as_ptr(),
+            FILE_READ_ATTRIBUTES,
+            share,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            0,
+        );
         if h == INVALID_HANDLE_VALUE {
             return None;
         }
@@ -76,10 +88,14 @@ pub fn mtime() -> Option<SystemTime> {
 pub fn read() -> io::Result<Value> {
     match std::fs::read_to_string(path()) {
         Ok(text) => {
-            let value = serde_json::from_str::<Value>(&text)
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "settings.json isn't valid JSON"))?;
+            let value = serde_json::from_str::<Value>(&text).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "settings.json isn't valid JSON")
+            })?;
             if !value.is_object() {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "settings.json isn't valid JSON"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "settings.json isn't valid JSON",
+                ));
             }
             Ok(value)
         }
@@ -95,7 +111,9 @@ pub fn section(name: &str) -> Option<Value> {
 
 /// Add defaults for absent keys only, recursively filling missing leaves in objects.
 fn add_missing(current: &mut Value, defaults: &Value) -> bool {
-    let (Some(current), Some(defaults)) = (current.as_object_mut(), defaults.as_object()) else { return false };
+    let (Some(current), Some(defaults)) = (current.as_object_mut(), defaults.as_object()) else {
+        return false;
+    };
     let mut added = false;
     for (key, default) in defaults {
         match current.get_mut(key) {
@@ -149,14 +167,18 @@ pub fn set_key(section: &str, key: &str, value: Value) -> io::Result<()> {
     })
 }
 
-static TEMP_FILE_COUNTER: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static TEMP_FILE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Gives each atomic write its own temp path, even within one process and thread.
 fn atomic_temp_path(p: &Path) -> std::path::PathBuf {
     let thread = format!("{:?}", std::thread::current().id());
     let sequence = TEMP_FILE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    p.with_extension(format!("{}.{}.{}.tmp", std::process::id(), thread, sequence))
+    p.with_extension(format!(
+        "{}.{}.{}.tmp",
+        std::process::id(),
+        thread,
+        sequence
+    ))
 }
 
 /// Writes `text` to `p` atomically: a unique temp file, then a rename over `p`. The rename is
@@ -184,7 +206,8 @@ pub fn write_atomic(p: &Path, text: &str) -> io::Result<()> {
 /// from overwriting each other's change.
 pub fn write(root: &Value) -> io::Result<()> {
     std::fs::create_dir_all(dir())?;
-    let text = serde_json::to_string_pretty(root).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let text =
+        serde_json::to_string_pretty(root).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     write_atomic(&path(), &(text + "\n"))
 }
 
@@ -206,7 +229,10 @@ impl FileLock {
             let r = WaitForSingleObject(h, 2000);
             if r != WAIT_OBJECT_0 && r != WAIT_ABANDONED {
                 let error = if r == WAIT_TIMEOUT {
-                    io::Error::new(io::ErrorKind::TimedOut, "settings.json is busy (another widget holds its lock)")
+                    io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "settings.json is busy (another widget holds its lock)",
+                    )
                 } else {
                     io::Error::last_os_error()
                 };
@@ -254,7 +280,10 @@ mod tests {
 
     #[test]
     fn same_path_ignores_case_and_prefix() {
-        assert!(same_path("\\\\?\\C:\\Users\\a\\AppData\\Roaming\\TaskbarDock\\settings.json", "c:\\users\\a\\appdata\\roaming\\taskbardock\\settings.json"));
+        assert!(same_path(
+            "\\\\?\\C:\\Users\\a\\AppData\\Roaming\\TaskbarDock\\settings.json",
+            "c:\\users\\a\\appdata\\roaming\\taskbardock\\settings.json"
+        ));
         assert!(!same_path(
             "\\\\?\\C:\\Users\\a\\AppData\\Local\\Packages\\Claude_x\\LocalCache\\Roaming\\TaskbarDock\\settings.json",
             "C:\\Users\\a\\AppData\\Roaming\\TaskbarDock\\settings.json"
@@ -270,22 +299,37 @@ mod tests {
     #[test]
     fn adds_missing_top_level_keys() {
         let mut current = json!({"kept": 1});
-        assert!(add_missing(&mut current, &json!({"kept": 2, "new": "value"})));
+        assert!(add_missing(
+            &mut current,
+            &json!({"kept": 2, "new": "value"})
+        ));
         assert_eq!(current, json!({"kept": 1, "new": "value"}));
     }
 
     #[test]
     fn preserves_present_values_and_unknown_keys() {
         let mut current = json!({"null": null, "wrong": "kept", "extra": true});
-        assert!(add_missing(&mut current, &json!({"null": 1, "wrong": {"child": 2}, "new": 3})));
-        assert_eq!(current, json!({"null": null, "wrong": "kept", "extra": true, "new": 3}));
+        assert!(add_missing(
+            &mut current,
+            &json!({"null": 1, "wrong": {"child": 2}, "new": 3})
+        ));
+        assert_eq!(
+            current,
+            json!({"null": null, "wrong": "kept", "extra": true, "new": 3})
+        );
     }
 
     #[test]
     fn fills_only_missing_nested_leaves() {
         let mut current = json!({"tint_dark": {"quiet": 0.5}, "extra": 7});
-        assert!(add_missing(&mut current, &json!({"tint_dark": {"quiet": 0.1, "hover": 0.2}})));
-        assert_eq!(current, json!({"tint_dark": {"quiet": 0.5, "hover": 0.2}, "extra": 7}));
+        assert!(add_missing(
+            &mut current,
+            &json!({"tint_dark": {"quiet": 0.1, "hover": 0.2}})
+        ));
+        assert_eq!(
+            current,
+            json!({"tint_dark": {"quiet": 0.5, "hover": 0.2}, "extra": 7})
+        );
     }
 
     #[test]

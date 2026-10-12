@@ -128,22 +128,64 @@ impl TextStyle {
     }
 }
 
-pub const CAPTION: TextStyle = TextStyle { px: 12.0, weight: 400 };
-pub const CAPTION_STRONG: TextStyle = TextStyle { px: 12.0, weight: 600 };
-pub const ROW: TextStyle = TextStyle { px: 13.0, weight: 400 };
-pub const BODY: TextStyle = TextStyle { px: 14.0, weight: 400 };
-pub const BODY_LARGE: TextStyle = TextStyle { px: 15.0, weight: 400 };
-pub const TITLE_SMALL: TextStyle = TextStyle { px: 14.0, weight: 600 };
-pub const TITLE: TextStyle = TextStyle { px: 15.0, weight: 600 };
-pub const DISPLAY: TextStyle = TextStyle { px: 46.0, weight: 300 };
-pub const FOOTNOTE: TextStyle = TextStyle { px: 11.0, weight: 400 };
+pub const CAPTION: TextStyle = TextStyle {
+    px: 12.0,
+    weight: 400,
+};
+pub const CAPTION_STRONG: TextStyle = TextStyle {
+    px: 12.0,
+    weight: 600,
+};
+pub const ROW: TextStyle = TextStyle {
+    px: 13.0,
+    weight: 400,
+};
+pub const BODY: TextStyle = TextStyle {
+    px: 14.0,
+    weight: 400,
+};
+pub const BODY_LARGE: TextStyle = TextStyle {
+    px: 15.0,
+    weight: 400,
+};
+pub const TITLE_SMALL: TextStyle = TextStyle {
+    px: 14.0,
+    weight: 600,
+};
+pub const TITLE: TextStyle = TextStyle {
+    px: 15.0,
+    weight: 600,
+};
+pub const DISPLAY: TextStyle = TextStyle {
+    px: 46.0,
+    weight: 300,
+};
+pub const FOOTNOTE: TextStyle = TextStyle {
+    px: 11.0,
+    weight: 400,
+};
 /// A badge's text in a panel header (the bus line number), bold.
-pub const BADGE: TextStyle = TextStyle { px: 18.0, weight: 700 };
+pub const BADGE: TextStyle = TextStyle {
+    px: 18.0,
+    weight: 700,
+};
 /// Panel glyphs (icon font) and media's transport buttons.
-pub const ICON: TextStyle = TextStyle { px: 16.0, weight: 400 };
-pub const ICON_LARGE: TextStyle = TextStyle { px: 20.0, weight: 400 };
-pub const EMOJI: TextStyle = TextStyle { px: 20.0, weight: 400 };
-pub const EMOJI_LARGE: TextStyle = TextStyle { px: 42.0, weight: 400 };
+pub const ICON: TextStyle = TextStyle {
+    px: 16.0,
+    weight: 400,
+};
+pub const ICON_LARGE: TextStyle = TextStyle {
+    px: 20.0,
+    weight: 400,
+};
+pub const EMOJI: TextStyle = TextStyle {
+    px: 20.0,
+    weight: 400,
+};
+pub const EMOJI_LARGE: TextStyle = TextStyle {
+    px: 42.0,
+    weight: 400,
+};
 /// The icon and emoji font families (also in [`Fonts`]).
 pub const ICON_FONT: &str = "Segoe Fluent Icons";
 pub const EMOJI_FONT: &str = "Segoe UI Emoji";
@@ -178,76 +220,6 @@ pub mod size {
     pub const COVER_SMALL: f32 = 44.0;
 }
 
-/// Sizes for the settings application, in px at 100%; multiply by the display scale.
-pub mod app {
-    /// Width of the left navigation rail.
-    pub const NAV_WIDTH: f32 = 208.0;
-    /// Padding inside a settings card.
-    pub const CARD_PADDING: f32 = 16.0;
-    /// Gap between cards.
-    pub const CARD_GAP: f32 = 12.0;
-    /// Standard height of a navigation entry.
-    pub const NAV_ROW_HEIGHT: f32 = 40.0;
-    /// Height of a standard control.
-    pub const CONTROL_HEIGHT: f32 = 32.0;
-    /// Minimum width for controls placed beside a label.
-    pub const CONTROL_WIDTH: f32 = 180.0;
-    /// Width of a compact row action button.
-    pub const RESET_WIDTH: f32 = 56.0;
-    /// Width reserved for slider value text beside its track.
-    pub const SLIDER_VALUE_WIDTH: f32 = 76.0;
-    /// Height of the slider track.
-    pub const SLIDER_TRACK_HEIGHT: f32 = 4.0;
-    /// Diameter of the slider knob.
-    pub const SLIDER_KNOB: f32 = 12.0;
-    /// Gap between a control and its row action.
-    pub const CONTROL_GAP: f32 = 8.0;
-    /// Gap between labels and row controls.
-    pub const LABEL_GAP: f32 = 12.0;
-    /// Width of the overview taskbar visibility switch.
-    pub const HOME_SWITCH_WIDTH: f32 = 156.0;
-    /// Width of an overview process action.
-    pub const HOME_ACTION_WIDTH: f32 = 72.0;
-    /// Width of the settings switch.
-    pub const SWITCH_WIDTH: f32 = 40.0;
-    /// Width of the banner's Notepad action.
-    pub const NOTEPAD_BUTTON_WIDTH: f32 = 140.0;
-    /// Height of the settings switch.
-    pub const SWITCH_HEIGHT: f32 = 22.0;
-    /// Outline inset of an off switch.
-    pub const SWITCH_BORDER: f32 = 1.0;
-    /// Radius of a settings action button.
-    pub const BUTTON_RADIUS: f32 = 4.0;
-    /// Inset around a color swatch and text field value.
-    pub const FIELD_PADDING: f32 = 8.0;
-    /// Inset around a color swatch.
-    pub const SWATCH_INSET: f32 = 2.0;
-    /// Border thickness of a text field.
-    pub const FIELD_BORDER: f32 = 1.0;
-    /// Size of the status dot.
-    pub const STATUS_DOT: f32 = 9.0;
-    /// Padding inside the status badge.
-    pub const BADGE_PADDING: f32 = 8.0;
-    /// Width of the keyboard focus ring.
-    pub const FOCUS_RING: f32 = 2.0;
-    /// Height of the page header.
-    pub const HEADER_HEIGHT: f32 = 64.0;
-    /// Height reserved for a setting group heading.
-    pub const GROUP_HEIGHT: f32 = 30.0;
-    /// Space around the main content area.
-    pub const CONTENT_PADDING: f32 = 24.0;
-    /// Line pitch of the log tail in a widget-details block on the Developer page.
-    pub const DEVELOPER_LOG_LINE: f32 = 16.0;
-    /// Height of one registered-widget entry.
-    pub const DEVELOPER_REGISTER_HEIGHT: f32 = 72.0;
-    /// Fixed height of the raw settings text box.
-    pub const DEVELOPER_RAW_HEIGHT: f32 = 180.0;
-    /// Height of one copyable console command row.
-    pub const DEVELOPER_COMMAND_HEIGHT: f32 = 36.0;
-    /// Width of the Developer page's compact action buttons.
-    pub const DEVELOPER_ACTION_WIDTH: f32 = 120.0;
-}
-
 /// Windows' default accent text shades (blue), used when the registry has none.
 const ACCENT_FALLBACK: (Rgb, Rgb) = (Rgb::hex(0x0067C0), Rgb::hex(0x60CDFF));
 
@@ -265,8 +237,16 @@ pub struct TintLevels {
 /// [`crate::style`]): a light taskbar needs a little less (the colour shows more on it).
 pub fn tint_levels(light: bool) -> TintLevels {
     // in 255ths: active and hover are discord's blurple boxes before the three levels
-    let (quiet, active, hover) = if light { (38.0, 70.0, 105.0) } else { (46.0, 85.0, 125.0) };
-    TintLevels { quiet: quiet / 255.0, active: active / 255.0, hover: hover / 255.0 }
+    let (quiet, active, hover) = if light {
+        (38.0, 70.0, 105.0)
+    } else {
+        (46.0, 85.0, 125.0)
+    };
+    TintLevels {
+        quiet: quiet / 255.0,
+        active: active / 255.0,
+        hover: hover / 255.0,
+    }
 }
 
 /// Everything a widget colours and sets text with, for light or dark.
@@ -284,7 +264,10 @@ pub struct Theme {
 impl Theme {
     /// The theme for `look` (light/dark, font), with the live Windows accent colour.
     pub fn new(look: &Look) -> Theme {
-        Theme { tint: look.tint, ..Theme::with(look.light, &look.font, windows_accent(look.light)) }
+        Theme {
+            tint: look.tint,
+            ..Theme::with(look.light, &look.font, windows_accent(look.light))
+        }
     }
 
     /// The theme for light or dark, font family `text` and accent (None: Windows' default blue).
@@ -312,13 +295,32 @@ impl Theme {
             knob: dim,
             on_fill: Rgb::hex(0xFFFFFF),
         };
-        let strip = StripColors { fg: pick(0x1A1A1A, 0xFFFFFF), dim: pick(0x5A5A5A, 0xC8C8C8), disabled: 96.0 / 255.0 };
-        let fallback = if l { ACCENT_FALLBACK.0 } else { ACCENT_FALLBACK.1 };
+        let strip = StripColors {
+            fg: pick(0x1A1A1A, 0xFFFFFF),
+            dim: pick(0x5A5A5A, 0xC8C8C8),
+            disabled: 96.0 / 255.0,
+        };
+        let fallback = if l {
+            ACCENT_FALLBACK.0
+        } else {
+            ACCENT_FALLBACK.1
+        };
         let accent_c = accent.unwrap_or(fallback);
         let status = Status {
             accent: accent_c,
-            on_accent: Rgb::hex(if crate::badge::contrast_text(accent_c.colorref()) == 0 { 0x000000 } else { 0xFFFFFF }),
-            accent_hover: accent.unwrap_or(fallback).mix(if l { Rgb::hex(0x000000) } else { Rgb::hex(0xFFFFFF) }, 0.12),
+            on_accent: Rgb::hex(if crate::badge::contrast_text(accent_c.colorref()) == 0 {
+                0x000000
+            } else {
+                0xFFFFFF
+            }),
+            accent_hover: accent.unwrap_or(fallback).mix(
+                if l {
+                    Rgb::hex(0x000000)
+                } else {
+                    Rgb::hex(0xFFFFFF)
+                },
+                0.12,
+            ),
             danger: pick(0xC42B1C, 0xFF99A4),
             danger_fill: Rgb::hex(0xC43135),
             danger_fill_hover: Rgb::hex(0xD83C3E),
@@ -326,7 +328,18 @@ impl Theme {
             ok: pick(0x0F7B0F, 0x6CCB5F),
             warn: pick(0x9D5D00, 0xFCE100),
         };
-        Theme { light, color, strip, status, font: Fonts { text: text.to_string(), icon: ICON_FONT, emoji: EMOJI_FONT }, tint: tint_levels(light) }
+        Theme {
+            light,
+            color,
+            strip,
+            status,
+            font: Fonts {
+                text: text.to_string(),
+                icon: ICON_FONT,
+                emoji: EMOJI_FONT,
+            },
+            tint: tint_levels(light),
+        }
     }
 
     /// The allow-listed widget colour `name` for this theme (see [`brand`]).
@@ -367,12 +380,25 @@ pub fn brand(name: &str, light: bool) -> Rgb {
 /// dark 1 on light, light 2 on dark. None if Windows has none.
 fn windows_accent(light: bool) -> Option<Rgb> {
     use std::ffi::c_void;
-    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_BINARY};
+    use windows_sys::Win32::System::Registry::{
+        RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_BINARY,
+    };
     let mut buf = [0u8; 32];
     let mut sz = buf.len() as u32;
-    let (k, n) = (crate::wide(r"Software\Microsoft\Windows\CurrentVersion\Explorer\Accent"), crate::wide("AccentPalette"));
+    let (k, n) = (
+        crate::wide(r"Software\Microsoft\Windows\CurrentVersion\Explorer\Accent"),
+        crate::wide("AccentPalette"),
+    );
     let r = unsafe {
-        RegGetValueW(HKEY_CURRENT_USER, k.as_ptr(), n.as_ptr(), RRF_RT_REG_BINARY, std::ptr::null_mut(), buf.as_mut_ptr() as *mut c_void, &mut sz)
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            k.as_ptr(),
+            n.as_ptr(),
+            RRF_RT_REG_BINARY,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_void,
+            &mut sz,
+        )
     };
     if r != 0 || sz < 32 {
         return None;
@@ -394,8 +420,14 @@ mod tests {
         }
         // discord's boxes before the three levels (2026-10-11): 85 / 125 dark, 70 / 105 light
         let (d, l) = (tint_levels(false), tint_levels(true));
-        assert_eq!(((d.active * 255.0).round(), (d.hover * 255.0).round()), (85.0, 125.0));
-        assert_eq!(((l.active * 255.0).round(), (l.hover * 255.0).round()), (70.0, 105.0));
+        assert_eq!(
+            ((d.active * 255.0).round(), (d.hover * 255.0).round()),
+            (85.0, 125.0)
+        );
+        assert_eq!(
+            ((l.active * 255.0).round(), (l.hover * 255.0).round()),
+            (70.0, 105.0)
+        );
     }
 
     fn light() -> Theme {
@@ -445,7 +477,10 @@ mod tests {
     #[test]
     fn strip_colours_match_look_text_rgb() {
         for t in [light(), dark()] {
-            let look = Look { light: t.light, ..crate::style::Style::default().resolve(&crate::system::read()) };
+            let look = Look {
+                light: t.light,
+                ..crate::style::Style::default().resolve(&crate::system::read())
+            };
             let (fg, dim) = look.text_rgb();
             assert_eq!((t.strip.fg.tuple(), t.strip.dim.tuple()), (fg, dim));
         }
@@ -458,12 +493,21 @@ mod tests {
         assert_eq!((l.accent.rgb24(), d.accent.rgb24()), (0x0067C0, 0x60CDFF));
         assert_eq!(l.accent_hover, l.accent.mix(Rgb::hex(0x000000), 0.12));
         // the default blues: white text on the light theme's dark blue, black on the dark theme's light blue
-        assert_eq!((l.on_accent.rgb24(), d.on_accent.rgb24()), (0xFFFFFF, 0x000000));
+        assert_eq!(
+            (l.on_accent.rgb24(), d.on_accent.rgb24()),
+            (0xFFFFFF, 0x000000)
+        );
         assert_eq!(d.accent_hover, d.accent.mix(Rgb::hex(0xFFFFFF), 0.12));
         assert_eq!((l.danger.rgb24(), d.danger.rgb24()), (0xC42B1C, 0xFF99A4));
-        assert_eq!((l.danger_fill, d.danger_fill), (Rgb::hex(0xC43135), Rgb::hex(0xC43135)));
+        assert_eq!(
+            (l.danger_fill, d.danger_fill),
+            (Rgb::hex(0xC43135), Rgb::hex(0xC43135))
+        );
         assert_eq!(l.danger_fill_hover, Rgb::hex(0xD83C3E));
-        assert_eq!((l.danger_soft.rgb24(), d.danger_soft.rgb24()), (0xF6D6D7, 0x4A2426));
+        assert_eq!(
+            (l.danger_soft.rgb24(), d.danger_soft.rgb24()),
+            (0xF6D6D7, 0x4A2426)
+        );
         assert_eq!((l.ok.rgb24(), d.ok.rgb24()), (0x0F7B0F, 0x6CCB5F));
         assert_eq!((l.warn.rgb24(), d.warn.rgb24()), (0x9D5D00, 0xFCE100));
         let green = Rgb::hex(0x366B02);
@@ -477,7 +521,13 @@ mod tests {
         assert_eq!(brand("discord.red", true), Rgb::hex(0xF23F43));
         assert_eq!(brand("bus.badge_fallback", true), Rgb::hex(0x00A8A8));
         assert_eq!(brand("media.live", false), Rgb::hex(0xFF4E45));
-        assert_eq!((brand("weather.temp_bar", true), brand("weather.temp_bar", false)), (Rgb::hex(0xE8892B), Rgb::hex(0xFFB454)));
+        assert_eq!(
+            (
+                brand("weather.temp_bar", true),
+                brand("weather.temp_bar", false)
+            ),
+            (Rgb::hex(0xE8892B), Rgb::hex(0xFFB454))
+        );
         assert_eq!(light().brand("weather.rain"), Rgb::hex(0x0067C0));
         assert_eq!(dark().brand("weather.rain"), Rgb::hex(0x60CDFF));
         let mut names: Vec<_> = BRANDS.iter().map(|b| b.0).collect();
@@ -496,11 +546,25 @@ mod tests {
     fn type_tokens() {
         let t = light();
         assert_eq!(t.font.text, "Segoe UI Variable Text");
-        assert_eq!((t.font.icon, t.font.emoji), ("Segoe Fluent Icons", "Segoe UI Emoji"));
+        assert_eq!(
+            (t.font.icon, t.font.emoji),
+            ("Segoe Fluent Icons", "Segoe UI Emoji")
+        );
         let sizes = [
-            (CAPTION, 12.0, 400), (CAPTION_STRONG, 12.0, 600), (ROW, 13.0, 400), (BODY, 14.0, 400),
-            (BODY_LARGE, 15.0, 400), (TITLE_SMALL, 14.0, 600), (TITLE, 15.0, 600), (DISPLAY, 46.0, 300),
-            (FOOTNOTE, 11.0, 400), (BADGE, 18.0, 700), (ICON, 16.0, 400), (ICON_LARGE, 20.0, 400), (EMOJI, 20.0, 400), (EMOJI_LARGE, 42.0, 400),
+            (CAPTION, 12.0, 400),
+            (CAPTION_STRONG, 12.0, 600),
+            (ROW, 13.0, 400),
+            (BODY, 14.0, 400),
+            (BODY_LARGE, 15.0, 400),
+            (TITLE_SMALL, 14.0, 600),
+            (TITLE, 15.0, 600),
+            (DISPLAY, 46.0, 300),
+            (FOOTNOTE, 11.0, 400),
+            (BADGE, 18.0, 700),
+            (ICON, 16.0, 400),
+            (ICON_LARGE, 20.0, 400),
+            (EMOJI, 20.0, 400),
+            (EMOJI_LARGE, 42.0, 400),
         ];
         for (s, px, w) in sizes {
             assert_eq!((s.px, s.weight), (px, w));
@@ -513,9 +577,21 @@ mod tests {
     fn spacing_and_sizes() {
         use space::*;
         assert_eq!([XS, TIGHT, S, M, L, XL], [4.0, 6.0, 8.0, 12.0, 16.0, 20.0]);
-        assert_eq!((PANEL_PADDING, MENU_PADDING, ROW_HEIGHT, ROW_HEIGHT_LARGE, SECTION_GAP), (16.0, 12.0, 32.0, 40.0, 8.0));
+        assert_eq!(
+            (
+                PANEL_PADDING,
+                MENU_PADDING,
+                ROW_HEIGHT,
+                ROW_HEIGHT_LARGE,
+                SECTION_GAP
+            ),
+            (16.0, 12.0, 32.0, 40.0, 8.0)
+        );
         use size::*;
-        assert_eq!((PANEL_NARROW, PANEL_STANDARD, PANEL_WIDE), (280.0, 320.0, 360.0));
+        assert_eq!(
+            (PANEL_NARROW, PANEL_STANDARD, PANEL_WIDE),
+            (280.0, 320.0, 360.0)
+        );
         assert_eq!((ICON_BOX, COVER_SMALL), (16.0, 44.0));
     }
 

@@ -3,11 +3,14 @@
 //! finding the main window, restoring it and the fallback live here.
 
 use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM};
-use windows_sys::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION};
+use windows_sys::Win32::System::Threading::{
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindow, GetWindowLongW, GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    SetForegroundWindow, ShowWindow, GWL_EXSTYLE, GW_OWNER, SW_RESTORE, SW_SHOWNORMAL, WS_EX_TOOLWINDOW,
+    EnumWindows, GetWindow, GetWindowLongW, GetWindowTextLengthW, GetWindowThreadProcessId,
+    IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, GWL_EXSTYLE, GW_OWNER, SW_RESTORE,
+    SW_SHOWNORMAL, WS_EX_TOOLWINDOW,
 };
 
 /// Full path of the program that owns window `h`.
@@ -29,7 +32,9 @@ pub fn exe_path(h: HWND) -> Option<String> {
 
 /// Is `path` the program named `exe` (file name only, any case), e.g. "discord.exe"?
 pub fn is_exe(path: &str, exe: &str) -> bool {
-    path.rsplit(['\\', '/']).next().is_some_and(|f| f.eq_ignore_ascii_case(exe))
+    path.rsplit(['\\', '/'])
+        .next()
+        .is_some_and(|f| f.eq_ignore_ascii_case(exe))
 }
 
 struct Search<'a> {
@@ -51,7 +56,10 @@ unsafe extern "system" fn each(h: HWND, lp: LPARAM) -> BOOL {
 
 /// The first main window for which `is_app` is true, if any.
 pub fn find(is_app: &dyn Fn(HWND) -> bool) -> Option<HWND> {
-    let mut search = Search { is_app, found: None };
+    let mut search = Search {
+        is_app,
+        found: None,
+    };
     unsafe { EnumWindows(Some(each), &mut search as *mut _ as LPARAM) };
     search.found
 }
@@ -71,7 +79,14 @@ pub fn raise(is_app: &dyn Fn(HWND) -> bool, fallback: &str) {
             None => {
                 let target = crate::wide(fallback);
                 let open = crate::wide("open");
-                ShellExecuteW(0, open.as_ptr(), target.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL);
+                ShellExecuteW(
+                    0,
+                    open.as_ptr(),
+                    target.as_ptr(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    SW_SHOWNORMAL,
+                );
             }
         }
     }
@@ -83,7 +98,10 @@ mod tests {
 
     #[test]
     fn exe_names() {
-        assert!(is_exe(r"C:\Users\me\AppData\Local\Discord\app-1.0.9\Discord.exe", "discord.exe"));
+        assert!(is_exe(
+            r"C:\Users\me\AppData\Local\Discord\app-1.0.9\Discord.exe",
+            "discord.exe"
+        ));
         assert!(!is_exe(r"C:\x\DiscordPTB.exe", "discord.exe"));
         assert!(!is_exe(r"C:\x\notdiscord.exe", "discord.exe"));
     }

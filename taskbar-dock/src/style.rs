@@ -25,10 +25,10 @@
 //! Missing keys are filled in with these defaults, so the file always shows every option.
 //! Panels get Windows' own 8 px rounding from the system (DWM), so that isn't a setting.
 
+use crate::describe::{Kind, Setting};
 use crate::settings;
 use crate::system::{self, System};
 use crate::theme::{tint_levels, TintLevels};
-use crate::describe::{Kind, Setting};
 use serde_json::{json, Map, Value};
 
 /// A setting that can follow Windows ("system") or be fixed.
@@ -230,8 +230,16 @@ fn levels_json(t: TintLevels) -> Value {
 
 /// A `{ "quiet", "active", "hover" }` object (each 0..1; a missing or broken one keeps `d`'s).
 fn levels_from(v: Option<&Value>, d: TintLevels) -> TintLevels {
-    let get = |k: &str, def: f32| v.and_then(|v| v.get(k)).and_then(|x| x.as_f64()).map_or(def, |x| (x as f32).clamp(0.0, 1.0));
-    TintLevels { quiet: get("quiet", d.quiet), active: get("active", d.active), hover: get("hover", d.hover) }
+    let get = |k: &str, def: f32| {
+        v.and_then(|v| v.get(k))
+            .and_then(|x| x.as_f64())
+            .map_or(def, |x| (x as f32).clamp(0.0, 1.0))
+    };
+    TintLevels {
+        quiet: get("quiet", d.quiet),
+        active: get("active", d.active),
+        hover: get("hover", d.hover),
+    }
 }
 
 /// Baselines of the taskbar clock's two lines (time, date), measured on screen: 4 px above and
@@ -253,7 +261,9 @@ fn follow_json<T: Into<Value> + Copy>(f: Follow<T>) -> Value {
         Follow::System => json!("system"),
         Follow::Fixed(v) => {
             let v: Value = v.into();
-            v.as_f64().filter(|_| v.is_f64()).map_or(v, |x| json!((x * 1000.0).round() / 1000.0))
+            v.as_f64()
+                .filter(|_| v.is_f64())
+                .map_or(v, |x| json!((x * 1000.0).round() / 1000.0))
         }
     }
 }
@@ -284,17 +294,32 @@ impl Style {
         m.insert("panel_margin".into(), num(self.panel_margin));
         m.insert("tint_dark".into(), levels_json(self.tint_dark));
         m.insert("tint_light".into(), levels_json(self.tint_light));
-        m.insert("tint_fixed".into(), self.tint_fixed.map_or(json!("auto"), num));
+        m.insert(
+            "tint_fixed".into(),
+            self.tint_fixed.map_or(json!("auto"), num),
+        );
         m
     }
 
     fn from_json(dock: &Value) -> Style {
         let d = Style::default();
-        let num = |k: &str, def: f32, lo: f32, hi: f32| dock.get(k).and_then(|v| v.as_f64()).map_or(def, |v| (v as f32).clamp(lo, hi));
-        let is_system = |k: &str| dock.get(k).and_then(|v| v.as_str()).map_or(false, |s| s.eq_ignore_ascii_case("system"));
+        let num = |k: &str, def: f32, lo: f32, hi: f32| {
+            dock.get(k)
+                .and_then(|v| v.as_f64())
+                .map_or(def, |v| (v as f32).clamp(lo, hi))
+        };
+        let is_system = |k: &str| {
+            dock.get(k)
+                .and_then(|v| v.as_str())
+                .map_or(false, |s| s.eq_ignore_ascii_case("system"))
+        };
         Style {
             gap: num("gap", d.gap, 0.0, 64.0),
-            font: dock.get("font").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()).map_or(d.font, String::from),
+            font: dock
+                .get("font")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map_or(d.font, String::from),
             font_size: num("font_size", d.font_size, 6.0, 48.0),
             text_size: if is_system("text_size") {
                 Follow::System
@@ -302,7 +327,13 @@ impl Style {
                 Follow::Fixed(num("text_size", 1.0, 0.5, 3.0))
             },
             control_radius: num("control_radius", d.control_radius, 0.0, 16.0),
-            time_format: match dock.get("time_format").and_then(|v| v.as_str()).unwrap_or("system").to_ascii_lowercase().as_str() {
+            time_format: match dock
+                .get("time_format")
+                .and_then(|v| v.as_str())
+                .unwrap_or("system")
+                .to_ascii_lowercase()
+                .as_str()
+            {
                 "12h" | "12" => TimeFormat::H12,
                 "24h" | "24" => TimeFormat::H24,
                 _ => TimeFormat::System,
@@ -324,7 +355,10 @@ impl Style {
             panel_margin: num("panel_margin", d.panel_margin, 0.0, 64.0),
             tint_dark: levels_from(dock.get("tint_dark"), d.tint_dark),
             tint_light: levels_from(dock.get("tint_light"), d.tint_light),
-            tint_fixed: dock.get("tint_fixed").and_then(|v| v.as_f64()).map(|v| (v as f32).clamp(0.0, 1.0)),
+            tint_fixed: dock
+                .get("tint_fixed")
+                .and_then(|v| v.as_f64())
+                .map(|v| (v as f32).clamp(0.0, 1.0)),
         }
     }
 
@@ -333,7 +367,9 @@ impl Style {
     pub fn load() -> Style {
         let defaults = Value::Object(Style::default().to_json());
         let _ = settings::fill_missing("dock", &defaults);
-        let Ok(root) = settings::read() else { return Style::default() };
+        let Ok(root) = settings::read() else {
+            return Style::default();
+        };
         let dock = root.get("dock").cloned().unwrap_or_else(|| json!({}));
         Style::from_json(&dock)
     }
@@ -372,7 +408,11 @@ impl Style {
             drag_zoom: if animations { self.drag_zoom } else { 1.0 },
             panel_margin: self.panel_margin,
             tint: match self.tint_fixed {
-                Some(v) => TintLevels { quiet: v, active: v, hover: v },
+                Some(v) => TintLevels {
+                    quiet: v,
+                    active: v,
+                    hover: v,
+                },
                 None if sys.light => self.tint_light,
                 None => self.tint_dark,
             },
@@ -427,7 +467,11 @@ impl Look {
     pub fn hour(&self, hour: u32) -> String {
         if self.time_pattern.contains('t') {
             // drop the minutes (and their separator) from the pattern: "h:mm tt" → "h tt"
-            let p = self.time_pattern.replace(":mm", "").replace(".mm", "").replace(":m", "");
+            let p = self
+                .time_pattern
+                .replace(":mm", "")
+                .replace(".mm", "")
+                .replace(":m", "");
             system::format_time(&p, &self.am, &self.pm, hour, 0, None)
         } else {
             self.time(hour, 0)
@@ -436,7 +480,14 @@ impl Look {
 
     /// Same with seconds, e.g. "7:45:12 PM".
     pub fn time_with_seconds(&self, hour: u32, minute: u32, second: u32) -> String {
-        system::format_time(&self.time_pattern, &self.am, &self.pm, hour, minute, Some(second))
+        system::format_time(
+            &self.time_pattern,
+            &self.am,
+            &self.pm,
+            hour,
+            minute,
+            Some(second),
+        )
     }
 
     /// Body text colour (RGB) on the taskbar, and the dimmer one for a first/caption line.
@@ -475,26 +526,54 @@ mod tests {
         let m = Style::default().to_json();
         assert_eq!(m["tint_fixed"], json!("auto"));
         assert_eq!(m["tint_dark"]["active"], json!(0.333));
-        assert_eq!(Style::from_json(&Value::Object(m)).tint_dark.hover, (tint_levels(false).hover * 1000.0).round() / 1000.0);
+        assert_eq!(
+            Style::from_json(&Value::Object(m)).tint_dark.hover,
+            (tint_levels(false).hover * 1000.0).round() / 1000.0
+        );
     }
 
     #[test]
     fn tint_levels_are_configurable() {
         let dock = json!({ "tint_dark": { "quiet": 0.1, "active": 0.5, "hover": 0.9 }, "tint_light": { "active": 0.4 } });
-        assert_eq!(look(dock.clone(), false).tint, TintLevels { quiet: 0.1, active: 0.5, hover: 0.9 });
+        assert_eq!(
+            look(dock.clone(), false).tint,
+            TintLevels {
+                quiet: 0.1,
+                active: 0.5,
+                hover: 0.9
+            }
+        );
         // a missing key keeps its default; out of range is clamped; nonsense is ignored
         let l = look(dock, true).tint;
-        assert_eq!((l.quiet, l.active, l.hover), (tint_levels(true).quiet, 0.4, tint_levels(true).hover));
-        let odd = look(json!({ "tint_dark": { "quiet": -1, "active": 7, "hover": "x" } }), false).tint;
-        assert_eq!((odd.quiet, odd.active, odd.hover), (0.0, 1.0, tint_levels(false).hover));
+        assert_eq!(
+            (l.quiet, l.active, l.hover),
+            (tint_levels(true).quiet, 0.4, tint_levels(true).hover)
+        );
+        let odd = look(
+            json!({ "tint_dark": { "quiet": -1, "active": 7, "hover": "x" } }),
+            false,
+        )
+        .tint;
+        assert_eq!(
+            (odd.quiet, odd.active, odd.hover),
+            (0.0, 1.0, tint_levels(false).hover)
+        );
     }
 
     #[test]
     fn a_fixed_tint_is_one_strength_for_every_state() {
-        for (v, want) in [(json!(0), 0.0), (json!(1), 1.0), (json!(0.25), 0.25), (json!(3), 1.0)] {
+        for (v, want) in [
+            (json!(0), 0.0),
+            (json!(1), 1.0),
+            (json!(0.25), 0.25),
+            (json!(3), 1.0),
+        ] {
             let t = look(json!({ "tint_fixed": v }), false).tint;
             assert_eq!((t.quiet, t.active, t.hover), (want, want, want));
         }
-        assert_eq!(look(json!({ "tint_fixed": "auto" }), false).tint, tint_levels(false));
+        assert_eq!(
+            look(json!({ "tint_fixed": "auto" }), false).tint,
+            tint_levels(false)
+        );
     }
 }

@@ -9,8 +9,8 @@ mod remote;
 mod shell;
 
 use super::core::{self, Core, Route, Up};
-use super::{frames, place};
 use super::*;
+use super::{frames, place};
 use crate::dock::{self, Fit, FitChange, FitState};
 use crate::panel::{Action, Fade};
 use crate::strip::{self, DragMove, Glide, Limits, Motion};
@@ -21,7 +21,9 @@ use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::CreateMutexW;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
+};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -129,7 +131,13 @@ pub fn run<C: Content>(spec: Spec, content: C) {
         let cursor = LoadCursorW(0, IDC_ARROW);
         let main_class = wide(&format!("{}Main", spec.class));
         let strip_class = wide(spec.class);
-        for (cls, proc_) in [(&main_class, main_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), (&strip_class, strip_proc)] {
+        for (cls, proc_) in [
+            (
+                &main_class,
+                main_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT,
+            ),
+            (&strip_class, strip_proc),
+        ] {
             let mut wc: WNDCLASSW = std::mem::zeroed();
             wc.lpfnWndProc = Some(proc_);
             wc.hInstance = hinst;
@@ -139,7 +147,20 @@ pub fn run<C: Content>(spec: Spec, content: C) {
         }
         shell::register(spec.class, hinst, cursor);
         let title = wide(spec.title);
-        let main = CreateWindowExW(0, main_class.as_ptr(), title.as_ptr(), WS_OVERLAPPED, 0, 0, 0, 0, 0, 0, hinst, std::ptr::null());
+        let main = CreateWindowExW(
+            0,
+            main_class.as_ptr(),
+            title.as_ptr(),
+            WS_OVERLAPPED,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            hinst,
+            std::ptr::null(),
+        );
         if main == 0 {
             (spec.log)("creating the main window failed");
             return;
@@ -154,7 +175,11 @@ pub fn run<C: Content>(spec: Spec, content: C) {
         STATE.with(|s| {
             *s.borrow_mut() = Some(State {
                 content: Box::new(content),
-                core: Core { compact, show, ..Default::default() },
+                core: Core {
+                    compact,
+                    show,
+                    ..Default::default()
+                },
                 look: Look::current(),
                 build_time,
                 main,
@@ -203,7 +228,6 @@ pub fn run<C: Content>(spec: Spec, content: C) {
         }
     }
 }
-
 
 /// The main panel closes for a reason of its own (it lost focus, Esc; or a right click, another
 /// panel): the behaviour is told why, the window destroyed.
@@ -257,7 +281,13 @@ fn apply(reqs: Vec<Request>) {
                 }
             }
             Request::OpenPanel => {
-                if let Some(a) = st(|s| if s.core.panel.is_open() { Action::None } else { s.core.panel.click(Instant::now()) }) {
+                if let Some(a) = st(|s| {
+                    if s.core.panel.is_open() {
+                        Action::None
+                    } else {
+                        s.core.panel.click(Instant::now())
+                    }
+                }) {
                     panel_do(a);
                 }
             }
@@ -290,9 +320,15 @@ fn timer(id: usize, on: bool) {
     let Some(main) = st(|s| s.main) else { return };
     if let Some(bit) = FRAME_TIMERS.iter().position(|t| *t == id) {
         let Some(running) = st(|s| {
-            if on { s.frames |= 1 << bit } else { s.frames &= !(1 << bit) }
+            if on {
+                s.frames |= 1 << bit
+            } else {
+                s.frames &= !(1 << bit)
+            }
             s.frames
-        }) else { return };
+        }) else {
+            return;
+        };
         return frames::run(main, running != 0);
     }
     unsafe {
@@ -475,7 +511,12 @@ fn mouse_move(h: HWND, lp: LPARAM) {
     let entered = st(|s| !std::mem::replace(&mut s.core.hover, true)) == Some(true);
     if entered {
         unsafe {
-            let mut tme = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: h, dwHoverTime: 0 };
+            let mut tme = TRACKMOUSEEVENT {
+                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: TME_LEAVE,
+                hwndTrack: h,
+                dwHoverTime: 0,
+            };
             TrackMouseEvent(&mut tme);
         }
         // the panel opens if the mouse stays a moment (hover_step)
@@ -527,9 +568,13 @@ fn mouse_up(h: HWND, click: bool, lp: LPARAM) {
     };
     let Some((up, reqs)) = st(|s| {
         let mut ctx = Ctx::new(s.main);
-        let up = s.core.up(click, at, s.content.as_mut(), &mut ctx, Instant::now());
+        let up = s
+            .core
+            .up(click, at, s.content.as_mut(), &mut ctx, Instant::now());
         (up, ctx.reqs)
-    }) else { return };
+    }) else {
+        return;
+    };
     if click {
         unsafe { ReleaseCapture() }; // its WM_CAPTURECHANGED then finds nothing left to end
     }
@@ -546,15 +591,26 @@ fn mouse_up(h: HWND, click: bool, lp: LPARAM) {
 /// How far the strip `h`, `w` wide, may go while dragged (screen x): against the tray and (on
 /// the right) not over the taskbar's buttons; floating, on the screen.
 fn limits(h: HWND, w: i32) -> Limits {
-    let Some((floating, side, look)) = st(|s| (s.floating, s.content.side(), s.look.clone())) else { return Limits::NONE };
+    let Some((floating, side, look)) = st(|s| (s.floating, s.content.side(), s.look.clone()))
+    else {
+        return Limits::NONE;
+    };
     if floating {
-        return Limits { min: Some(0), max: Some(place::screen_width() - w) };
+        return Limits {
+            min: Some(0),
+            max: Some(place::screen_width() - w),
+        };
     }
     unsafe {
         let tb = GetParent(h);
         let (_, gap) = scale_gap(tb, &look);
-        let min = dock::icons_right(tb).filter(|_| side == Side::Right).map(|r| r + gap);
-        Limits { min, max: Some(max_x(tb, w, &look)) }
+        let min = dock::icons_right(tb)
+            .filter(|_| side == Side::Right)
+            .map(|r| r + gap);
+        Limits {
+            min,
+            max: Some(max_x(tb, w, &look)),
+        }
     }
 }
 
@@ -576,14 +632,22 @@ fn width_of(h: HWND) -> i32 {
 
 /// The mouse moved with the button down: past the threshold it's a drag.
 fn drag(h: HWND) {
-    let Some((draggable, floating, float_at)) = st(|s| (s.spec.draggable, s.floating, s.spec.float)) else { return };
+    let Some((draggable, floating, float_at)) =
+        st(|s| (s.spec.draggable, s.floating, s.spec.float))
+    else {
+        return;
+    };
     // floating beside the dock there's no order to drag in
     if !draggable || (floating && matches!(float_at, Float::Fallback(FloatAt::BesideDock))) {
         return;
     }
     let (cx, w) = (unsafe { dock::cursor().x }, width_of(h));
     let lim = limits(h, w);
-    match st(|s| s.core.motion.mouse_move(cx, w, lim, &s.look, Instant::now())) {
+    match st(|s| {
+        s.core
+            .motion
+            .mouse_move(cx, w, lim, &s.look, Instant::now())
+    }) {
         Some(DragMove::Started(x)) => {
             timer(T_GLIDE, false);
             if !floating {
@@ -605,7 +669,9 @@ fn drag(h: HWND) {
 
 /// While dragged: the strip at x (screen), never past the tray; the slot it would drop into.
 fn drag_move(h: HWND, x: i32) {
-    let Some((floating, look)) = st(|s| (s.floating, s.look.clone())) else { return };
+    let Some((floating, look)) = st(|s| (s.floating, s.look.clone())) else {
+        return;
+    };
     unsafe {
         if floating {
             strip::move_strip(h, dock::taskbar(), x, true);
@@ -620,12 +686,18 @@ fn drag_move(h: HWND, x: i32) {
 
 fn drag_ended(h: HWND) {
     timer(T_ZOOM, true); // put down: back to normal size while it glides into place
-    let Some((floating, side, class, float_at, look)) =
-        st(|s| {
-            s.core.panel.drag_ended();
-            (s.floating, s.content.side(), s.spec.class, s.spec.float, s.look.clone())
-        })
-    else { return };
+    let Some((floating, side, class, float_at, look)) = st(|s| {
+        s.core.panel.drag_ended();
+        (
+            s.floating,
+            s.content.side(),
+            s.spec.class,
+            s.spec.float,
+            s.look.clone(),
+        )
+    }) else {
+        return;
+    };
     unsafe {
         if floating {
             if let Float::Fallback(FloatAt::Saved(path)) = float_at {
@@ -677,16 +749,37 @@ fn hover_timer_sync() {
 /// Opens the main panel, fading in. `activate`: opened by a click (takes focus; a click
 /// elsewhere closes it); opened by hovering it doesn't take focus. Without a strip (from a tray
 /// icon) it opens above the pointer.
-fn open_panel(activate: bool) { let _ = open_panel_kind_with(PanelKind::Main, activate); }
+fn open_panel(activate: bool) {
+    let _ = open_panel_kind_with(PanelKind::Main, activate);
+}
 
-fn open_panel_kind(kind: PanelKind) { let _ = open_panel_kind_with(kind, true); }
+fn open_panel_kind(kind: PanelKind) {
+    let _ = open_panel_kind_with(kind, true);
+}
 
 fn open_panel_kind_with(kind: PanelKind, activate: bool) -> bool {
-    let Some(strip) = st(|s| s.strip) else { return false };
-    let anchor = if strip != 0 && unsafe { IsWindowVisible(strip) } != 0 { strip } else { 0 };
+    let Some(strip) = st(|s| s.strip) else {
+        return false;
+    };
+    let anchor = if strip != 0 && unsafe { IsWindowVisible(strip) } != 0 {
+        strip
+    } else {
+        0
+    };
     if kind != PanelKind::Main {
-        let target = if anchor != 0 { anchor } else { st(|s| s.main).unwrap_or(0) };
-        if st(|s| s.content.panel_size(kind, system::scale_for(target)).is_some()) != Some(true) { return false; }
+        let target = if anchor != 0 {
+            anchor
+        } else {
+            st(|s| s.main).unwrap_or(0)
+        };
+        if st(|s| {
+            s.content
+                .panel_size(kind, system::scale_for(target))
+                .is_some()
+        }) != Some(true)
+        {
+            return false;
+        }
     }
     if kind != PanelKind::Main {
         // Secondary panels are always pinned and focused. Close the current panel and menus
@@ -700,7 +793,11 @@ fn open_panel_kind_with(kind: PanelKind, activate: bool) -> bool {
         // only one panel at a time: clicking a widget doesn't activate anything, so the other
         // widgets' panels wouldn't notice the click by themselves
         if kind != PanelKind::Main || strip != 0 {
-            let owner = if strip != 0 { strip } else { st(|s| s.main).unwrap_or(0) };
+            let owner = if strip != 0 {
+                strip
+            } else {
+                st(|s| s.main).unwrap_or(0)
+            };
             dock::close_other_panels(dock::taskbar(), owner);
         }
         let p = shell::open(anchor, kind);
@@ -718,7 +815,9 @@ fn open_panel_kind_with(kind: PanelKind, activate: bool) -> bool {
         if activate {
             ShowWindow(p, SW_SHOW);
             SetForegroundWindow(p);
-            if kind != PanelKind::Main { SetFocus(p); }
+            if kind != PanelKind::Main {
+                SetFocus(p);
+            }
         } else {
             ShowWindow(p, SW_SHOWNOACTIVATE);
         }
@@ -733,7 +832,9 @@ fn close_panel_window() {
     let Some((p, kind)) = st(|s| {
         s.fade.stop();
         (std::mem::replace(&mut s.panel, 0), s.panel_kind)
-    }) else { return };
+    }) else {
+        return;
+    };
     if p != 0 {
         shell::destroy(p);
         call(|c, ctx| c.panel_shown(kind, false, ctx));
@@ -748,18 +849,43 @@ fn close_panels() {
 
 /// Dispatches a normalized key through the same callback used by physical input.
 pub(super) fn dispatch_panel_key(key: PanelKey) -> bool {
-    let Some(kind) = st(|s| if s.panel != 0 { Some(s.panel_kind) } else { None }).flatten() else { return false };
+    let Some(kind) = st(|s| {
+        if s.panel != 0 {
+            Some(s.panel_kind)
+        } else {
+            None
+        }
+    })
+    .flatten() else {
+        return false;
+    };
     call(|c, ctx| c.panel_key(kind, key, ctx)).unwrap_or(false)
 }
 
 pub(super) fn dispatch_panel_text(text: &str) {
-    if let Some(kind) = st(|s| if s.panel != 0 { Some(s.panel_kind) } else { None }).flatten() {
+    if let Some(kind) = st(|s| {
+        if s.panel != 0 {
+            Some(s.panel_kind)
+        } else {
+            None
+        }
+    })
+    .flatten()
+    {
         call(|c, ctx| c.panel_char(kind, text, ctx));
     }
 }
 
 pub(super) fn dispatch_panel_wheel(delta: i32) {
-    if let Some(kind) = st(|s| if s.panel != 0 { Some(s.panel_kind) } else { None }).flatten() {
+    if let Some(kind) = st(|s| {
+        if s.panel != 0 {
+            Some(s.panel_kind)
+        } else {
+            None
+        }
+    })
+    .flatten()
+    {
         call(|c, ctx| c.panel_wheel(kind, delta, ctx));
     }
 }
@@ -771,12 +897,24 @@ pub(super) fn dispatch_panel_vk(vk: u32, ctrl: bool, alt: bool) {
 /// Converts a Win32 virtual key into Block's normalized panel key.
 pub(super) fn panel_key_from_vk(vk: u32, ctrl: bool, alt: bool) -> PanelKey {
     let key = match vk {
-        0x0D => PanelKeyCode::Enter, 0x1B => PanelKeyCode::Escape, 0x26 => PanelKeyCode::Up,
-        0x28 => PanelKeyCode::Down, 0x21 => PanelKeyCode::PageUp, 0x22 => PanelKeyCode::PageDown,
-        0x24 => PanelKeyCode::Home, 0x23 => PanelKeyCode::End, 0x08 => PanelKeyCode::Backspace,
-        0x2E => PanelKeyCode::Delete, 0x25 => PanelKeyCode::Left, 0x27 => PanelKeyCode::Right,
-        0x09 => PanelKeyCode::Tab, 0x41 => PanelKeyCode::A, 0x43 => PanelKeyCode::C,
-        0x56 => PanelKeyCode::V, 0x58 => PanelKeyCode::X, n => PanelKeyCode::Other(n),
+        0x0D => PanelKeyCode::Enter,
+        0x1B => PanelKeyCode::Escape,
+        0x26 => PanelKeyCode::Up,
+        0x28 => PanelKeyCode::Down,
+        0x21 => PanelKeyCode::PageUp,
+        0x22 => PanelKeyCode::PageDown,
+        0x24 => PanelKeyCode::Home,
+        0x23 => PanelKeyCode::End,
+        0x08 => PanelKeyCode::Backspace,
+        0x2E => PanelKeyCode::Delete,
+        0x25 => PanelKeyCode::Left,
+        0x27 => PanelKeyCode::Right,
+        0x09 => PanelKeyCode::Tab,
+        0x41 => PanelKeyCode::A,
+        0x43 => PanelKeyCode::C,
+        0x56 => PanelKeyCode::V,
+        0x58 => PanelKeyCode::X,
+        n => PanelKeyCode::Other(n),
     };
     PanelKey { key, ctrl, alt }
 }
@@ -784,27 +922,38 @@ pub(super) fn panel_key_from_vk(vk: u32, ctrl: bool, alt: bool) -> PanelKey {
 /// Dispatches a key and closes the panel when its Content declines Escape.
 pub(super) fn dispatch_panel_key_with_fallback(key: PanelKey) -> bool {
     let taken = dispatch_panel_key(key);
-    if !taken && key.key == PanelKeyCode::Escape { panel_closed(false); }
+    if !taken && key.key == PanelKeyCode::Escape {
+        panel_closed(false);
+    }
     taken
 }
 
 thread_local! { static HIGH_SURROGATE: std::cell::Cell<Option<u16>> = const { std::cell::Cell::new(None) }; }
 
 pub(super) fn dispatch_panel_utf16(unit: u16) {
-    if (0xD800..=0xDBFF).contains(&unit) { HIGH_SURROGATE.set(Some(unit)); return; }
+    if (0xD800..=0xDBFF).contains(&unit) {
+        HIGH_SURROGATE.set(Some(unit));
+        return;
+    }
     if (0xDC00..=0xDFFF).contains(&unit) {
         if let Some(high) = HIGH_SURROGATE.take() {
-            if let Some(ch) = char::decode_utf16([high, unit]).next().and_then(Result::ok) { dispatch_panel_text(&ch.to_string()); }
+            if let Some(ch) = char::decode_utf16([high, unit]).next().and_then(Result::ok) {
+                dispatch_panel_text(&ch.to_string());
+            }
         }
         return;
     }
     HIGH_SURROGATE.set(None);
-    if let Some(ch) = char::from_u32(unit as u32).filter(|c| !c.is_control()) { dispatch_panel_text(&ch.to_string()); }
+    if let Some(ch) = char::from_u32(unit as u32).filter(|c| !c.is_control()) {
+        dispatch_panel_text(&ch.to_string());
+    }
 }
 
 /// Every 50 ms while hovering or while the panel is hover-opened.
 fn hover_step() {
-    let Some((strip, panel, look)) = st(|s| (s.strip, s.panel, s.look.clone())) else { return };
+    let Some((strip, panel, look)) = st(|s| (s.strip, s.panel, s.look.clone())) else {
+        return;
+    };
     let pt = unsafe { dock::cursor() };
     let on = |h: HWND| h != 0 && contains(unsafe { dock::rect(h) }, pt);
     if let Some(a) = st(|s| {
@@ -820,7 +969,9 @@ fn hover_step() {
 }
 
 fn fade_step() {
-    let Some((p, alpha)) = st(|s| (s.panel, s.fade.alpha(Instant::now(), &s.look))) else { return };
+    let Some((p, alpha)) = st(|s| (s.panel, s.fade.alpha(Instant::now(), &s.look))) else {
+        return;
+    };
     match (p, alpha) {
         (p, Some(a)) if p != 0 => unsafe {
             SetLayeredWindowAttributes(p, 0, a, LWA_ALPHA);
@@ -836,9 +987,16 @@ fn right_click(on_panel: bool) {
         // a right-click isn't a hover: cancels a pending hover-open, closes a hover-opened panel
         let a = s.core.panel.right_click(on_panel);
         let show = s.has_tray.then_some(s.core.show);
-        let menu = core::menu(s.content.as_mut(), show, s.core.compact, startup::is_on(s.spec.section));
+        let menu = core::menu(
+            s.content.as_mut(),
+            show,
+            s.core.compact,
+            startup::is_on(s.spec.section),
+        );
         (a, s.strip, s.main, s.look.clone(), menu, s.spec.section)
-    }) else { return };
+    }) else {
+        return;
+    };
     panel_do(a);
     // the left-click panel switches to this one
     panel_closed(false);
@@ -846,8 +1004,16 @@ fn right_click(on_panel: bool) {
     unsafe {
         let r = dock::rect(strip);
         let pt = dock::cursor();
-        let (left, top, right, bottom) = core::menu_anchor((strip != 0).then_some((r.left, r.top, r.right, r.bottom)), (pt.x, pt.y));
-        let anchor = RECT { left, top, right, bottom };
+        let (left, top, right, bottom) = core::menu_anchor(
+            (strip != 0).then_some((r.left, r.top, r.right, r.bottom)),
+            (pt.x, pt.y),
+        );
+        let anchor = RECT {
+            left,
+            top,
+            right,
+            bottom,
+        };
         if !open && strip != 0 {
             dock::close_other_panels(dock::taskbar(), strip); // one panel at a time across widgets
         }
@@ -1031,7 +1197,9 @@ fn flip(id: usize, section: &str) -> bool {
 }
 
 fn read_bool(section: &str, key: &str, default: bool) -> bool {
-    settings::section(section).and_then(|v| v.get(key)?.as_bool()).unwrap_or(default)
+    settings::section(section)
+        .and_then(|v| v.get(key)?.as_bool())
+        .unwrap_or(default)
 }
 
 fn save_bool(section: &str, key: &str, on: bool) -> std::io::Result<()> {
@@ -1040,7 +1208,10 @@ fn save_bool(section: &str, key: &str, on: bool) -> std::io::Result<()> {
         if !root.is_object() {
             *root = Value::Object(Map::new());
         }
-        let sec = root.as_object_mut().map(|o| o.entry(section).or_insert_with(|| Value::Object(Map::new())));
+        let sec = root.as_object_mut().map(|o| {
+            o.entry(section)
+                .or_insert_with(|| Value::Object(Map::new()))
+        });
         if let Some(sec) = sec {
             if !sec.is_object() {
                 *sec = Value::Object(Map::new());
@@ -1051,7 +1222,9 @@ fn save_bool(section: &str, key: &str, on: bool) -> std::io::Result<()> {
 }
 
 fn quit() {
-    let Some((main, already)) = st(|s| (s.main, std::mem::replace(&mut s.quitting, true))) else { return };
+    let Some((main, already)) = st(|s| (s.main, std::mem::replace(&mut s.quitting, true))) else {
+        return;
+    };
     if already {
         return;
     }
@@ -1065,7 +1238,13 @@ fn quit() {
 /// What [`tray_sync`] does after the borrow.
 enum TrayDo {
     Remove(HWND, HICON),
-    Set { main: HWND, icon: HICON, tip: String, add: bool, old: HICON },
+    Set {
+        main: HWND,
+        icon: HICON,
+        tip: String,
+        add: bool,
+        old: HICON,
+    },
 }
 
 /// Adds, updates or removes the tray icon: shown whenever the strip isn't (`core::tray_shown`),
@@ -1081,7 +1260,10 @@ fn tray_sync(redo: bool, re_add: bool) {
             }
             s.tray_on = false;
             s.tray_tip.clear();
-            return Some(TrayDo::Remove(s.main, std::mem::replace(&mut s.tray_icon, 0)));
+            return Some(TrayDo::Remove(
+                s.main,
+                std::mem::replace(&mut s.tray_icon, 0),
+            ));
         }
         let add = re_add || !s.tray_on;
         let mut changed = add;
@@ -1102,7 +1284,13 @@ fn tray_sync(redo: bool, re_add: bool) {
             changed = true;
         }
         s.tray_on = true;
-        changed.then_some(TrayDo::Set { main: s.main, icon: s.tray_icon, tip, add, old })
+        changed.then_some(TrayDo::Set {
+            main: s.main,
+            icon: s.tray_icon,
+            tip,
+            add,
+            old,
+        })
     })
     .flatten();
     unsafe {
@@ -1112,7 +1300,13 @@ fn tray_sync(redo: bool, re_add: bool) {
                 tray::destroy(icon);
                 log("tray icon removed");
             }
-            Some(TrayDo::Set { main, icon, tip, add, old }) => {
+            Some(TrayDo::Set {
+                main,
+                icon,
+                tip,
+                add,
+                old,
+            }) => {
                 tray::set(main, icon, &tip, add);
                 tray::destroy(old);
                 if add {
@@ -1131,11 +1325,26 @@ fn attach(tb: HWND) -> Option<HWND> {
     let (class, title) = st(|s| (wide(s.spec.class), wide(s.spec.title)))?;
     let h = unsafe {
         // visible at 1×1 and empty: in the taskbar's list of children (dock::slot) from the start
-        CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE, class.as_ptr(), title.as_ptr(), WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
-            0, 0, 1, 1, tb, 0, GetModuleHandleW(std::ptr::null()), std::ptr::null())
+        CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_NOACTIVATE,
+            class.as_ptr(),
+            title.as_ptr(),
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+            0,
+            0,
+            1,
+            1,
+            tb,
+            0,
+            GetModuleHandleW(std::ptr::null()),
+            std::ptr::null(),
+        )
     };
     if h == 0 {
-        log(&format!("attaching the strip to the taskbar failed (error {})", unsafe { GetLastError() }));
+        log(&format!(
+            "attaching the strip to the taskbar failed (error {})",
+            unsafe { GetLastError() }
+        ));
         st(|s| s.attach_failed = Some(Instant::now()));
         return None;
     }
@@ -1145,9 +1354,18 @@ fn attach(tb: HWND) -> Option<HWND> {
 /// Creates the strip: a taskbar child if possible, else (attaching failed, no taskbar for
 /// [`FLOAT_AFTER`], or `force_float`) a floating topmost window, if the Spec allows.
 fn create_strip() {
-    let Some((ok, float, force, failed)) =
-        st(|s| (s.strip == 0 && !s.quitting && core::shown(s.core.show, s.content.visible(), s.has_tray), s.spec.float, s.spec.force_float, s.attach_failed))
-    else { return };
+    let Some((ok, float, force, failed)) = st(|s| {
+        (
+            s.strip == 0
+                && !s.quitting
+                && core::shown(s.core.show, s.content.visible(), s.has_tray),
+            s.spec.float,
+            s.spec.force_float,
+            s.attach_failed,
+        )
+    }) else {
+        return;
+    };
     if !ok {
         return;
     }
@@ -1168,13 +1386,30 @@ fn create_strip() {
             return;
         }
     }
-    let Some((class, title)) = st(|s| (wide(s.spec.class), wide(s.spec.title))) else { return };
+    let Some((class, title)) = st(|s| (wide(s.spec.class), wide(s.spec.title))) else {
+        return;
+    };
     let h = unsafe {
-        CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, class.as_ptr(), title.as_ptr(), WS_POPUP,
-            0, 0, 1, 1, 0, 0, GetModuleHandleW(std::ptr::null()), std::ptr::null())
+        CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            class.as_ptr(),
+            title.as_ptr(),
+            WS_POPUP,
+            0,
+            0,
+            1,
+            1,
+            0,
+            0,
+            GetModuleHandleW(std::ptr::null()),
+            std::ptr::null(),
+        )
     };
     if h == 0 {
-        log(&format!("creating the floating strip failed (error {})", unsafe { GetLastError() }));
+        log(&format!(
+            "creating the floating strip failed (error {})",
+            unsafe { GetLastError() }
+        ));
         return;
     }
     adopt(h, true);
@@ -1217,7 +1452,9 @@ fn destroy_strip() {
 
 /// Destroys the strip (it leaves the dock stack); the panels are the caller's business.
 fn remove_strip() {
-    let Some(h) = st(|s| std::mem::replace(&mut s.strip, 0)).filter(|h| *h != 0) else { return };
+    let Some(h) = st(|s| std::mem::replace(&mut s.strip, 0)).filter(|h| *h != 0) else {
+        return;
+    };
     for t in [T_GLIDE, T_ZOOM, T_RESIZE, T_FEEL, T_APPEAR] {
         timer(t, false);
     }
@@ -1242,7 +1479,9 @@ fn taskbar_restarted() {
         s.attach_failed = None;
         s.no_taskbar_since = None;
         (s.strip, s.floating)
-    }) else { return };
+    }) else {
+        return;
+    };
     if floating {
         float_watch(); // attaches now if it can
     } else if strip != 0 {
@@ -1257,7 +1496,17 @@ fn taskbar_restarted() {
 
 /// Floating: back onto the taskbar when possible; hidden while a full-screen app is in front.
 fn float_watch() {
-    let Some((strip, floating, force, failed, fs_hidden)) = st(|s| (s.strip, s.floating, s.spec.force_float, s.attach_failed, s.fs_hidden)) else { return };
+    let Some((strip, floating, force, failed, fs_hidden)) = st(|s| {
+        (
+            s.strip,
+            s.floating,
+            s.spec.force_float,
+            s.attach_failed,
+            s.fs_hidden,
+        )
+    }) else {
+        return;
+    };
     if !floating || strip == 0 {
         return;
     }
@@ -1294,8 +1543,12 @@ fn watch() {
 /// The settings file changed (an edit, or dockctl's `set`): Block's keys, then the widget.
 fn follow_settings(force: bool) {
     let m = settings::mtime();
-    if let Some(Some(section)) = st(|s| (force || s.settings_mtime != m).then_some(s.spec.section)) {
-        let (compact, show) = (read_bool(section, COMPACT_KEY, false), read_bool(section, SHOW_KEY, true));
+    if let Some(Some(section)) = st(|s| (force || s.settings_mtime != m).then_some(s.spec.section))
+    {
+        let (compact, show) = (
+            read_bool(section, COMPACT_KEY, false),
+            read_bool(section, SHOW_KEY, true),
+        );
         st(|s| {
             s.settings_mtime = m;
             s.core.compact = compact;
@@ -1313,7 +1566,9 @@ fn refresh_look(force: bool) {
         let changed = force || s.look != new;
         s.look = new;
         (changed, s.panel)
-    }) else { return };
+    }) else {
+        return;
+    };
     if changed {
         call(|c, ctx| c.look_changed(ctx));
         tray_sync(true, false); // the logo follows the theme
@@ -1324,16 +1579,28 @@ fn refresh_look(force: bool) {
 }
 
 fn update_hooks() {
-    let Some(mut hooks) = st(|s| std::mem::take(&mut s.hooks)) else { return };
+    let Some(mut hooks) = st(|s| std::mem::take(&mut s.hooks)) else {
+        return;
+    };
     unsafe { hooks.update(dock::taskbar(), Some(on_win_event)) };
     st(|s| s.hooks = hooks);
 }
 
 /// A neighbour (tray, another widget) changed: reposition right away instead of waiting for the
 /// watch timer.
-unsafe extern "system" fn on_win_event(_: isize, _event: u32, hwnd: isize, id_object: i32, _: i32, _: u32, _: u32) {
+unsafe extern "system" fn on_win_event(
+    _: isize,
+    _event: u32,
+    hwnd: isize,
+    id_object: i32,
+    _: i32,
+    _: u32,
+    _: u32,
+) {
     let tb = dock::taskbar();
-    let Some((strip, floating)) = st(|s| (s.strip, s.floating)) else { return };
+    let Some((strip, floating)) = st(|s| (s.strip, s.floating)) else {
+        return;
+    };
     if strip == 0 || !dock::is_neighbour_event(hwnd, id_object, tb, strip) {
         return;
     }
@@ -1347,15 +1614,30 @@ unsafe extern "system" fn on_win_event(_: isize, _event: u32, hwnd: isize, id_ob
 // ---------------------------------------------------------------- drawing and placing
 
 fn frame(look: &Look, height: i32, scale: f32, compact: bool) -> Frame<'_> {
-    Frame { look, height, scale, compact, fit_width: None }
+    Frame {
+        look,
+        height,
+        scale,
+        compact,
+        fit_width: None,
+    }
 }
 
 /// Measures, draws and places the strip; creates it when it's missing and wanted, destroys it
 /// when [`Content::visible`] says no.
 fn redraw() {
-    let Some((strip, visible, quitting, floating, fs_hidden, flipping)) =
-        st(|s| (s.strip, core::shown(s.core.show, s.content.visible(), s.has_tray), s.quitting, s.floating, s.fs_hidden, s.flipping))
-    else { return };
+    let Some((strip, visible, quitting, floating, fs_hidden, flipping)) = st(|s| {
+        (
+            s.strip,
+            core::shown(s.core.show, s.content.visible(), s.has_tray),
+            s.quitting,
+            s.floating,
+            s.fs_hidden,
+            s.flipping,
+        )
+    }) else {
+        return;
+    };
     if quitting {
         return;
     }
@@ -1387,7 +1669,11 @@ fn redraw() {
             st(|s| s.strip = 0);
             return;
         }
-        let tb = if floating { dock::taskbar() } else { GetParent(strip) };
+        let tb = if floating {
+            dock::taskbar()
+        } else {
+            GetParent(strip)
+        };
         let dpi = system::scale_for(strip);
         let height = match (tb, floating) {
             (0, _) => (FLOAT_HEIGHT * dpi).round() as i32,
@@ -1412,13 +1698,27 @@ fn redraw() {
             let compact = s.content.measure(&f, true);
             let held = if s.spec.glide_width {
                 let key = (s.core.compact, height, (dpi * 1000.0).round() as i32);
-                s.core.width.update(key, chosen, (core::WIDTH_SLACK * dpi).round() as i32)
+                s.core
+                    .width
+                    .update(key, chosen, (core::WIDTH_SLACK * dpi).round() as i32)
             } else {
                 chosen
             };
             let size = core::size(held, compact, &s.spec);
-            (size, chosen, compact, s.content.side(), s.core.motion.zoom(), s.core.motion.dragging(), s.look.clone(), s.spec.stretch, s.spec.glide_width)
-        }) else { return };
+            (
+                size,
+                chosen,
+                compact,
+                s.content.side(),
+                s.core.motion.zoom(),
+                s.core.motion.dragging(),
+                s.look.clone(),
+                s.spec.stretch,
+                s.spec.glide_width,
+            )
+        }) else {
+            return;
+        };
         let right = !floating && side == Side::Right;
         let gap = (look.gap * dpi).round() as i32;
         // on the right it's part of the dock stack against the tray; elsewhere it isn't
@@ -1431,8 +1731,16 @@ fn redraw() {
             dock::leave(strip);
         }
         // the room next to the taskbar's buttons: narrower, compact, or hidden while there's none
-        let slot = if right { dock::slot(tb, strip, size, dock::tray_boundary(tb, dpi), gap) } else { None };
-        let fit = if right { slot.map(|s| s.fit) } else { Some(Fit::Full) };
+        let slot = if right {
+            dock::slot(tb, strip, size, dock::tray_boundary(tb, dpi), gap)
+        } else {
+            None
+        };
+        let fit = if right {
+            slot.map(|s| s.fit)
+        } else {
+            Some(Fit::Full)
+        };
         if let Some(f) = fit.filter(|_| !dragging) {
             apply_fit(strip, f, false);
         }
@@ -1442,8 +1750,14 @@ fn redraw() {
         // the width it's headed for: compact (chosen, or for room), crowded, or the content's held
         // width. A compact switch animates it (the full content drawn cut off meanwhile), and so
         // does any change with Spec::glide_width
-        let Some((compact, narrowed)) = st(|s| s.core.mode(stretch, size.min)) else { return };
-        let (natural_w, target) = if compact { (compact_w, compact_w) } else { (raw, narrowed.map_or(size.full, |n| n.min(size.full))) };
+        let Some((compact, narrowed)) = st(|s| s.core.mode(stretch, size.min)) else {
+            return;
+        };
+        let (natural_w, target) = if compact {
+            (compact_w, compact_w)
+        } else {
+            (raw, narrowed.map_or(size.full, |n| n.min(size.full)))
+        };
         let resize_w = start_resize(strip, compact, target, glide);
         let shown_compact = compact && resize_w.is_none();
         let fit_w = core::fit_width(resize_w, target, natural_w, zoom);
@@ -1459,9 +1773,27 @@ fn redraw() {
             // a brand tint for the strip (and the hovered button's own)
             // at the shared levels (Look::tint) for the state the Content says it's in
             let shade = |t: Tint| core::Shade::of(t, &s.look.tint);
-            let tint = s.content.tint(Hit::Strip, &s.look).map(|t| (shade(t), matches!(hot, Hit::Button(..)).then(|| s.content.tint(hot, &s.look)).flatten().map(shade)));
-            Some((cv, s.core.feel.value(), s.content.cover(), s.core.hover, s.core.motion.dragging(), hot, tint))
-        }) else { return };
+            let tint = s.content.tint(Hit::Strip, &s.look).map(|t| {
+                (
+                    shade(t),
+                    matches!(hot, Hit::Button(..))
+                        .then(|| s.content.tint(hot, &s.look))
+                        .flatten()
+                        .map(shade),
+                )
+            });
+            Some((
+                cv,
+                s.core.feel.value(),
+                s.content.cover(),
+                s.core.hover,
+                s.core.motion.dragging(),
+                hot,
+                tint,
+            ))
+        }) else {
+            return;
+        };
         let natural = cv.w;
         // the cover's hover / press feel, then the cut-off, then the background under it all
         if let Some(b) = cover {
@@ -1479,8 +1811,24 @@ fn redraw() {
             Some((strip_tint, button_tint)) => {
                 // the faint base (the whole strip takes the mouse), then the brand boxes under it all
                 draw::background_rect(&mut px, width, height, None, look.light, radius);
-                for (b, rgb, alpha) in core::tints(strip_tint, button_tint, hover, dragging_now, hot, width, height, inset) {
-                    draw::tint_box(&mut px, width, b, (rgb >> 16 & 0xff, rgb >> 8 & 0xff, rgb & 0xff), alpha, radius);
+                for (b, rgb, alpha) in core::tints(
+                    strip_tint,
+                    button_tint,
+                    hover,
+                    dragging_now,
+                    hot,
+                    width,
+                    height,
+                    inset,
+                ) {
+                    draw::tint_box(
+                        &mut px,
+                        width,
+                        b,
+                        (rgb >> 16 & 0xff, rgb >> 8 & 0xff, rgb & 0xff),
+                        alpha,
+                        radius,
+                    );
                 }
             }
         }
@@ -1488,16 +1836,29 @@ fn redraw() {
             // over other windows: a backdrop in the panels' background keeps it readable, in the
             // highlight's shape, under everything
             let bg = Theme::new(&look).color.bg.tuple();
-            draw::tint_box(&mut px, width, (0, inset, width, height - inset), bg, FLOAT_BACKDROP, radius);
+            draw::tint_box(
+                &mut px,
+                width,
+                (0, inset, width, height - inset),
+                bg,
+                FLOAT_BACKDROP,
+                radius,
+            );
         }
         drop(cv);
-        let Some(mut out) = Canvas::new(width, height) else { return };
+        let Some(mut out) = Canvas::new(width, height) else {
+            return;
+        };
         out.pixels().copy_from_slice(&px);
         let before = dock::rect(strip);
         // a compact switch running: the others place themselves by this frame's width (published
         // before the window takes it, so the move it causes finds it); cleared on the last frame
-        let drawn_cleared = right && dock::publish_drawn(strip, resize_w.map(|_| width)) && resize_w.is_none();
-        let sz = SIZE { cx: width, cy: height };
+        let drawn_cleared =
+            right && dock::publish_drawn(strip, resize_w.map(|_| width)) && resize_w.is_none();
+        let sz = SIZE {
+            cx: width,
+            cy: height,
+        };
         let src = POINT { x: 0, y: 0 };
         // a new strip fades in (appear_step), from its first drawing
         let Some((alpha, appearing)) = st(|s| {
@@ -1507,15 +1868,31 @@ fn redraw() {
                 s.appear.go(1.0, now, s.look.glide_ms);
             }
             (s.appear.value(now), s.appear.running(now))
-        }) else { return };
+        }) else {
+            return;
+        };
         if appearing {
             timer(T_APPEAR, true);
         }
         let blend = blend_at(alpha);
         let settled = st(|s| s.core.motion.settled()).unwrap_or(true);
         // docked against the tray: a new width keeps the right edge, moved in the same step
-        let dst = if right && settled && !dragging && IsWindowVisible(strip) != 0 { strip::right_anchored(strip, before, width) } else { None };
-        UpdateLayeredWindow(strip, 0, dst.as_ref().map_or(std::ptr::null(), |p| p as *const POINT), &sz, out.dc, &src, 0, &blend, ULW_ALPHA);
+        let dst = if right && settled && !dragging && IsWindowVisible(strip) != 0 {
+            strip::right_anchored(strip, before, width)
+        } else {
+            None
+        };
+        UpdateLayeredWindow(
+            strip,
+            0,
+            dst.as_ref().map_or(std::ptr::null(), |p| p as *const POINT),
+            &sz,
+            out.dc,
+            &src,
+            0,
+            &blend,
+            ULW_ALPHA,
+        );
         if drawn_cleared {
             dock::notify(strip); // the last frame may not move it: the others look once more
         }
@@ -1556,20 +1933,38 @@ fn redraw() {
         }
         if dock::needs_raise(strip) {
             // the taskbar's own content came over it: back on top (never on every redraw)
-            SetWindowPos(strip, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            SetWindowPos(
+                strip,
+                HWND_TOP,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
         }
         if slot.is_some_and(|s| s.follow) {
             follow(strip, tb, target(width)); // a neighbour is changing width: keep flush with it
         } else {
             // after a drop (zooming back) or while another member is dragged: slide, so it flows
-            move_to(strip, tb, target(width), !settled || slot.is_some_and(|s| s.slide));
+            move_to(
+                strip,
+                tb,
+                target(width),
+                !settled || slot.is_some_and(|s| s.slide),
+            );
         }
     }
 }
 
 fn blend_at(alpha: f32) -> BLENDFUNCTION {
     let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
-    BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: a, AlphaFormat: AC_SRC_ALPHA as u8 }
+    BLENDFUNCTION {
+        BlendOp: AC_SRC_OVER as u8,
+        BlendFlags: 0,
+        SourceConstantAlpha: a,
+        AlphaFormat: AC_SRC_ALPHA as u8,
+    }
 }
 
 /// One frame of the strip fading in or out: only its opacity changes (the picture stays, so a
@@ -1577,8 +1972,15 @@ fn blend_at(alpha: f32) -> BLENDFUNCTION {
 fn appear_step() {
     let Some((strip, alpha, running, leaving)) = st(|s| {
         let now = Instant::now();
-        (s.strip, s.appear.value(now), s.appear.running(now), s.leaving)
-    }) else { return };
+        (
+            s.strip,
+            s.appear.value(now),
+            s.appear.running(now),
+            s.leaving,
+        )
+    }) else {
+        return;
+    };
     timer(T_APPEAR, running && strip != 0);
     if strip == 0 {
         return;
@@ -1589,7 +1991,17 @@ fn appear_step() {
     }
     let blend = blend_at(alpha);
     unsafe {
-        UpdateLayeredWindow(strip, 0, std::ptr::null(), std::ptr::null(), 0, std::ptr::null(), 0, &blend, ULW_ALPHA);
+        UpdateLayeredWindow(
+            strip,
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            &blend,
+            ULW_ALPHA,
+        );
     }
 }
 
@@ -1607,11 +2019,25 @@ unsafe fn floating_x(tb: HWND, width: i32, gap: i32, dpi: f32) -> i32 {
 /// strip ([`core::animate_width`]). The width to draw at while that runs.
 fn start_resize(strip: HWND, compact: bool, target: i32, glide: bool) -> Option<i32> {
     let Some((switched, prev, running)) = st(|s| {
-        let switched = s.core.drawn_compact.replace(compact).is_some_and(|c| c != compact);
-        (switched, s.core.drawn_target.replace(target), s.core.motion.resize_width().is_some())
-    }) else { return None };
-    if core::animate_width(switched, prev, target, glide, running) && unsafe { IsWindowVisible(strip) } != 0 {
-        let from = st(|s| s.core.motion.resize_width()).flatten().unwrap_or_else(|| width_of(strip));
+        let switched = s
+            .core
+            .drawn_compact
+            .replace(compact)
+            .is_some_and(|c| c != compact);
+        (
+            switched,
+            s.core.drawn_target.replace(target),
+            s.core.motion.resize_width().is_some(),
+        )
+    }) else {
+        return None;
+    };
+    if core::animate_width(switched, prev, target, glide, running)
+        && unsafe { IsWindowVisible(strip) } != 0
+    {
+        let from = st(|s| s.core.motion.resize_width())
+            .flatten()
+            .unwrap_or_else(|| width_of(strip));
         if st(|s| s.core.motion.resize(from, target, &s.look, Instant::now())) == Some(true) {
             timer(T_RESIZE, true);
         }
@@ -1622,7 +2048,9 @@ fn start_resize(strip: HWND, compact: bool, target: i32, glide: bool) -> Option<
 /// The room next to the taskbar's buttons changed (dock::fit): hide or show the strip, and with
 /// `redraw` also redraw it (compact, narrower or full).
 fn apply_fit(strip: HWND, fit: Fit, redraw_it: bool) -> FitChange {
-    let Some(change) = st(|s| s.core.fit.update(fit)) else { return FitChange::None };
+    let Some(change) = st(|s| s.core.fit.update(fit)) else {
+        return FitChange::None;
+    };
     unsafe {
         match change {
             FitChange::Hide => {
@@ -1648,14 +2076,20 @@ fn apply_fit(strip: HWND, fit: Fit, redraw_it: bool) -> FitChange {
 
 /// An attached strip at x (screen), never past the tray.
 unsafe fn put(strip: HWND, tb: HWND, x: i32) {
-    let Some(look) = st(|s| s.look.clone()) else { return };
+    let Some(look) = st(|s| s.look.clone()) else {
+        return;
+    };
     strip::move_strip(strip, tb, x.min(max_x(tb, width_of(strip), &look)), false);
 }
 
 /// Heads for x: a slide or a jump (rules in `strip`).
 fn move_to(strip: HWND, tb: HWND, x: i32, always_slide: bool) {
     let cur = unsafe { dock::rect(strip).left };
-    match st(|s| s.core.motion.glide_to(cur, x, always_slide, &s.look, Instant::now())) {
+    match st(|s| {
+        s.core
+            .motion
+            .glide_to(cur, x, always_slide, &s.look, Instant::now())
+    }) {
         Some(Glide::Jump(x)) => {
             timer(T_GLIDE, false);
             unsafe { put(strip, tb, x) };
@@ -1676,9 +2110,17 @@ fn follow(strip: HWND, tb: HWND, x: i32) {
 
 /// Recomputes only the position (no redraw): a neighbour moved, or a drop. Not while pressed.
 fn reposition(always_slide: bool) {
-    let Some((strip, floating, pressed, side, look)) =
-        st(|s| (s.strip, s.floating, s.core.motion.pressed(), s.content.side(), s.look.clone()))
-    else { return };
+    let Some((strip, floating, pressed, side, look)) = st(|s| {
+        (
+            s.strip,
+            s.floating,
+            s.core.motion.pressed(),
+            s.content.side(),
+            s.look.clone(),
+        )
+    }) else {
+        return;
+    };
     if strip == 0 || floating || pressed {
         return;
     }
@@ -1688,7 +2130,10 @@ fn reposition(always_slide: bool) {
         let width = width_of(strip);
         let (x, slide, follows) = if side == Side::Right {
             let size = dock_size(strip, width);
-            let Some(slot) = dock::slot(tb, strip, size, dock::tray_boundary(tb, scale), gap) else { return };
+            let Some(slot) = dock::slot(tb, strip, size, dock::tray_boundary(tb, scale), gap)
+            else {
+                return;
+            };
             // the room changed: redrawn compact or full, or hidden
             if apply_fit(strip, slot.fit, true) != FitChange::None {
                 return;
@@ -1710,7 +2155,10 @@ fn reposition(always_slide: bool) {
 
 /// The widths this strip published for the fit; its window width if none yet.
 unsafe fn dock_size(strip: HWND, width: i32) -> dock::Size {
-    dock::children(GetParent(strip)).into_iter().find(|c| c.hwnd == strip).map_or(dock::Size::fixed(width), |c| c.size)
+    dock::children(GetParent(strip))
+        .into_iter()
+        .find(|c| c.hwnd == strip)
+        .map_or(dock::Size::fixed(width), |c| c.size)
 }
 
 fn glide_step() {

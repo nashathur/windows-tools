@@ -21,14 +21,18 @@ thread_local! {
 /// Posted to the main window to click [`PENDING`] from inside the menu's loop.
 pub(super) fn click_message() -> u32 {
     static MSG: OnceLock<u32> = OnceLock::new();
-    *MSG.get_or_init(|| unsafe { RegisterWindowMessageW(wide("TaskbarDock.dockctl.click").as_ptr()) })
+    *MSG.get_or_init(|| unsafe {
+        RegisterWindowMessageW(wide("TaskbarDock.dockctl.click").as_ptr())
+    })
 }
 
 /// Completes a queued menu-row click from inside the menu's message loop.
 pub(super) fn pending_click() {
     if let Some(id) = PENDING.with(|p| p.take()) {
         if !crate::menu_panel::click(id) {
-            log(&format!("dockctl: menu click {id:#x}: the menu didn't open"));
+            log(&format!(
+                "dockctl: menu click {id:#x}: the menu didn't open"
+            ));
         }
     }
 }
@@ -42,29 +46,48 @@ pub(super) fn on_copydata(wp: WPARAM, lp: LPARAM) -> LRESULT {
     let bytes = if cds.lpData.is_null() {
         Vec::new()
     } else {
-        unsafe {
-            std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize).to_vec()
-        }
+        unsafe { std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize).to_vec() }
     };
     let v2 = cds.dwData == ctl::REQUEST2;
     let (id, args) = if v2 {
         match ctl::decode2(&bytes) {
             Ok((id, args)) => (id, args),
             Err(e) => {
-                send_reply(ReplyTo { hwnd: wp as HWND, id: 0, v2 }, &ctl::error(e));
+                send_reply(
+                    ReplyTo {
+                        hwnd: wp as HWND,
+                        id: 0,
+                        v2,
+                    },
+                    &ctl::error(e),
+                );
                 return 1;
             }
         }
     } else {
-        (0, match ctl::decode(&bytes) {
-            Ok(args) => args,
-            Err(e) => {
-                send_reply(ReplyTo { hwnd: wp as HWND, id: 0, v2 }, &ctl::error(e));
-                return 1;
-            }
-        })
+        (
+            0,
+            match ctl::decode(&bytes) {
+                Ok(args) => args,
+                Err(e) => {
+                    send_reply(
+                        ReplyTo {
+                            hwnd: wp as HWND,
+                            id: 0,
+                            v2,
+                        },
+                        &ctl::error(e),
+                    );
+                    return 1;
+                }
+            },
+        )
     };
-    let to = ReplyTo { hwnd: wp as HWND, id, v2 };
+    let to = ReplyTo {
+        hwnd: wp as HWND,
+        id,
+        v2,
+    };
     match ctl::parse(&args) {
         Ok(cmd) => {
             if !matches!(cmd, Command::Ping) {
@@ -99,7 +122,16 @@ fn send_reply(to: ReplyTo, text: &str) {
     };
     unsafe {
         let mut _r = 0;
-        if SendMessageTimeoutW(to.hwnd, WM_COPYDATA, main as WPARAM, &cds as *const _ as LPARAM, SMTO_ABORTIFHUNG, 2000, &mut _r) == 0 {
+        if SendMessageTimeoutW(
+            to.hwnd,
+            WM_COPYDATA,
+            main as WPARAM,
+            &cds as *const _ as LPARAM,
+            SMTO_ABORTIFHUNG,
+            2000,
+            &mut _r,
+        ) == 0
+        {
             log("dockctl: reply delivery failed; requester is gone or hung");
         }
     }
@@ -125,12 +157,9 @@ fn command_log(cmd: &Command) -> String {
     match cmd {
         Command::Set(dock, key, value) => {
             let described = if *dock {
-                crate::style::dock_settings()
-                    .into_iter()
-                    .any(|setting| {
-                        setting.key == *key
-                            && crate::describe::is_secret_kind(&setting.kind)
-                    })
+                crate::style::dock_settings().into_iter().any(|setting| {
+                    setting.key == *key && crate::describe::is_secret_kind(&setting.kind)
+                })
             } else {
                 st(|state| {
                     state
@@ -168,9 +197,7 @@ fn secret_keys(dock: bool) -> Vec<String> {
     target(dock)
         .settings
         .into_iter()
-        .filter_map(|setting| {
-            crate::describe::is_secret_kind(&setting.kind).then_some(setting.key)
-        })
+        .filter_map(|setting| crate::describe::is_secret_kind(&setting.kind).then_some(setting.key))
         .collect()
 }
 
@@ -237,10 +264,11 @@ fn reply_after_write(to: ReplyTo, dock: bool, mut value: Value) {
                         std::time::Duration::from_secs(5),
                     );
                     // A stopped widget reads the new value when it starts (as control::apply).
-                    let confirmed = matches!(
-                        result,
-                        Ok(ref reply) if reply.get("ok").and_then(Value::as_bool) == Some(true)
-                    ) || matches!(result, Err(crate::client::SendError::NotRunning));
+                    let confirmed =
+                        matches!(
+                            result,
+                            Ok(ref reply) if reply.get("ok").and_then(Value::as_bool) == Some(true)
+                        ) || matches!(result, Err(crate::client::SendError::NotRunning));
                     (entry.name, confirmed)
                 })
             })
@@ -299,22 +327,25 @@ fn keys(to: ReplyTo, dock: bool) {
     };
     names.sort();
     let secrets = secret_keys(dock);
-    let rows: Vec<Value> = names.iter().map(|key| {
-        let mask = |value: Option<&Value>| {
-            value.map_or(Value::Null, |value| {
-                if secrets.contains(key) {
-                    ctl::mask_setting("secret", value)
-                } else {
-                    ctl::mask_setting(key, value)
-                }
+    let rows: Vec<Value> = names
+        .iter()
+        .map(|key| {
+            let mask = |value: Option<&Value>| {
+                value.map_or(Value::Null, |value| {
+                    if secrets.contains(key) {
+                        ctl::mask_setting("secret", value)
+                    } else {
+                        ctl::mask_setting(key, value)
+                    }
+                })
+            };
+            json!({
+                "key": key,
+                "current": mask(crate::describe::value_at(&current, key)),
+                "default": mask(crate::describe::value_at(&defaults, key)),
             })
-        };
-        json!({
-            "key": key,
-            "current": mask(crate::describe::value_at(&current, key)),
-            "default": mask(crate::describe::value_at(&defaults, key)),
         })
-    }).collect();
+        .collect();
     send_reply(to, &ctl::ok(json!({ "section": section, "keys": rows })));
 }
 
@@ -348,9 +379,14 @@ fn unset(to: ReplyTo, dock: bool, key: &str) {
 }
 
 fn do_command(to: ReplyTo, name: &str, args: &[String]) {
-    let Some(names) = st(|s| s.content.commands()) else { return };
+    let Some(names) = st(|s| s.content.commands()) else {
+        return;
+    };
     if name == "help" && args.is_empty() {
-        let list: Vec<Value> = names.iter().map(|(name, usage)| json!({ "name": name, "usage": usage })).collect();
+        let list: Vec<Value> = names
+            .iter()
+            .map(|(name, usage)| json!({ "name": name, "usage": usage }))
+            .collect();
         return send_reply(to, &ctl::ok(json!({ "commands": list })));
     }
     let Some((_, usage)) = names.iter().find(|(n, _)| *n == name) else {
@@ -364,9 +400,14 @@ fn do_command(to: ReplyTo, name: &str, args: &[String]) {
     };
     // a v1 request can't take a late reply
     if !to.v2 {
-        return send_reply(to, &ctl::error("this dockctl is older than the widget: rebuild dockctl"));
+        return send_reply(
+            to,
+            &ctl::error("this dockctl is older than the widget: rebuild dockctl"),
+        );
     }
-    let Some((main, logger)) = st(|s| (s.main, s.spec.log)) else { return };
+    let Some((main, logger)) = st(|s| (s.main, s.spec.log)) else {
+        return;
+    };
     let token = ReplyToken::new(main, to.hwnd, to.id, Some(*usage), logger);
     let reply = call(|content, ctx| content.command(name, args, token, ctx));
     if let Some(CommandReply::Done(result)) = reply {
@@ -385,10 +426,22 @@ fn send_result(to: ReplyTo, result: Result<Value, CommandError>, usage: Option<&
 
 /// Handles a posted result from a worker, on Block's UI thread.
 pub(super) fn command_reply(lp: LPARAM) {
-    if lp == 0 { return; }
+    if lp == 0 {
+        return;
+    }
     let result = unsafe { *Box::from_raw(lp as *mut CommandResult) };
-    if DONE_IDS.with(|ids| ids.borrow_mut().remove(&result.id)) { return; }
-    send_result(ReplyTo { hwnd: result.requester, id: result.id, v2: true }, result.result, result.usage);
+    if DONE_IDS.with(|ids| ids.borrow_mut().remove(&result.id)) {
+        return;
+    }
+    send_result(
+        ReplyTo {
+            hwnd: result.requester,
+            id: result.id,
+            v2: true,
+        },
+        result.result,
+        result.usage,
+    );
 }
 
 fn run(to: ReplyTo, cmd: Command) {
@@ -402,23 +455,35 @@ fn run(to: ReplyTo, cmd: Command) {
                 PanelOp::Close => panel_closed(false),
                 PanelOp::OpenPicker => {
                     let opened = open_panel_kind_with(PanelKind::Picker, true);
-                    if !opened { return send_reply(to, &ctl::error("this widget has no picker panel")); }
+                    if !opened {
+                        return send_reply(to, &ctl::error("this widget has no picker panel"));
+                    }
                 }
             }
             ok(json!({ "panel": panel_state() }))
         }
         Command::PanelKey(key) => {
             let (key, ctrl, alt) = match key {
-                CtlPanelKey::Enter => (PanelKeyCode::Enter, false, false), CtlPanelKey::Esc => (PanelKeyCode::Escape, false, false),
-                CtlPanelKey::Up => (PanelKeyCode::Up, false, false), CtlPanelKey::Down => (PanelKeyCode::Down, false, false),
-                CtlPanelKey::PgUp => (PanelKeyCode::PageUp, false, false), CtlPanelKey::PgDn => (PanelKeyCode::PageDown, false, false),
-                CtlPanelKey::Home => (PanelKeyCode::Home, false, false), CtlPanelKey::End => (PanelKeyCode::End, false, false),
-                CtlPanelKey::CtrlHome => (PanelKeyCode::Home, true, false), CtlPanelKey::CtrlEnd => (PanelKeyCode::End, true, false),
-                CtlPanelKey::Back => (PanelKeyCode::Left, false, true), CtlPanelKey::Backspace => (PanelKeyCode::Backspace, false, false),
-                CtlPanelKey::Delete => (PanelKeyCode::Delete, false, false), CtlPanelKey::Left => (PanelKeyCode::Left, false, false),
-                CtlPanelKey::Right => (PanelKeyCode::Right, false, false), CtlPanelKey::CtrlA => (PanelKeyCode::A, true, false),
-                CtlPanelKey::CtrlC => (PanelKeyCode::C, true, false), CtlPanelKey::CtrlV => (PanelKeyCode::V, true, false),
-                CtlPanelKey::CtrlX => (PanelKeyCode::X, true, false), CtlPanelKey::CtrlBackspace => (PanelKeyCode::Backspace, true, false),
+                CtlPanelKey::Enter => (PanelKeyCode::Enter, false, false),
+                CtlPanelKey::Esc => (PanelKeyCode::Escape, false, false),
+                CtlPanelKey::Up => (PanelKeyCode::Up, false, false),
+                CtlPanelKey::Down => (PanelKeyCode::Down, false, false),
+                CtlPanelKey::PgUp => (PanelKeyCode::PageUp, false, false),
+                CtlPanelKey::PgDn => (PanelKeyCode::PageDown, false, false),
+                CtlPanelKey::Home => (PanelKeyCode::Home, false, false),
+                CtlPanelKey::End => (PanelKeyCode::End, false, false),
+                CtlPanelKey::CtrlHome => (PanelKeyCode::Home, true, false),
+                CtlPanelKey::CtrlEnd => (PanelKeyCode::End, true, false),
+                CtlPanelKey::Back => (PanelKeyCode::Left, false, true),
+                CtlPanelKey::Backspace => (PanelKeyCode::Backspace, false, false),
+                CtlPanelKey::Delete => (PanelKeyCode::Delete, false, false),
+                CtlPanelKey::Left => (PanelKeyCode::Left, false, false),
+                CtlPanelKey::Right => (PanelKeyCode::Right, false, false),
+                CtlPanelKey::CtrlA => (PanelKeyCode::A, true, false),
+                CtlPanelKey::CtrlC => (PanelKeyCode::C, true, false),
+                CtlPanelKey::CtrlV => (PanelKeyCode::V, true, false),
+                CtlPanelKey::CtrlX => (PanelKeyCode::X, true, false),
+                CtlPanelKey::CtrlBackspace => (PanelKeyCode::Backspace, true, false),
             };
             dispatch_panel_key_with_fallback(PanelKey { key, ctrl, alt });
             ok(json!({ "panel": panel_state() }))
@@ -442,12 +507,17 @@ fn run(to: ReplyTo, cmd: Command) {
         }
         Command::MenuRows => {
             let (open, rows) = menu_rows();
-            ok(json!({ "open": open, "rows": rows.iter().map(|r| json!({ "id": r.id, "hex": format!("{:#x}", r.id), "label": r.label, "switch": r.switch })).collect::<Vec<_>>() }));
+            ok(
+                json!({ "open": open, "rows": rows.iter().map(|r| json!({ "id": r.id, "hex": format!("{:#x}", r.id), "label": r.label, "switch": r.switch })).collect::<Vec<_>>() }),
+            );
         }
         Command::MenuClick(name) => {
             let (open, rows) = menu_rows();
-            let named: Vec<(usize, String)> = rows.iter().map(|r| (r.id, r.label.clone())).collect();
-            let Some(row) = ctl::find_row(&named, &name).and_then(|id| rows.into_iter().find(|r| r.id == id)) else {
+            let named: Vec<(usize, String)> =
+                rows.iter().map(|r| (r.id, r.label.clone())).collect();
+            let Some(row) =
+                ctl::find_row(&named, &name).and_then(|id| rows.into_iter().find(|r| r.id == id))
+            else {
                 return send_reply(to, &ctl::error(format!("no menu row {name:?}")));
             };
             let what = json!({ "clicked": row.label, "id": row.id, "switch_was": row.switch, "opened_menu": !open });
@@ -502,7 +572,14 @@ fn run(to: ReplyTo, cmd: Command) {
             }
         }
         Command::Get(dock, key) => {
-            let section = if dock { "dock" } else { let Some(s) = st(|s| s.spec.section) else { return }; s };
+            let section = if dock {
+                "dock"
+            } else {
+                let Some(s) = st(|s| s.spec.section) else {
+                    return;
+                };
+                s
+            };
             let raw = settings::section(section).unwrap_or(Value::Null);
             let sec = ctl::mask_with(&raw, &secret_keys(dock));
             match key {
@@ -518,7 +595,10 @@ fn run(to: ReplyTo, cmd: Command) {
         Command::Do(name, args) => do_command(to, &name, &args),
         Command::Log(n) => {
             let Some(file) = st(|s| s.spec.log_file.clone()).flatten() else {
-                return send_reply(to, &ctl::error("this widget has no log file (Spec::log_file)"));
+                return send_reply(
+                    to,
+                    &ctl::error("this widget has no log file (Spec::log_file)"),
+                );
             };
             match std::fs::read(&file) {
                 Ok(b) => {
@@ -570,10 +650,7 @@ fn run(to: ReplyTo, cmd: Command) {
             };
             match result {
                 Ok(value) => ok(json!({"startup":value})),
-                Err(error) => send_reply(
-                    to,
-                    &ctl::error(format!("startup failed: {error}")),
-                ),
+                Err(error) => send_reply(to, &ctl::error(format!("startup failed: {error}"))),
             }
         }
     }
@@ -613,7 +690,12 @@ fn menu_rows() -> (bool, Vec<Row>) {
     }
     let menu = st(|s| {
         let show = s.has_tray.then_some(s.core.show);
-        core::menu(s.content.as_mut(), show, s.core.compact, startup::is_on(s.spec.section))
+        core::menu(
+            s.content.as_mut(),
+            show,
+            s.core.compact,
+            startup::is_on(s.spec.section),
+        )
     });
     let rows = menu
         .map(|m| {
@@ -639,9 +721,18 @@ fn rect_of(h: HWND) -> Value {
 }
 
 fn strip_state() -> Value {
-    let Some((strip, floating, show, compact, fit, side, visible, has_tray)) =
-        st(|s| (s.strip, s.floating, s.core.show, s.core.compact, s.core.fit.get(), s.content.side(), s.content.visible(), s.has_tray))
-    else {
+    let Some((strip, floating, show, compact, fit, side, visible, has_tray)) = st(|s| {
+        (
+            s.strip,
+            s.floating,
+            s.core.show,
+            s.core.compact,
+            s.core.fit.get(),
+            s.content.side(),
+            s.content.visible(),
+            s.has_tray,
+        )
+    }) else {
         return Value::Null;
     };
     json!({
@@ -658,12 +749,25 @@ fn strip_state() -> Value {
 }
 
 fn panel_state() -> Value {
-    let Some((h, open, hover, kind, data)) = st(|s| (s.panel, s.core.panel.is_open(), s.core.panel.by_hover(), s.panel_kind, s.content.panel_state(s.panel_kind))) else { return Value::Null };
+    let Some((h, open, hover, kind, data)) = st(|s| {
+        (
+            s.panel,
+            s.core.panel.is_open(),
+            s.core.panel.by_hover(),
+            s.panel_kind,
+            s.content.panel_state(s.panel_kind),
+        )
+    }) else {
+        return Value::Null;
+    };
     json!({ "kind": if kind == PanelKind::Picker { "picker" } else { "main" }, "open": open, "pinned": open && !hover, "focused": h != 0 && unsafe { GetForegroundWindow() } == h, "hwnd": h, "rect": rect_of(h), "content": data })
 }
 
 fn look_state() -> Value {
-    let Some((light, h)) = st(|s| (s.look.light, if s.strip != 0 { s.strip } else { s.main })) else { return Value::Null };
+    let Some((light, h)) = st(|s| (s.look.light, if s.strip != 0 { s.strip } else { s.main }))
+    else {
+        return Value::Null;
+    };
     json!({ "theme": if light { "light" } else { "dark" }, "scale": system::scale_for(h) })
 }
 
@@ -675,7 +779,8 @@ fn state() -> Value {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs());
     let menu = crate::menu_panel::rows().map(|(h, _)| h).unwrap_or(0);
-    let (tray_on, tip, title, section) = st(|s| (s.tray_on, s.tray_tip.clone(), s.spec.title, s.spec.section)).unwrap_or_default();
+    let (tray_on, tip, title, section) =
+        st(|s| (s.tray_on, s.tray_tip.clone(), s.spec.title, s.spec.section)).unwrap_or_default();
     json!({
         "widget": title,
         "section": section,
@@ -699,7 +804,9 @@ mod tests {
     fn set_uses_description_or_legacy_value_conversion() {
         let described = crate::control::Target {
             section: "widget".into(),
-            settings: vec![crate::describe::Setting::number("width", "Width", 1.0, 5.0, 1.0)],
+            settings: vec![crate::describe::Setting::number(
+                "width", "Width", 1.0, 5.0, 1.0,
+            )],
             defaults: json!({ "width": 3 }),
         };
         let mut wrote_legacy = false;
@@ -707,7 +814,10 @@ mod tests {
             wrote_legacy = true;
             Ok(())
         });
-        assert!(matches!(result, Err(crate::control::WriteError::Invalid(_))));
+        assert!(matches!(
+            result,
+            Err(crate::control::WriteError::Invalid(_))
+        ));
         assert!(!wrote_legacy);
 
         let undescribed = crate::control::Target {
@@ -716,17 +826,29 @@ mod tests {
             defaults: json!({ "width": 3 }),
         };
         let mut written = None;
-        let result = set_value(&undescribed, "label", "plain text".into(), |section, key, value| {
-            written = Some((section.to_string(), key.to_string(), value));
-            Ok(())
-        });
+        let result = set_value(
+            &undescribed,
+            "label",
+            "plain text".into(),
+            |section, key, value| {
+                written = Some((section.to_string(), key.to_string(), value));
+                Ok(())
+            },
+        );
         assert_eq!(result, Ok(json!("plain text")));
-        assert_eq!(written, Some(("widget".into(), "label".into(), json!("plain text"))));
+        assert_eq!(
+            written,
+            Some(("widget".into(), "label".into(), json!("plain text")))
+        );
     }
 
     #[test]
     fn command_log_masks_secret_set_values() {
-        let line = command_log(&Command::Set(false, "knmi_api_key".into(), "sensitive".into()));
+        let line = command_log(&Command::Set(
+            false,
+            "knmi_api_key".into(),
+            "sensitive".into(),
+        ));
         assert_eq!(line, "dockctl: Set(\"knmi_api_key\", \"***\")");
         assert!(!line.contains("sensitive"));
     }

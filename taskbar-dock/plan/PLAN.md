@@ -11,11 +11,16 @@ The control panel for every registered widget, with a Dock page and a Developer 
 reaches every setting through the same library path. Decisions, contracts, jobs and checks:
 `step12.md`.
 
-## 12a. Windows Settings look (next)
+## 12a. Windows Settings look (built, committed)
 
-The settings app made to look like Windows 11 Settings (three-entry nav, drop-downs, Windows
-accent); a WinUI 3 test decides between real Windows controls and our own redrawn with Direct2D:
-`step12.md` "12a".
+The settings app rebuilt with real Windows controls (WinUI 3, crate `settings-app\`):
+`step12.md` "12a" and "12a build notes".
+
+## 12b. Changes after trying the new app (next)
+
+Widgets page on/off text, an Idle status, Windows Settings motion, highlight box settings for
+every widget, "Bus stop", discord's avatar places, neighbours glide instead of jumping: `step12b.md`; session prompt
+`step12b-session.md`.
 
 ## 13. One tray icon (idea)
 

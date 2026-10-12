@@ -250,7 +250,9 @@ pub fn clipboard_read() -> Option<String> {
                 while *ptr.add(len) != 0 {
                     len += 1;
                 }
-                result = Some(String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len)));
+                result = Some(String::from_utf16_lossy(std::slice::from_raw_parts(
+                    ptr, len,
+                )));
                 GlobalUnlock(handle as _);
             }
         }

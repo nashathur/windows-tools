@@ -32,13 +32,15 @@
 //! - Do what each returned [`Action`] says. When opening, fade in with [`Fade`].
 
 use crate::anim;
+use crate::style::Look;
+use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::HWND;
 /// Screen rectangle used by [`position`] (re-exported so widgets on the `windows` crate can use it).
 pub use windows_sys::Win32::Foundation::RECT;
-use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
-use crate::style::Look;
-use std::time::{Duration, Instant};
 
 /// What the widget should do with its panel.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -142,7 +144,10 @@ impl PanelBehaviour {
             self.reset_closed();
             return Action::Close;
         }
-        if self.lost_focus_at.is_some_and(|t| now.duration_since(t) < REOPEN_GUARD) {
+        if self
+            .lost_focus_at
+            .is_some_and(|t| now.duration_since(t) < REOPEN_GUARD)
+        {
             return Action::None; // this click took focus from the panel and so closed it
         }
         self.hover_since = None;
@@ -218,7 +223,11 @@ impl PanelBehaviour {
         self.open = true;
         self.by_hover = by_hover;
         self.outside_since = None;
-        if by_hover { Action::OpenByHover } else { Action::OpenByClick }
+        if by_hover {
+            Action::OpenByHover
+        } else {
+            Action::OpenByClick
+        }
     }
 
     fn reset_closed(&mut self) {
@@ -259,7 +268,13 @@ pub fn place(anchor: HWND, w: i32, h: i32, look: &Look, scale: f32) -> (i32, i32
         let mut mi: MONITORINFO = std::mem::zeroed();
         mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
         GetMonitorInfoW(MonitorFromWindow(anchor, MONITOR_DEFAULTTONEAREST), &mut mi);
-        position(rc, w, h, mi.rcWork, (look.panel_margin * scale).round() as i32)
+        position(
+            rc,
+            w,
+            h,
+            mi.rcWork,
+            (look.panel_margin * scale).round() as i32,
+        )
     }
 }
 
@@ -371,7 +386,7 @@ mod tests {
         p.button_click(ms(t0, 300));
         assert_eq!(p.tick(ms(t0, 500), true, false, &lk), Action::None); // 200 ms since the click
         assert_eq!(p.tick(ms(t0, 700), true, false, &lk), Action::OpenByHover); // 400 ms since it
-        // open (by hover or click): a button click leaves it as it is
+                                                                                // open (by hover or click): a button click leaves it as it is
         p.button_click(ms(t0, 800));
         assert!(p.is_open() && p.by_hover());
         let mut q = PanelBehaviour::default();
@@ -453,25 +468,48 @@ mod tests {
     }
 
     fn r(l: i32, t: i32, rr: i32, b: i32) -> RECT {
-        RECT { left: l, top: t, right: rr, bottom: b }
+        RECT {
+            left: l,
+            top: t,
+            right: rr,
+            bottom: b,
+        }
     }
 
     #[test]
     fn panel_is_centred_on_the_widget_and_stays_on_screen() {
         let work = r(0, 0, 1920, 1032); // taskbar 1032..1080
-        // in the middle: centred, 12 px above the taskbar
-        assert_eq!(position(r(900, 1032, 1000, 1080), 300, 200, work, 12), (800, 820));
+                                        // in the middle: centred, 12 px above the taskbar
+        assert_eq!(
+            position(r(900, 1032, 1000, 1080), 300, 200, work, 12),
+            (800, 820)
+        );
         // near the right edge: pushed left to 12 px from it
-        assert_eq!(position(r(1850, 1032, 1910, 1080), 300, 200, work, 12), (1608, 820));
+        assert_eq!(
+            position(r(1850, 1032, 1910, 1080), 300, 200, work, 12),
+            (1608, 820)
+        );
         // near the left edge
-        assert_eq!(position(r(0, 1032, 40, 1080), 300, 200, work, 12), (12, 820));
+        assert_eq!(
+            position(r(0, 1032, 40, 1080), 300, 200, work, 12),
+            (12, 820)
+        );
         // second monitor to the left (negative coordinates)
         let w2 = r(-1920, 0, 0, 1032);
-        assert_eq!(position(r(-60, 1032, -10, 1080), 300, 200, w2, 12), (-312, 820));
+        assert_eq!(
+            position(r(-60, 1032, -10, 1080), 300, 200, w2, 12),
+            (-312, 820)
+        );
         // taskbar at the top
-        assert_eq!(position(r(900, 0, 1000, 48), 300, 200, r(0, 48, 1920, 1080), 12), (800, 60));
+        assert_eq!(
+            position(r(900, 0, 1000, 48), 300, 200, r(0, 48, 1920, 1080), 12),
+            (800, 60)
+        );
         // floating widget near the top: below it
-        assert_eq!(position(r(900, 100, 1000, 140), 300, 200, work, 12), (800, 152));
+        assert_eq!(
+            position(r(900, 100, 1000, 140), 300, 200, work, 12),
+            (800, 152)
+        );
     }
 
     #[test]

@@ -7,7 +7,9 @@ use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::Shell::*;
-use windows_sys::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, DestroyIcon, HICON, ICONINFO, SM_CXSMICON, WM_APP};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    CreateIconIndirect, DestroyIcon, HICON, ICONINFO, SM_CXSMICON, WM_APP,
+};
 
 /// The tray icon's callback message to Block's main window (widgets use `WM_APP + n` well below).
 pub(crate) const WM_TRAY: u32 = WM_APP + 0x3F00;
@@ -26,19 +28,29 @@ pub(crate) fn draw(content: &mut dyn Content, look: &Look, size: i32) -> Option<
         return None;
     }
     // the drawing is premultiplied (as the strip's); an icon takes straight alpha
-    let px: Vec<u32> = cv.pixels().iter().map(|&p| {
-        let a = p >> 24;
-        if a == 0 || a == 255 {
-            return p;
-        }
-        let ch = |s: u32| (((p >> s) & 0xff) * 255 / a).min(255) << s;
-        a << 24 | ch(16) | ch(8) | ch(0)
-    }).collect();
+    let px: Vec<u32> = cv
+        .pixels()
+        .iter()
+        .map(|&p| {
+            let a = p >> 24;
+            if a == 0 || a == 255 {
+                return p;
+            }
+            let ch = |s: u32| (((p >> s) & 0xff) * 255 / a).min(255) << s;
+            a << 24 | ch(16) | ch(8) | ch(0)
+        })
+        .collect();
     unsafe {
         let color = CreateBitmap(size, size, 1, 32, px.as_ptr() as *const _);
         let mask_bits = vec![0u8; ((size + 15) / 16 * 2 * size) as usize];
         let mask = CreateBitmap(size, size, 1, 1, mask_bits.as_ptr() as *const _);
-        let info = ICONINFO { fIcon: 1, xHotspot: 0, yHotspot: 0, hbmMask: mask, hbmColor: color };
+        let info = ICONINFO {
+            fIcon: 1,
+            xHotspot: 0,
+            yHotspot: 0,
+            hbmMask: mask,
+            hbmColor: color,
+        };
         let icon = CreateIconIndirect(&info);
         DeleteObject(mask);
         DeleteObject(color);
@@ -75,14 +87,27 @@ pub(crate) unsafe fn destroy(icon: HICON) {
 /// the icon isn't on screen (e.g. in the closed overflow).
 pub(crate) unsafe fn place(main: HWND) -> Option<(Box4, Option<Box4>)> {
     use windows_sys::Win32::Foundation::{POINT, RECT};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowThreadProcessId, WindowFromPoint, GA_ROOT};
-    let id = NOTIFYICONIDENTIFIER { cbSize: std::mem::size_of::<NOTIFYICONIDENTIFIER>() as u32, hWnd: main, uID: ID, guidItem: std::mem::zeroed() };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetAncestor, GetWindowThreadProcessId, WindowFromPoint, GA_ROOT,
+    };
+    let id = NOTIFYICONIDENTIFIER {
+        cbSize: std::mem::size_of::<NOTIFYICONIDENTIFIER>() as u32,
+        hWnd: main,
+        uID: ID,
+        guidItem: std::mem::zeroed(),
+    };
     let mut r: RECT = std::mem::zeroed();
     if Shell_NotifyIconGetRect(&id, &mut r) != 0 || r.right <= r.left {
         return None;
     }
     let icon = (r.left, r.top, r.right, r.bottom);
-    let root = GetAncestor(WindowFromPoint(POINT { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 }), GA_ROOT);
+    let root = GetAncestor(
+        WindowFromPoint(POINT {
+            x: (r.left + r.right) / 2,
+            y: (r.top + r.bottom) / 2,
+        }),
+        GA_ROOT,
+    );
     let pid = |h: HWND| {
         let mut p = 0u32;
         GetWindowThreadProcessId(h, &mut p);
@@ -93,8 +118,14 @@ pub(crate) unsafe fn place(main: HWND) -> Option<(Box4, Option<Box4>)> {
         return None; // not Explorer's at that spot: the icon isn't showing
     }
     let mut name = [0u16; 64];
-    let n = windows_sys::Win32::UI::WindowsAndMessaging::GetClassNameW(root, name.as_mut_ptr(), name.len() as i32);
-    if root == tb || String::from_utf16_lossy(&name[..n.max(0) as usize]) == "Shell_SecondaryTrayWnd" {
+    let n = windows_sys::Win32::UI::WindowsAndMessaging::GetClassNameW(
+        root,
+        name.as_mut_ptr(),
+        name.len() as i32,
+    );
+    if root == tb
+        || String::from_utf16_lossy(&name[..n.max(0) as usize]) == "Shell_SecondaryTrayWnd"
+    {
         return Some((icon, None));
     }
     let o = crate::dock::rect(root);

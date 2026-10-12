@@ -113,7 +113,12 @@ pub struct Spec {
 }
 
 impl Spec {
-    pub fn new(class: &'static str, section: &'static str, title: &'static str, log: fn(&str)) -> Spec {
+    pub fn new(
+        class: &'static str,
+        section: &'static str,
+        title: &'static str,
+        log: fn(&str),
+    ) -> Spec {
         Spec {
             class,
             section,
@@ -164,7 +169,9 @@ pub fn describe(
     defaults: Option<fn() -> serde_json::Value>,
     log_file: Option<std::path::PathBuf>,
 ) -> Describe {
-    let mut defaults = defaults.map(|make| make()).unwrap_or_else(|| serde_json::json!({}));
+    let mut defaults = defaults
+        .map(|make| make())
+        .unwrap_or_else(|| serde_json::json!({}));
     if !defaults.is_object() {
         defaults = serde_json::json!({});
     }
@@ -216,9 +223,7 @@ pub const DESCRIBE_VERSION: u32 = 1;
 impl Describe {
     /// Parses and validates the JSON representation of a widget description.
     pub fn from_json(v: &serde_json::Value) -> Result<Self, String> {
-        if v.get("describe").and_then(serde_json::Value::as_u64)
-            != Some(DESCRIBE_VERSION as u64)
-        {
+        if v.get("describe").and_then(serde_json::Value::as_u64) != Some(DESCRIBE_VERSION as u64) {
             return Err("unsupported describe version".into());
         }
         let string = |key: &str| {
@@ -336,7 +341,26 @@ pub struct PanelKey {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PanelKeyCode { Enter, Escape, Up, Down, PageUp, PageDown, Home, End, Backspace, Delete, Left, Right, Tab, A, C, V, X, Other(u32) }
+pub enum PanelKeyCode {
+    Enter,
+    Escape,
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    Backspace,
+    Delete,
+    Left,
+    Right,
+    Tab,
+    A,
+    C,
+    V,
+    X,
+    Other(u32),
+}
 
 /// What is under the mouse on the strip ([`Content::hit`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -370,14 +394,21 @@ pub struct Tint {
 impl Tint {
     /// `rgb` at the active (playing / unmuted: `true`) or quiet level.
     pub fn new(rgb: u32, active: bool) -> Tint {
-        Tint { rgb, active: if active { 1.0 } else { 0.0 }, strength: 1.0 }
+        Tint {
+            rgb,
+            active: if active { 1.0 } else { 0.0 },
+            strength: 1.0,
+        }
     }
 
     /// Its opacities (0..1) at rest and hovered, for the levels `l`.
     pub fn strengths(&self, l: &crate::theme::TintLevels) -> (f32, f32) {
         let a = self.active.clamp(0.0, 1.0);
         let k = self.strength.max(0.0);
-        (((l.quiet + (l.active - l.quiet) * a) * k).min(1.0), (l.hover * k).min(1.0))
+        (
+            ((l.quiet + (l.active - l.quiet) * a) * k).min(1.0),
+            (l.hover * k).min(1.0),
+        )
     }
 }
 
@@ -448,7 +479,14 @@ impl Canvas {
             }
             let old = SelectObject(dc, bmp);
             SetBkMode(dc, TRANSPARENT as i32);
-            Some(Canvas { dc, w, h, bits: bits as *mut u32, bmp, old })
+            Some(Canvas {
+                dc,
+                w,
+                h,
+                bits: bits as *mut u32,
+                bmp,
+                old,
+            })
         }
     }
 
@@ -513,13 +551,33 @@ pub struct ReplyToken {
 }
 
 impl ReplyToken {
-    pub(crate) fn new(main: isize, requester: isize, id: u64, usage: Option<&'static str>, logger: fn(&str)) -> Self {
-        Self { main, requester, id, finished: false, usage, logger }
+    pub(crate) fn new(
+        main: isize,
+        requester: isize,
+        id: u64,
+        usage: Option<&'static str>,
+        logger: fn(&str),
+    ) -> Self {
+        Self {
+            main,
+            requester,
+            id,
+            finished: false,
+            usage,
+            logger,
+        }
     }
 
     /// Creates a token that answers nobody, for widget unit tests.
     pub fn detached() -> Self {
-        Self { main: 0, requester: 0, id: 0, finished: false, usage: None, logger: |_| {} }
+        Self {
+            main: 0,
+            requester: 0,
+            id: 0,
+            finished: false,
+            usage: None,
+            logger: |_| {},
+        }
     }
 
     fn post(&mut self, result: Result<serde_json::Value, CommandError>) {
@@ -527,11 +585,25 @@ impl ReplyToken {
         if self.main == 0 {
             return;
         }
-        let payload = Box::new(CommandResult { requester: self.requester, id: self.id, result, usage: self.usage });
+        let payload = Box::new(CommandResult {
+            requester: self.requester,
+            id: self.id,
+            result,
+            usage: self.usage,
+        });
         let raw = Box::into_raw(payload);
-        let posted = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(self.main, WM_COMMAND_REPLY, 0, raw as isize) };
+        let posted = unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                self.main,
+                WM_COMMAND_REPLY,
+                0,
+                raw as isize,
+            )
+        };
         if posted == 0 {
-            unsafe { drop(Box::from_raw(raw)); }
+            unsafe {
+                drop(Box::from_raw(raw));
+            }
             (self.logger)("dockctl: dropping command reply because the main window is gone");
         }
     }
@@ -545,7 +617,10 @@ impl ReplyToken {
 impl Drop for ReplyToken {
     fn drop(&mut self) {
         if !self.finished {
-            self.post(Err(CommandError { usage: false, message: "the command ended without an answer".into() }));
+            self.post(Err(CommandError {
+                usage: false,
+                message: "the command ended without an answer".into(),
+            }));
         }
     }
 }
@@ -586,7 +661,10 @@ impl std::fmt::Debug for Request {
 
 impl Ctx {
     pub(crate) fn new(main: isize) -> Ctx {
-        Ctx { reqs: Vec::new(), main }
+        Ctx {
+            reqs: Vec::new(),
+            main,
+        }
     }
 
     /// Measure and draw the strip again (new data, a state change; also shows or hides it when
@@ -631,7 +709,9 @@ impl Ctx {
     }
 
     /// Open a specific content panel as a pinned, focused panel.
-    pub fn open_panel_kind(&mut self, kind: PanelKind) { self.reqs.push(Request::OpenPanelKind(kind)); }
+    pub fn open_panel_kind(&mut self, kind: PanelKind) {
+        self.reqs.push(Request::OpenPanelKind(kind));
+    }
 
     /// End the program (as the Quit row does).
     pub fn quit(&mut self) {
@@ -656,11 +736,22 @@ impl Ctx {
 /// anything outside `self`.
 pub trait Content: 'static {
     /// The widget's available `do` commands and their one-line usage.
-    fn commands(&self) -> Vec<(&'static str, &'static str)> { Vec::new() }
+    fn commands(&self) -> Vec<(&'static str, &'static str)> {
+        Vec::new()
+    }
 
     /// Runs a widget-specific command. Slow work may finish through `token` on any thread.
-    fn command(&mut self, _name: &str, _args: &[String], _token: ReplyToken, _ctx: &mut Ctx) -> CommandReply {
-        CommandReply::Done(Err(CommandError { usage: true, message: "unknown command".into() }))
+    fn command(
+        &mut self,
+        _name: &str,
+        _args: &[String],
+        _token: ReplyToken,
+        _ctx: &mut Ctx,
+    ) -> CommandReply {
+        CommandReply::Done(Err(CommandError {
+            usage: true,
+            message: "unknown command".into(),
+        }))
     }
 
     /// The strip's natural width for `f` (full or `compact`), px. Called unzoomed for the dock's
@@ -736,7 +827,9 @@ pub trait Content: 'static {
     fn panel_shown(&mut self, _kind: PanelKind, _open: bool, _ctx: &mut Ctx) {}
 
     /// A key sent to the open panel. Return true when handled; Esc otherwise closes it.
-    fn panel_key(&mut self, _kind: PanelKind, _key: PanelKey, _ctx: &mut Ctx) -> bool { false }
+    fn panel_key(&mut self, _kind: PanelKind, _key: PanelKey, _ctx: &mut Ctx) -> bool {
+        false
+    }
 
     /// Text input sent to the open panel.
     fn panel_char(&mut self, _kind: PanelKind, _text: &str, _ctx: &mut Ctx) {}
@@ -745,7 +838,9 @@ pub trait Content: 'static {
     fn panel_wheel(&mut self, _kind: PanelKind, _delta: i32, _ctx: &mut Ctx) {}
 
     /// Widget-owned panel state, exposed by dockctl.
-    fn panel_state(&self, _kind: PanelKind) -> serde_json::Value { serde_json::Value::Null }
+    fn panel_state(&self, _kind: PanelKind) -> serde_json::Value {
+        serde_json::Value::Null
+    }
 
     /// The right-click panel's own rows; Block adds the standard ones ([`MenuBuilder`]).
     fn menu(&mut self, _m: &mut MenuBuilder) {}
@@ -817,7 +912,12 @@ pub struct MenuBuilder {
 
 impl MenuBuilder {
     pub(crate) fn new(show_on: Option<bool>, compact_on: bool, startup_on: bool) -> MenuBuilder {
-        MenuBuilder { show_on, compact_on, startup_on, ..Default::default() }
+        MenuBuilder {
+            show_on,
+            compact_on,
+            startup_on,
+            ..Default::default()
+        }
     }
 
     pub fn title(&mut self, t: impl Into<String>) -> &mut Self {
@@ -848,7 +948,9 @@ impl MenuBuilder {
     pub fn show(&mut self) -> &mut Self {
         self.placed_show = true;
         if let Some(on) = self.show_on {
-            self.menu.items.push(Row::switch(std_ids::SHOW, "Show on taskbar", on));
+            self.menu
+                .items
+                .push(Row::switch(std_ids::SHOW, "Show on taskbar", on));
         }
         self
     }
@@ -856,14 +958,22 @@ impl MenuBuilder {
     /// The Compact mode switch here.
     pub fn compact(&mut self) -> &mut Self {
         self.placed_compact = true;
-        self.menu.items.push(Row::switch(std_ids::COMPACT, "Compact mode", self.compact_on));
+        self.menu.items.push(Row::switch(
+            std_ids::COMPACT,
+            "Compact mode",
+            self.compact_on,
+        ));
         self
     }
 
     /// The Start with Windows switch here.
     pub fn startup(&mut self) -> &mut Self {
         self.placed_startup = true;
-        self.menu.items.push(Row::switch(std_ids::STARTUP, "Start with Windows", self.startup_on));
+        self.menu.items.push(Row::switch(
+            std_ids::STARTUP,
+            "Start with Windows",
+            self.startup_on,
+        ));
         self
     }
 
@@ -886,7 +996,10 @@ impl MenuBuilder {
             }
         }
         self.sep();
-        self.menu.items.push(menu_panel::settings_and_quit(std_ids::SETTINGS, std_ids::QUIT));
+        self.menu.items.push(menu_panel::settings_and_quit(
+            std_ids::SETTINGS,
+            std_ids::QUIT,
+        ));
         self.menu
     }
 }

@@ -36,10 +36,10 @@
 pub mod anim;
 pub mod badge;
 pub mod block;
-pub mod crash;
-pub mod ctl;
 pub mod client;
 pub mod control;
+pub mod crash;
+pub mod ctl;
 pub mod describe;
 pub mod dock;
 pub mod draw;
@@ -56,8 +56,8 @@ pub mod style;
 pub mod system;
 pub mod text_edit;
 pub mod theme;
-pub mod window;
 pub mod watchdog;
+pub mod window;
 
 /// A UTF-16, NUL-terminated copy of `s` for Win32 calls.
 pub fn wide(s: &str) -> Vec<u16> {

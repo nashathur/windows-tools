@@ -37,7 +37,9 @@ pub(super) fn run(main: HWND, on: bool) {
     *WANTED.lock().unwrap() = on;
     if on {
         START.call_once(|| {
-            let _ = std::thread::Builder::new().name("block-frames".into()).spawn(worker);
+            let _ = std::thread::Builder::new()
+                .name("block-frames".into())
+                .spawn(worker);
         });
         WAKE.notify_one();
     }

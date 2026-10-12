@@ -1,5 +1,7 @@
 # UI rules for every widget
 
+The settings app follows WinUI's own look, including its fixed corner radii and theme resources; these rules apply to widgets.
+
 Shared: a change to any rule here changes it in every widget (CLAUDE.md "five parts" rule).
 Corner reasoning and table: README.md "Corner design".
 

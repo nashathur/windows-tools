@@ -42,15 +42,29 @@ impl Marquee {
     pub fn at(text_w: f32, box_w: f32, t: f32, scale: f32) -> Marquee {
         let overflow = (text_w - box_w).max(0.0);
         if overflow <= 0.0 {
-            return Marquee { offset: 0.0, overflow, span: 0.0, moving: false };
+            return Marquee {
+                offset: 0.0,
+                overflow,
+                span: 0.0,
+                moving: false,
+            };
         }
         // one lap: the whole text and the gap go by, so it ends exactly where it started
         let span = text_w + GAP * scale;
         let travel = span / (SPEED * scale);
         let t = t.max(0.0) % (WAIT_S + travel);
         let moving = t > WAIT_S;
-        let offset = if moving { (t - WAIT_S) / travel * span } else { 0.0 };
-        Marquee { offset, overflow, span, moving }
+        let offset = if moving {
+            (t - WAIT_S) / travel * span
+        } else {
+            0.0
+        };
+        Marquee {
+            offset,
+            overflow,
+            span,
+            moving,
+        }
     }
 
     /// Text is cut off on the left (scrolled away).
@@ -66,7 +80,15 @@ impl Marquee {
 
 /// Fades the pixels of `rect` (left, top, right, bottom) towards `bg` (0xRRGGBB) over `fade`
 /// px at its left and/or right edge: for text drawn on an opaque background (a panel).
-pub fn fade_edges(buf: &mut [u32], width: i32, rect: (i32, i32, i32, i32), fade: i32, left: bool, right: bool, bg: u32) {
+pub fn fade_edges(
+    buf: &mut [u32],
+    width: i32,
+    rect: (i32, i32, i32, i32),
+    fade: i32,
+    left: bool,
+    right: bool,
+    bg: u32,
+) {
     let (l, t, r, b) = rect;
     let height = buf.len() as i32 / width.max(1);
     if fade <= 0 {
@@ -112,7 +134,7 @@ mod tests {
         assert!((at(6.5).offset - 150.0).abs() < 0.01 && at(6.5).moving); // half a lap
         assert!(at(6.5).cut_left());
         assert!(at(11.4).offset > 296.0 && at(11.4).moving); // nearly round
-        // round: exactly where it began, waiting again, no jump
+                                                             // round: exactly where it began, waiting again, no jump
         assert_eq!(at(11.6).offset, 0.0);
         assert!(!at(11.6).moving);
         // at 150% it scrolls faster in px, so the same time on screen

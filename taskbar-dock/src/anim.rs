@@ -28,11 +28,17 @@ impl CubicBezier {
         if t == 0.0 || t == 1.0 {
             return t;
         }
-        let b = |p1: f32, p2: f32, s: f32| 3.0 * (1.0 - s) * (1.0 - s) * s * p1 + 3.0 * (1.0 - s) * s * s * p2 + s * s * s;
+        let b = |p1: f32, p2: f32, s: f32| {
+            3.0 * (1.0 - s) * (1.0 - s) * s * p1 + 3.0 * (1.0 - s) * s * s * p2 + s * s * s
+        };
         let (mut lo, mut hi) = (0.0f32, 1.0f32);
         for _ in 0..24 {
             let s = (lo + hi) / 2.0;
-            if b(self.x1, self.x2, s) < t { lo = s } else { hi = s }
+            if b(self.x1, self.x2, s) < t {
+                lo = s
+            } else {
+                hi = s
+            }
         }
         b(self.y1, self.y2, (lo + hi) / 2.0)
     }
@@ -42,7 +48,12 @@ impl CubicBezier {
 /// over): a slow start, a fast middle and a long gentle stop. Fitted 2026-10-11 to 3 measured
 /// 44 px slides (`_tmp\taskbar_slide.ps1`, 144 Hz frames): over [`DOCK_MS`] within 0.7 px of
 /// every frame (best fit 304–312 ms: 0.3 px). `ease_out_cubic` was 4.4 px off at best.
-pub const DOCK: CubicBezier = CubicBezier { x1: 0.5, y1: 0.0, x2: 0.0, y2: 1.0 };
+pub const DOCK: CubicBezier = CubicBezier {
+    x1: 0.5,
+    y1: 0.0,
+    x2: 0.0,
+    y2: 1.0,
+};
 /// How long the taskbar's button slide takes (measured with [`DOCK`]): the default `glide_ms`.
 pub const DOCK_MS: f32 = 300.0;
 
@@ -55,7 +66,11 @@ pub fn ease_dock(t: f32) -> f32 {
 /// Progress of an animation that started `elapsed_ms` ago and lasts `duration_ms`
 /// (1.0 straight away when the duration is 0, e.g. animations turned off).
 pub fn progress(elapsed_ms: f32, duration_ms: f32) -> f32 {
-    if duration_ms <= 0.0 { 1.0 } else { (elapsed_ms / duration_ms).clamp(0.0, 1.0) }
+    if duration_ms <= 0.0 {
+        1.0
+    } else {
+        (elapsed_ms / duration_ms).clamp(0.0, 1.0)
+    }
 }
 
 /// How much a hovered cover / logo grows (rule "Cover feel" in CLAUDE.md), and how much it
@@ -89,7 +104,12 @@ impl Default for Feel {
 
 impl Feel {
     pub const fn new() -> Feel {
-        Feel { value: 1.0, target: 1.0, tau: 80.0, last: None }
+        Feel {
+            value: 1.0,
+            target: 1.0,
+            tau: 80.0,
+            last: None,
+        }
     }
 
     /// The mouse is over the cover (`hover`), and its button is down on it (`pressed`). Pass
@@ -130,7 +150,12 @@ impl Feel {
     /// Moves toward the target for the time since the last tick (one frame the first time);
     /// true while still moving.
     pub fn tick(&mut self, now: std::time::Instant) -> bool {
-        let dt = self.last.map_or(FEEL_FRAME_MS as f32, |l| now.saturating_duration_since(l).as_secs_f32() * 1000.0).min(100.0);
+        let dt = self
+            .last
+            .map_or(FEEL_FRAME_MS as f32, |l| {
+                now.saturating_duration_since(l).as_secs_f32() * 1000.0
+            })
+            .min(100.0);
         self.value += (self.target - self.value) * (1.0 - (-dt / self.tau).exp());
         if (self.value - self.target).abs() <= 0.002 {
             self.value = self.target;
@@ -159,7 +184,11 @@ pub fn pulse_settle(from: f32, t: f32) -> f32 {
     // the angle on the pulse's falling half (π..2π) where it has this level, then onward
     let start = TAU - (1.0 - 2.0 * from.clamp(0.0, 1.0)).acos();
     let angle = (start + TAU * t.max(0.0) / PULSE_S).min(TAU);
-    if angle >= TAU { 0.0 } else { (1.0 - angle.max(PI).cos()) / 2.0 }
+    if angle >= TAU {
+        0.0
+    } else {
+        (1.0 - angle.max(PI).cos()) / 2.0
+    }
 }
 
 use std::time::Instant;
@@ -179,12 +208,22 @@ pub struct Appear {
 impl Appear {
     /// Fully hidden (0).
     pub fn hidden(now: Instant) -> Appear {
-        Appear { from: 0.0, to: 0.0, start: now, ms: 0.0 }
+        Appear {
+            from: 0.0,
+            to: 0.0,
+            start: now,
+            ms: 0.0,
+        }
     }
 
     /// Fully shown (1).
     pub fn shown(now: Instant) -> Appear {
-        Appear { from: 1.0, to: 1.0, start: now, ms: 0.0 }
+        Appear {
+            from: 1.0,
+            to: 1.0,
+            start: now,
+            ms: 0.0,
+        }
     }
 
     /// The value now, 0..1.
@@ -193,7 +232,9 @@ impl Appear {
         if self.ms <= 0.0 || span <= 0.0 {
             return self.to;
         }
-        let t = (now.saturating_duration_since(self.start).as_secs_f32() * 1000.0 / (self.ms * span)).min(1.0);
+        let t = (now.saturating_duration_since(self.start).as_secs_f32() * 1000.0
+            / (self.ms * span))
+            .min(1.0);
         self.from + (self.to - self.from) * t
     }
 
@@ -212,7 +253,12 @@ impl Appear {
         if to == self.to {
             return;
         }
-        *self = Appear { from: self.value(now), to, start: now, ms };
+        *self = Appear {
+            from: self.value(now),
+            to,
+            start: now,
+            ms,
+        };
     }
 }
 
@@ -327,12 +373,28 @@ mod tests {
         // px still to go of a 44 px slide, measured on 144 Hz frames (slide 2; the first frame that
         // moved is 22 ms in, the best start for 300 ms). Whole px measured (±0.5) plus the fit's
         // 0.7: within 1.2 px
-        let measured = [(22.0, 43.0), (35.6, 42.0), (49.4, 41.0), (63.2, 38.0), (77.0, 33.0), (90.8, 25.0),
-            (97.8, 20.0), (111.6, 15.0), (132.7, 10.0), (153.5, 7.0), (174.3, 4.0), (195.1, 3.0),
-            (222.9, 2.0), (257.6, 1.0)];
+        let measured = [
+            (22.0, 43.0),
+            (35.6, 42.0),
+            (49.4, 41.0),
+            (63.2, 38.0),
+            (77.0, 33.0),
+            (90.8, 25.0),
+            (97.8, 20.0),
+            (111.6, 15.0),
+            (132.7, 10.0),
+            (153.5, 7.0),
+            (174.3, 4.0),
+            (195.1, 3.0),
+            (222.9, 2.0),
+            (257.6, 1.0),
+        ];
         for (ms, left) in measured {
             let model = 44.0 * (1.0 - ease_dock(ms / DOCK_MS));
-            assert!((model - left).abs() <= 1.2, "{ms} ms: model {model:.1} px, measured {left}");
+            assert!(
+                (model - left).abs() <= 1.2,
+                "{ms} ms: model {model:.1} px, measured {left}"
+            );
         }
     }
 

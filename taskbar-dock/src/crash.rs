@@ -58,8 +58,13 @@ mod tests {
     #[test]
     fn waits_grow_then_give_up() {
         let mut r = Restarts::default();
-        let waits: Vec<_> = (0..6).map(|i| r.crashed(100 + i * 10).map(|d| d.as_secs())).collect();
-        assert_eq!(waits, vec![Some(2), Some(4), Some(8), Some(16), Some(32), None]);
+        let waits: Vec<_> = (0..6)
+            .map(|i| r.crashed(100 + i * 10).map(|d| d.as_secs()))
+            .collect();
+        assert_eq!(
+            waits,
+            vec![Some(2), Some(4), Some(8), Some(16), Some(32), None]
+        );
     }
 
     #[test]

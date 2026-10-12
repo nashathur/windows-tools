@@ -415,6 +415,56 @@ the end.
 - `settings_smoke.ps1` waits up to 5 s for the Widgets page to list the registry (it loads on a
   worker) and fails when it lists none.
 
+### 12a build notes
+- The test (2026-10-12, `tools\winui-test\`, results `_tmp\wt\results.md`): checks 1, 3–7 passed
+  (3 after drawing the title bar with WinUI's TitleBar; 7 after two fixes below), 2 not run
+  (needs a display-scale change). Codex Sol: (a), 0.8. Gemini Flash out of quota; Lite's (b) had
+  not read the results. **User chose (a), real WinUI 3 controls.**
+- Runtime: reactor 0.100.0 asks for `Microsoft.WindowsAppRuntime.2` ≥ 2.4.0.0 (Store package).
+  Windows' own copy is `Microsoft.WindowsAppRuntime.CBS.2` (2.4.1.100, `C:\Windows\SystemApps\
+  Microsoft.WindowsAppRuntime.CBS.2_8wekyb3d8bbwe`). Using it takes (1) a vendored reactor
+  (`settings-app\vendor\windows-reactor`, pinned 0.100.0) whose bootstrap tries the CBS.2 family
+  first, then Runtime.2, and (2) that copy's `resources.pri` beside the exe (without it WinUI's
+  resource loader, which expects a package identity, crashes at start). The app refreshes the
+  file from the CBS folder when missing or different; it is harmless under the Store copy.
+  Neither found: a message with Microsoft's download link, exit 3 (Edit settings… → Notepad).
+  A bundled runtime would add 59.5 MB (210 files); not used.
+- The app becomes its own crate, `taskbar-dock\settings-app\` (package and bin
+  `taskbar-dock-settings`, path dependency on the library), so the widgets don't compile WinUI.
+  `model.rs`, `work.rs`, `remote.rs` move there; `paint.rs`, `layout.rs`, `keys.rs`, `win.rs` and
+  the library's `src\bin\taskbar-dock-settings.rs` go. Six crates now.
+- Window classes kept: a hidden, never-shown top-level window `TaskbarDockSettings` (created first;
+  second-launch hand-over target and Block's "the app has started" signal) and the ctl window
+  `TaskbarDockSettingsMain`. Both live on WinUI's UI thread; the workers post to the hidden
+  window, which forwards into the WinUI view. The visible window is WinUI's, titled "Taskbar Dock".
+- dockctl `settings`: `state` no longer reports the focused control (WinUI owns focus; use UI
+  Automation); `key`/`type` bring the app to the front and send real keystrokes (refused when
+  it can't become the foreground window); `row <id> reset` stays (dockctl only).
+  Controls carry AutomationIds equal to the row ids.
+- Number control rule: a number box when the unit is ms / s / min, or the number is a whole
+  count with no unit; otherwise a slider. Optional numbers: number box, empty = null.
+- Restore defaults: one button per group heading, shown when a row in the group differs from its
+  default; it resets every key of the group (Start with Windows isn't a key and is left alone).
+- Icons (Segoe Fluent Icons): Widgets U+E71D, Dock U+E771, Developer U+EC7A; weather U+E753,
+  bus U+E806, media U+E8D6, discord U+E95B; chevron U+E76C.
+- The vendored reactor gains what the app needed (list in `settings-app\vendor\PATCHES.md`):
+  LostFocus on TextBox / PasswordBox, an Esc keyboard accelerator, inline NumberBox arrows.
+- Text, colour, secret and optional-number boxes keep a draft while typing; Enter or focus loss
+  writes, Esc restores; a page change first commits open drafts. Secret boxes start empty
+  ("Saved; type to replace"): the saved secret never reaches the screen.
+- Number boxes carry no Minimum/Maximum (WinUI would clamp a typed value before the app sees it);
+  the description's check refuses out-of-range input with the red line instead.
+- Sliders write on release (pointer capture lost); a keyboard change writes after 400 ms
+  without change (reactor has no slider key-up), skipped while the left button is held.
+- Dropped from job 3's notes: typing a slider's value (WinUI sliders step with the arrow keys).
+- Known limits, accepted: number-box arrows step by 1 (reactor exposes no SmallChange); a number
+  box being typed into can be overwritten by an outside change to the file; log and raw-settings
+  text use the normal font (reactor has no font family for TextBlock).
+- `dockctl settings` replies after the view has rendered (a 30 ms hop; reactor drains messages
+  before composing); `key`/`type` reply 250 ms after the input, or after the writes it caused;
+  a write, Restore defaults or Remove from list replies with its real outcome; a second
+  Start/Stop/Restart for a busy widget is refused.
+
 ## Acceptance checks (live, after job 4)
 
 - Edit settings… on each widget opens the app on its page; a second Edit settings… on another

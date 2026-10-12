@@ -6,8 +6,22 @@
 
 use std::path::{Path, PathBuf};
 
-const WIDGETS: &[&str] = &["taskbar-weather/src", "taskbar-discord/src", "taskbar-media/src", "buswidget/rust/src", "taskbar-dock/src/settings_app", "taskbar-dock/src/bin/taskbar-dock-settings.rs"];
-const FONT_NAMES: &[&str] = &["Segoe", "Arial", "Calibri", "Consolas", "Tahoma", "Verdana", "Courier", "Times New Roman"];
+const WIDGETS: &[&str] = &[
+    "taskbar-weather/src",
+    "taskbar-discord/src",
+    "taskbar-media/src",
+    "buswidget/rust/src",
+];
+const FONT_NAMES: &[&str] = &[
+    "Segoe",
+    "Arial",
+    "Calibri",
+    "Consolas",
+    "Tahoma",
+    "Verdana",
+    "Courier",
+    "Times New Roman",
+];
 
 /// The code part of a line (without a `//` comment) and its string literals.
 fn split(line: &str) -> (String, Vec<String>) {
@@ -35,7 +49,10 @@ fn split(line: &str) -> (String, Vec<String>) {
                     // a char literal ('"', '\u{..}') or a lifetime: copy it through
                     code.push(c);
                     let rest: String = chars.clone().take(12).collect();
-                    if let Some(end) = rest.find('\'').filter(|&e| e > 0 && (e <= 2 || rest.starts_with('\\'))) {
+                    if let Some(end) = rest
+                        .find('\'')
+                        .filter(|&e| e > 0 && (e <= 2 || rest.starts_with('\\')))
+                    {
                         for _ in 0..=end {
                             chars.next();
                         }
@@ -53,8 +70,13 @@ fn split(line: &str) -> (String, Vec<String>) {
 fn hex_colour(code: &str) -> bool {
     let b = code.as_bytes();
     (0..b.len().saturating_sub(1)).any(|i| {
-        let starts = b[i] == b'0' && (b[i + 1] == b'x' || b[i + 1] == b'X') && (i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_'));
-        let digits = b[i + 2..].iter().take_while(|c| c.is_ascii_alphanumeric() || **c == b'_').count();
+        let starts = b[i] == b'0'
+            && (b[i + 1] == b'x' || b[i + 1] == b'X')
+            && (i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_'));
+        let digits = b[i + 2..]
+            .iter()
+            .take_while(|c| c.is_ascii_alphanumeric() || **c == b'_')
+            .count();
         starts && digits == 6 && b[i + 2..i + 8].iter().all(u8::is_ascii_hexdigit)
     })
 }
@@ -63,7 +85,9 @@ fn hex_colour(code: &str) -> bool {
 fn literal_font_size(code: &str) -> bool {
     ["Font::new(", "CreateFontW(", "font("].iter().any(|call| {
         code.match_indices(call).any(|(i, _)| {
-            if *call == "font(" && code[..i].ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == ':') {
+            if *call == "font("
+                && code[..i].ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == ':')
+            {
                 return false; // part of another name (`badge::font(`, `my_font(`)
             }
             let mut rest = code[i + call.len()..].trim_start().trim_start_matches('-');
@@ -85,7 +109,10 @@ fn check_line(line: &str) -> Vec<&'static str> {
     if code.contains("rgb(0x") || hex_colour(&code) {
         out.push("raw colour");
     }
-    if strings.iter().any(|s| FONT_NAMES.iter().any(|f| s.contains(f))) {
+    if strings
+        .iter()
+        .any(|s| FONT_NAMES.iter().any(|f| s.contains(f)))
+    {
         out.push("font name");
     }
     if literal_font_size(&code) {
@@ -111,7 +138,11 @@ fn widget_sources_follow_the_theme() {
         Ok(d) => vec![PathBuf::from(d)],
         Err(_) => {
             let tools = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-            WIDGETS.iter().map(|w| tools.join(w)).filter(|d| d.exists()).collect()
+            WIDGETS
+                .iter()
+                .map(|w| tools.join(w))
+                .filter(|d| d.exists())
+                .collect()
         }
     };
     assert!(!dirs.is_empty(), "no widget source folders found");
@@ -127,7 +158,12 @@ fn widget_sources_follow_the_theme() {
             let text = std::fs::read_to_string(&f).unwrap_or_default();
             for (n, line) in text.lines().enumerate() {
                 for p in check_line(line) {
-                    problems.push(format!("{}:{}: {p} (use taskbar_dock::theme): {}", f.display(), n + 1, line.trim()));
+                    problems.push(format!(
+                        "{}:{}: {p} (use taskbar_dock::theme): {}",
+                        f.display(),
+                        n + 1,
+                        line.trim()
+                    ));
                 }
             }
         }
@@ -164,6 +200,10 @@ fn lint_catches_and_passes_the_right_things() {
         r#"let c = rgb(0x60, 0x60, 0x60); // theme-lint: allow test fixture"#,
     ];
     for l in good {
-        assert!(check_line(l).is_empty(), "false alarm {:?}: {l}", check_line(l));
+        assert!(
+            check_line(l).is_empty(),
+            "false alarm {:?}: {l}",
+            check_line(l)
+        );
     }
 }

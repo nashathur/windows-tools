@@ -29,13 +29,34 @@ pub fn layout(height: i32, scale: f32, ink: (i32, i32, i32, i32)) -> (i32, i32, 
     let (top, size) = draw::icon_box(height, scale);
     let (iw, ih) = (ink.2 - ink.0, ink.3 - ink.1);
     let width = size.max(iw + 2 * (PAD * scale).round() as i32);
-    (width, top, size, (width - iw + 1) / 2 - ink.0, top + (size - ih + 1) / 2 - ink.1)
+    (
+        width,
+        top,
+        size,
+        (width - iw + 1) / 2 - ink.0,
+        top + (size - ih + 1) / 2 - ink.1,
+    )
 }
 
 /// The badge font: the shared font, bold, 1 px larger than the body text. Delete it after use.
 pub unsafe fn font(look: &Look, scale: f32) -> HFONT {
     let face = crate::wide(&look.font);
-    CreateFontW(-font_px(look, scale), 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, ANTIALIASED_QUALITY as u32, 0, face.as_ptr())
+    CreateFontW(
+        -font_px(look, scale),
+        0,
+        0,
+        0,
+        700,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        ANTIALIASED_QUALITY as u32,
+        0,
+        face.as_ptr(),
+    )
 }
 
 /// The badge font's size in px at `scale` ([`font`]).
@@ -46,7 +67,11 @@ pub fn font_px(look: &Look, scale: f32) -> i32 {
 /// Black or white, whichever reads better on `bg` (a COLORREF, 0x00BBGGRR).
 pub fn contrast_text(bg: COLORREF) -> COLORREF {
     let (r, g, b) = (bg & 0xff, (bg >> 8) & 0xff, (bg >> 16) & 0xff);
-    if r * 299 + g * 587 + b * 114 > 150_000 { 0 } else { 0x00ff_ffff }
+    if r * 299 + g * 587 + b * 114 > 150_000 {
+        0
+    } else {
+        0x00ff_ffff
+    }
 }
 
 pub struct Badge {
@@ -66,24 +91,58 @@ impl Badge {
         let text: Vec<u16> = text.encode_utf16().collect();
         let ink = text_ink(dc, font, &text);
         let (width, top, h, text_x, text_y) = layout(height, scale, ink);
-        Badge { text, width, top, height: h, text_x, text_y }
+        Badge {
+            text,
+            width,
+            top,
+            height: h,
+            text_x,
+            text_y,
+        }
     }
 
     /// Draws it with its left edge at `x` into the strip's DIB (selected into `dc`, pixels
     /// `buf`, `buf_width` wide). Call after `draw::text_to_color`: the badge is opaque colour.
     /// `fg` None = black or white for contrast.
-    pub unsafe fn paint(&self, dc: HDC, buf: &mut [u32], buf_width: i32, x: i32, font: HFONT, bg: COLORREF, fg: Option<COLORREF>, look: &Look, scale: f32) {
-        let rc = RECT { left: x, top: self.top, right: x + self.width, bottom: self.top + self.height };
+    pub unsafe fn paint(
+        &self,
+        dc: HDC,
+        buf: &mut [u32],
+        buf_width: i32,
+        x: i32,
+        font: HFONT,
+        bg: COLORREF,
+        fg: Option<COLORREF>,
+        look: &Look,
+        scale: f32,
+    ) {
+        let rc = RECT {
+            left: x,
+            top: self.top,
+            right: x + self.width,
+            bottom: self.top + self.height,
+        };
         let brush = CreateSolidBrush(bg);
         FillRect(dc, &rc, brush);
         DeleteObject(brush);
         let old = SelectObject(dc, font);
         SetBkMode(dc, TRANSPARENT as _);
         SetTextColor(dc, fg.unwrap_or_else(|| contrast_text(bg)));
-        TextOutW(dc, x + self.text_x, self.text_y, self.text.as_ptr(), self.text.len() as i32);
+        TextOutW(
+            dc,
+            x + self.text_x,
+            self.text_y,
+            self.text.as_ptr(),
+            self.text.len() as i32,
+        );
         SelectObject(dc, old);
         GdiFlush();
-        draw::round_rect(buf, buf_width, (rc.left, rc.top, rc.right, rc.bottom), (look.control_radius * scale).round());
+        draw::round_rect(
+            buf,
+            buf_width,
+            (rc.left, rc.top, rc.right, rc.bottom),
+            (look.control_radius * scale).round(),
+        );
     }
 }
 
