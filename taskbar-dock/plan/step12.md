@@ -430,3 +430,20 @@ the end.
 - The user signs out and in once: every widget on `startup` starts as before (the launcher's
   record change didn't break sign-in).
 - Every real setting changed in a check is noted first and put back.
+
+## 12a. UI fixes (found in the final live checks, 2026-10-12)
+
+Cosmetic faults of the app, fixed before step 12 is closed; each checked with a screenshot in
+dark and light mode, and with `s7_click.ps1` where it touches clicks.
+1. **Nav focus ring**: a ring stays on a nav entry on every page although no key was pressed in
+   the window (set by `dockctl settings key` tests). The ring shows only after keyboard
+   navigation in this window, as on the Widgets page's controls.
+2. **Segment labels cut**: "Follow Windows" (Dock, Time format) shows "Follow Win…"; segments
+   split `CONTROL_WIDTH` evenly. A segment row is as wide as its measured labels need.
+3. **Slider value caret**: a number typed into a slider's value box puts the caret inside the
+   unit ("999 |min"). The edited text and caret exclude the unit; the unit stays beside it.
+4. **Box behind sliders**: `Control::Slider` fills the whole control with `color.input` (a solid
+   dark-grey / white box). Track, knob and value are drawn straight on the card; the value looks
+   like a text box only while it is typed into. Same for an Auto row's inner slider.
+Done: the four fixed, `cargo test` green in the five crates, smoke passes, screenshots of every
+page in both modes look right.

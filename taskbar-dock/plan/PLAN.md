@@ -11,6 +11,10 @@ The control panel for every registered widget, with a Dock page and a Developer 
 reaches every setting through the same library path. Decisions, contracts, jobs and checks:
 `step12.md`.
 
+## 12a. UI fixes (next)
+
+Four cosmetic faults of the settings app found in the final checks: `step12.md` "12a".
+
 ## 13. One tray icon (idea)
 
 The per-widget tray icons merge into one, owned by the launcher (`taskbar-dock-start.exe`,
