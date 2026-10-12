@@ -256,12 +256,50 @@ impl Content for App {
     }
 }
 
+const WIDGET_CLASS: &str = "BusWidgetBar";
+const WIDGET_SECTION: &str = "bus";
+const WIDGET_TITLE: &str = "Bus widget";
+const WIDGET_DESCRIPTION: &str = "Next bus departures from your stop";
+/// Returns the bus widget's stored defaults.
+fn defaults() -> serde_json::Value {
+    data::Config::default().to_json()
+}
+/// Describes the bus widget without starting its runtime.
+fn describe() -> block::Describe {
+    block::describe(
+        WIDGET_SECTION,
+        WIDGET_CLASS,
+        WIDGET_TITLE,
+        WIDGET_DESCRIPTION,
+        Some(data::settings),
+        Some(defaults),
+        Some(worker::data_dir_path().join("buswidget.log")),
+    )
+}
+
 fn main() {
-    let mut spec = Spec::new("BusWidgetBar", "bus", "Bus widget", log);
+    block::describe_if_asked(describe);
+    let mut spec = Spec::new(WIDGET_CLASS, WIDGET_SECTION, WIDGET_TITLE, log);
+    spec.description = WIDGET_DESCRIPTION;
+    spec.settings = Some(data::settings);
     spec.mutex = "Local\\BusWidgetRhonedreef".into();
     // no taskbar to join: a topmost strip at the x it was last dropped at
     spec.float = Float::Fallback(FloatAt::Saved(|| data_dir().join("pos.txt")));
-    spec.log_file = Some(data_dir().join("buswidget.log"));
-    spec.defaults = Some(|| data::Config::default().to_json());
+    spec.log_file = Some(worker::data_dir_path().join("buswidget.log"));
+    spec.defaults = Some(defaults);
     block::run(spec, App { look: Look::current(), shown: String::new(), logo: String::new(), picker: picker::Picker::default() });
+}
+
+#[cfg(test)]
+mod describe_tests {
+    use super::*;
+
+    #[test]
+    /// Checks the description against its spec constants and defaults.
+    fn description_matches_defaults_and_spec() {
+        let description = describe();
+        assert_eq!(description.section, WIDGET_SECTION);
+        assert_eq!(description.class, WIDGET_CLASS);
+        taskbar_dock::describe::validate(&description).unwrap();
+    }
 }

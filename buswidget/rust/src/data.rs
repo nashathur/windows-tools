@@ -11,6 +11,80 @@ use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Europe::Amsterdam;
 use taskbar_dock::settings;
 use zip::ZipArchive;
+use taskbar_dock::describe::{Kind, Setting};
+
+/// Returns the settings exposed by the bus widget.
+pub fn settings() -> Vec<Setting> {
+    vec![
+        Setting::new(
+            "label",
+            "Taskbar label",
+            Kind::Text {
+                placeholder: String::new(),
+                empty_ok: false,
+            },
+        )
+        .group("Taskbar"),
+        Setting::new(
+            "dest",
+            "Destination",
+            Kind::Text {
+                placeholder: String::new(),
+                empty_ok: true,
+            },
+        )
+        .help("Empty: the trip's own destination")
+        .group("Taskbar"),
+        Setting::new(
+            "badge_color",
+            "Line badge colour",
+            Kind::Color {
+                hash: false,
+                empty_ok: true,
+            },
+        )
+        .group("Line badge"),
+        Setting::new(
+            "badge_text",
+            "Badge text colour",
+            Kind::Color {
+                hash: false,
+                empty_ok: true,
+            },
+        )
+        .group("Line badge"),
+        Setting::new(
+            "agency",
+            "Agency",
+            Kind::Text {
+                placeholder: String::new(),
+                empty_ok: false,
+            },
+        )
+        .help("Set by Change stop… in the menu")
+        .advanced(),
+        Setting::new(
+            "line",
+            "Line",
+            Kind::Text {
+                placeholder: String::new(),
+                empty_ok: false,
+            },
+        )
+        .help("Set by Change stop… in the menu")
+        .advanced(),
+        Setting::new(
+            "stop_code",
+            "Stop code",
+            Kind::Text {
+                placeholder: String::new(),
+                empty_ok: false,
+            },
+        )
+        .help("Set by Change stop… in the menu")
+        .advanced(),
+    ]
+}
 
 const STATIC_URL: &str = "http://gtfs.ovapi.nl/nl/gtfs-nl.zip";
 const TPC_URL: &str = "http://v0.ovapi.nl/tpc/"; // + stop code: live passes at one stop (~6 KB)

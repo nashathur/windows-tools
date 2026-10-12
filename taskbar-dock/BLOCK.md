@@ -16,7 +16,10 @@ timers), `close_panel`, `quit`, `after`.
 ctx)` returns `CommandReply::Done(result)` or `Pending`. A pending command retains its non-cloneable
 `ReplyToken`; finishing it from any thread posts the result to Block's main window for delivery.
 Dropping an unfinished token replies with an error. `Spec::defaults` supplies the widget's default
-settings as JSON for dockctl `keys` and `unset`; Block adds `compact` and `show_on_taskbar`.
+settings as JSON for dockctl `keys` and `unset`; `Spec::settings` and `Spec::description` provide
+setting metadata. A side-effect-free `Describe` supplies the JSON written by `--describe`; Block
+includes `compact` and `show_on_taskbar` in both. `reload` re-reads widget and dock settings;
+`ping` returns the process id and executable build time without adding a log entry.
 A left click on the strip always toggles the panel (Block's, no widget decides); a tray icon's clicks
 are Block's too (no strip needed: the panel opens above the pointer).
 

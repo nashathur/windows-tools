@@ -14,7 +14,7 @@ use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
 thread_local! {
     /// A row `menu click` will click once the menu it opened is up.
     static PENDING: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
-    /// A widget that answers `Done` has dropped or kept its token; ignore the token's later drop-reply.
+    /// A widget that answers `Done` has dropped or kept its token; ignore its later drop-reply.
     static DONE_IDS: std::cell::RefCell<std::collections::HashSet<u64>> = std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
@@ -24,6 +24,7 @@ pub(super) fn click_message() -> u32 {
     *MSG.get_or_init(|| unsafe { RegisterWindowMessageW(wide("TaskbarDock.dockctl.click").as_ptr()) })
 }
 
+/// Completes a queued menu-row click from inside the menu's message loop.
 pub(super) fn pending_click() {
     if let Some(id) = PENDING.with(|p| p.take()) {
         if !crate::menu_panel::click(id) {
@@ -38,7 +39,13 @@ pub(super) fn on_copydata(wp: WPARAM, lp: LPARAM) -> LRESULT {
     if cds.dwData != ctl::REQUEST && cds.dwData != ctl::REQUEST2 {
         return 0;
     }
-    let bytes = if cds.lpData.is_null() { Vec::new() } else { unsafe { std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize).to_vec() } };
+    let bytes = if cds.lpData.is_null() {
+        Vec::new()
+    } else {
+        unsafe {
+            std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize).to_vec()
+        }
+    };
     let v2 = cds.dwData == ctl::REQUEST2;
     let (id, args) = if v2 {
         match ctl::decode2(&bytes) {
@@ -60,7 +67,9 @@ pub(super) fn on_copydata(wp: WPARAM, lp: LPARAM) -> LRESULT {
     let to = ReplyTo { hwnd: wp as HWND, id, v2 };
     match ctl::parse(&args) {
         Ok(cmd) => {
-            log(&command_log(&cmd));
+            if !matches!(cmd, Command::Ping) {
+                log(&command_log(&cmd));
+            }
             run(to, cmd)
         }
         Err(e) => send_reply(to, &ctl::error(e)),
@@ -69,12 +78,25 @@ pub(super) fn on_copydata(wp: WPARAM, lp: LPARAM) -> LRESULT {
 }
 
 #[derive(Clone, Copy)]
-struct ReplyTo { hwnd: HWND, id: u64, v2: bool }
+struct ReplyTo {
+    hwnd: HWND,
+    id: u64,
+    v2: bool,
+}
 
+/// Sends a control reply while its data remains valid for the message.
 fn send_reply(to: ReplyTo, text: &str) {
     let main = st(|s| s.main).unwrap_or(0);
-    let bytes = if to.v2 { ctl::encode_reply2(to.id, text) } else { text.as_bytes().to_vec() };
-    let cds = COPYDATASTRUCT { dwData: if to.v2 { ctl::REPLY2 } else { ctl::REPLY }, cbData: bytes.len() as u32, lpData: bytes.as_ptr() as *mut _ };
+    let bytes = if to.v2 {
+        ctl::encode_reply2(to.id, text)
+    } else {
+        text.as_bytes().to_vec()
+    };
+    let cds = COPYDATASTRUCT {
+        dwData: if to.v2 { ctl::REPLY2 } else { ctl::REPLY },
+        cbData: bytes.len() as u32,
+        lpData: bytes.as_ptr() as *mut _,
+    };
     unsafe {
         let mut _r = 0;
         if SendMessageTimeoutW(to.hwnd, WM_COPYDATA, main as WPARAM, &cds as *const _ as LPARAM, SMTO_ABORTIFHUNG, 2000, &mut _r) == 0 {
@@ -89,19 +111,75 @@ fn reply_and_release(to: ReplyTo, text: &str) {
     unsafe { ReplyMessage(1) };
 }
 
+/// Builds a usage-error reply, including command help when available.
 fn usage_reply(message: &str, usage: Option<&str>) -> String {
     let mut value = json!({ "ok": false, "kind": "usage", "error": message });
-    if let Some(usage) = usage { value["usage"] = json!(usage); }
+    if let Some(usage) = usage {
+        value["usage"] = json!(usage);
+    }
     value.to_string()
 }
 
+/// Formats a command for the widget log, masking described secrets.
 fn command_log(cmd: &Command) -> String {
     match cmd {
-        Command::Set(_, key, value) => format!("dockctl: Set({key:?}, {:?})", ctl::mask_setting(key, value)),
+        Command::Set(dock, key, value) => {
+            let described = if *dock {
+                crate::style::dock_settings()
+                    .into_iter()
+                    .any(|setting| {
+                        setting.key == *key
+                            && matches!(setting.kind, crate::describe::Kind::Secret)
+                    })
+            } else {
+                st(|state| {
+                    state
+                        .spec
+                        .settings
+                        .and_then(|make| make().into_iter().find(|setting| setting.key == *key))
+                })
+                .flatten()
+                .is_some_and(|setting| matches!(setting.kind, crate::describe::Kind::Secret))
+            };
+            let shown = if (described || ctl::is_secret(key)) && !value.is_empty() {
+                "***".to_string()
+            } else {
+                value.clone()
+            };
+            format!("dockctl: Set({key:?}, {shown:?})")
+        }
+        Command::Ping => "dockctl: Ping".into(),
+        Command::Describe => "dockctl: Describe".into(),
         _ => format!("dockctl: {cmd:?}"),
     }
 }
 
+/// Builds the setting target for the widget or shared dock section.
+fn target(dock: bool) -> crate::control::Target {
+    if dock {
+        crate::control::Target::dock()
+    } else {
+        st(|state| crate::control::Target::from_spec(&state.spec)).unwrap()
+    }
+}
+
+/// Returns the described secret keys in the selected section.
+fn secret_keys(dock: bool) -> Vec<String> {
+    target(dock)
+        .settings
+        .into_iter()
+        .filter_map(|setting| {
+            matches!(setting.kind, crate::describe::Kind::Secret).then_some(setting.key)
+        })
+        .collect()
+}
+
+/// Reports whether the widget spec provides its own setting descriptions.
+fn has_widget_descriptions() -> bool {
+    st(|state| state.spec.settings.is_some()).unwrap_or(true)
+}
+
+/// Builds widget defaults, adding Block's stored defaults where needed.
 fn defaults_for(dock: bool) -> Result<(&'static str, Value), String> {
     let (section, mut defaults) = if dock {
         ("dock", crate::style::dock_defaults())
@@ -124,54 +202,98 @@ fn defaults_for(dock: bool) -> Result<(&'static str, Value), String> {
     Ok((section, defaults))
 }
 
+/// Refreshes the widget after a settings change.
 fn settings_written(dock: bool) {
     if dock {
         refresh_look(true);
         redraw();
     } else {
-        follow_settings();
+        follow_settings(true);
         redraw();
         tray_sync(false, false);
     }
 }
 
+/// Writes a described key through control validation or uses the legacy value conversion.
+fn set_value(
+    target: &crate::control::Target,
+    key: &str,
+    text: String,
+    write_legacy: impl FnOnce(&str, &str, Value) -> Result<(), String>,
+) -> Result<Value, crate::control::WriteError> {
+    if target.setting(key).is_some() {
+        return crate::control::write(target, key, crate::control::Input::Text(text));
+    }
+
+    let value = ctl::value_of(&text);
+    write_legacy(&target.section, key, value.clone())
+        .map_err(crate::control::WriteError::NotSaved)?;
+    Ok(value)
+}
+
+/// Replies with current and default values for the section's keys.
 fn keys(to: ReplyTo, dock: bool) {
     let (section, defaults) = match defaults_for(dock) {
         Ok(values) => values,
         Err(error) => return send_reply(to, &ctl::error(error)),
     };
     let current = settings::section(section).unwrap_or_else(|| json!({}));
-    let mut names: Vec<String> = defaults.as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default();
+    let described = target(dock).settings;
+    let mut names: Vec<String> = if !dock && !has_widget_descriptions() {
+        defaults
+            .as_object()
+            .map(|object| object.keys().cloned().collect())
+            .unwrap_or_default()
+    } else {
+        described.into_iter().map(|setting| setting.key).collect()
+    };
     names.sort();
-    let rows: Vec<Value> = names.iter().map(|key| ctl::key_row(key, current.get(key), defaults.get(key))).collect();
+    let secrets = secret_keys(dock);
+    let rows: Vec<Value> = names.iter().map(|key| {
+        let mask = |value: Option<&Value>| {
+            value.map_or(Value::Null, |value| {
+                if secrets.contains(key) {
+                    ctl::mask_setting("secret", value)
+                } else {
+                    ctl::mask_setting(key, value)
+                }
+            })
+        };
+        json!({
+            "key": key,
+            "current": mask(crate::describe::value_at(&current, key)),
+            "default": mask(crate::describe::value_at(&defaults, key)),
+        })
+    }).collect();
     send_reply(to, &ctl::ok(json!({ "section": section, "keys": rows })));
 }
 
+/// Restores a described default or uses the legacy default lookup.
 fn unset(to: ReplyTo, dock: bool, key: &str) {
-    let (section, defaults) = match defaults_for(dock) {
-        Ok(values) => values,
-        Err(error) => return send_reply(to, &ctl::error(error)),
-    };
-    let value = match ctl::unset_default(&defaults, key) {
-        Ok(value) => value,
-        Err(message) => return send_reply(to, &ctl::error(message)),
-    };
-    let res = settings::update(|root| {
-        if !root.is_object() {
-            *root = json!({});
+    let t = target(dock);
+    let result = if t.setting(key).is_some() {
+        crate::control::write_default(&t, key)
+    } else {
+        let defaults = defaults_for(dock).map(|(_, defaults)| defaults);
+        match defaults.and_then(|defaults| ctl::unset_default(&defaults, key)) {
+            Ok(value) => settings::set_key(&t.section, key, value.clone())
+                .map(|_| value)
+                .map_err(|error| crate::control::WriteError::NotSaved(error.to_string())),
+            Err(error) => Err(crate::control::WriteError::Invalid(error)),
         }
-        if !root[section].is_object() {
-            root[section] = json!({});
-        }
-        root[section][key] = value.clone();
-    });
-    match res {
-        Ok(()) => {
+    };
+    match result {
+        Ok(value) => {
             settings_written(dock);
-            let shown = ctl::mask_setting(key, &value);
-            send_reply(to, &ctl::ok(json!({ "key": key, "value": shown })));
+            let shown = ctl::mask_with(&json!({key:value}), &secret_keys(dock))[key].clone();
+            send_reply(to, &ctl::ok(json!({"key":key,"value":shown})));
         }
-        Err(e) => send_reply(to, &ctl::error(format!("saving failed: {e}"))),
+        Err(crate::control::WriteError::Invalid(error)) => {
+            send_reply(to, &usage_reply(&error, None))
+        }
+        Err(crate::control::WriteError::NotSaved(error)) => {
+            send_reply(to, &ctl::error(format!("saving failed: {error}")))
+        }
     }
 }
 
@@ -306,33 +428,36 @@ fn run(to: ReplyTo, cmd: Command) {
                 }
             }
         }
-        Command::Set(dock, key, value) => {
-            let section = if dock { "dock" } else { let Some(s) = st(|s| s.spec.section) else { return }; s };
-            let res = settings::update(|root| {
-                if !root.is_object() {
-                    *root = json!({});
-                }
-                if !root[section].is_object() {
-                    root[section] = json!({});
-                }
-                root[section][&key] = value.clone();
+        Command::Set(dock, key, text) => {
+            let t = target(dock);
+            let result = set_value(&t, &key, text, |section, key, value| {
+                settings::set_key(section, key, value).map_err(|error| error.to_string())
             });
-            match res {
-                Ok(()) => {
-                    // as the watch timer would, at once
+            match result {
+                Ok(value) => {
                     settings_written(dock);
-                    let shown = ctl::mask_setting(&key, &value);
-                    ok(json!({ "key": key, "value": shown }));
+                    let shown = if secret_keys(dock).contains(&key) && value.as_str() != Some("") {
+                        json!("***")
+                    } else {
+                        ctl::mask_setting(&key, &value)
+                    };
+                    ok(json!({"key":key,"value":shown}));
                 }
-                Err(e) => send_reply(to, &ctl::error(format!("saving failed: {e}"))),
+                Err(crate::control::WriteError::Invalid(error)) => {
+                    send_reply(to, &usage_reply(&error, None))
+                }
+                Err(crate::control::WriteError::NotSaved(error)) => {
+                    send_reply(to, &ctl::error(format!("saving failed: {error}")))
+                }
             }
         }
         Command::Get(dock, key) => {
             let section = if dock { "dock" } else { let Some(s) = st(|s| s.spec.section) else { return }; s };
-            let sec = ctl::mask(&settings::section(section).unwrap_or(Value::Null));
+            let raw = settings::section(section).unwrap_or(Value::Null);
+            let sec = ctl::mask_with(&raw, &secret_keys(dock));
             match key {
                 None => ok(json!({ "section": section, "value": sec })),
-                Some(k) => match sec.get(&k) {
+                Some(k) => match crate::describe::value_at(&sec, &k) {
                     Some(v) => ok(json!({ "key": k, "value": v })),
                     None => send_reply(to, &ctl::error(format!("{section}: no key {k:?}"))),
                 },
@@ -371,7 +496,64 @@ fn run(to: ReplyTo, cmd: Command) {
             redraw();
             ok(json!({ "look": look_state() }));
         }
+        Command::Reload => {
+            follow_settings(true);
+            refresh_look(true);
+            redraw();
+            tray_sync(false, false);
+            ok(json!({}));
+        }
+        Command::Ping => {
+            let pid = std::process::id();
+            let build = st(|state| state.build_time).unwrap_or(0);
+            ok(json!({"pid":pid,"build":build}))
+        }
+        Command::Describe => {
+            let description = describe_current();
+            ok(description)
+        }
+        Command::Startup(on) => {
+            let section = st(|state| state.spec.section).unwrap_or("");
+            let result = match on {
+                Some(on) => crate::startup::set(section, on).map(|_| on),
+                None => Ok(crate::startup::is_on(section)),
+            };
+            match result {
+                Ok(value) => ok(json!({"startup":value})),
+                Err(error) => send_reply(
+                    to,
+                    &ctl::error(format!("startup failed: {error}")),
+                ),
+            }
+        }
     }
+}
+
+/// Builds the running widget's description through Block's shared builder.
+fn describe_current() -> Value {
+    let Some((section, class, title, description, settings, defaults, log_file)) = st(|state| {
+        (
+            state.spec.section,
+            state.spec.class,
+            state.spec.title,
+            state.spec.description,
+            state.spec.settings,
+            state.spec.defaults,
+            state.spec.log_file.clone(),
+        )
+    }) else {
+        return json!({});
+    };
+    crate::block::describe(
+        section,
+        class,
+        title,
+        description,
+        settings,
+        defaults,
+        log_file,
+    )
+    .to_json()
 }
 
 /// The open menu's rows, or else the rows a right click would show now.
@@ -462,10 +644,40 @@ fn state() -> Value {
 mod tests {
     use super::*;
 
+    /// Checks described values and keeps legacy values in their original form.
+    #[test]
+    fn set_uses_description_or_legacy_value_conversion() {
+        let described = crate::control::Target {
+            section: "widget".into(),
+            settings: vec![crate::describe::Setting::number("width", "Width", 1.0, 5.0, 1.0)],
+            defaults: json!({ "width": 3 }),
+        };
+        let mut wrote_legacy = false;
+        let result = set_value(&described, "width", "6".into(), |_, _, _| {
+            wrote_legacy = true;
+            Ok(())
+        });
+        assert!(matches!(result, Err(crate::control::WriteError::Invalid(_))));
+        assert!(!wrote_legacy);
+
+        let undescribed = crate::control::Target {
+            section: "widget".into(),
+            settings: Vec::new(),
+            defaults: json!({ "width": 3 }),
+        };
+        let mut written = None;
+        let result = set_value(&undescribed, "label", "plain text".into(), |section, key, value| {
+            written = Some((section.to_string(), key.to_string(), value));
+            Ok(())
+        });
+        assert_eq!(result, Ok(json!("plain text")));
+        assert_eq!(written, Some(("widget".into(), "label".into(), json!("plain text"))));
+    }
+
     #[test]
     fn command_log_masks_secret_set_values() {
-        let line = command_log(&Command::Set(false, "knmi_api_key".into(), json!("sensitive")));
-        assert_eq!(line, "dockctl: Set(\"knmi_api_key\", String(\"***\"))");
+        let line = command_log(&Command::Set(false, "knmi_api_key".into(), "sensitive".into()));
+        assert_eq!(line, "dockctl: Set(\"knmi_api_key\", \"***\")");
         assert!(!line.contains("sensitive"));
     }
 }

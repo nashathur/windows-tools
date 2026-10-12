@@ -19,7 +19,7 @@ use std::ffi::c_void;
 use taskbar_dock::block::{self, Canvas, Content, Ctx, Float, Frame, MenuBuilder, PanelFrame, PanelKind, Side, Spec};
 use taskbar_dock::dock;
 use taskbar_dock::style::Look;
-use weather::{deg, describe, Location, Place, Weather};
+use weather::{deg, describe as weather_desc, Location, Place, Weather};
 use std::time::{Instant, SystemTime};
 use taskbar_dock::block::{CommandReply, ReplyToken};
 use windows::Win32::Foundation::HWND;
@@ -108,7 +108,7 @@ impl App {
         match &self.weather {
             Some(wx) => {
                 // temperature over humidity, the conditions beside them
-                let (glyph, desc) = describe(wx.code, wx.is_day);
+                let (glyph, desc) = weather_desc(wx.code, wx.is_day);
                 let line2 = if wx.humidity.is_finite() { format!("{:.0}%", wx.humidity) } else { String::new() };
                 // the conditions over what it feels like
                 let desc2 = if wx.feels.is_finite() { format!("Feels {}", deg(wx.feels)) } else { String::new() };
@@ -195,12 +195,36 @@ impl Content for App {
     }
 }
 
+const WIDGET_CLASS: &str = "TaskbarWeatherLabel";
+const WIDGET_SECTION: &str = "weather";
+const WIDGET_TITLE: &str = "Weather";
+const WIDGET_DESCRIPTION: &str = "Weather and temperature for your location";
+/// Returns the weather widget's stored defaults.
+fn defaults() -> serde_json::Value {
+    serde_json::to_value(config::Config::default()).unwrap_or_default()
+}
+/// Describes the weather widget without starting its runtime.
+fn describe() -> block::Describe {
+    block::describe(
+        WIDGET_SECTION,
+        WIDGET_CLASS,
+        WIDGET_TITLE,
+        WIDGET_DESCRIPTION,
+        Some(config::settings),
+        Some(defaults),
+        Some(log_file()),
+    )
+}
+
 fn main() {
-    let mut spec = Spec::new("TaskbarWeatherLabel", "weather", "Weather", log);
+    block::describe_if_asked(describe);
+    let mut spec = Spec::new(WIDGET_CLASS, WIDGET_SECTION, WIDGET_TITLE, log);
+    spec.description = WIDGET_DESCRIPTION;
+    spec.settings = Some(config::settings);
     spec.mutex = "Local\\TaskbarWeather.SingleInstance".into();
     spec.float = Float::Off; // as before: nothing shows until the taskbar can be joined
     spec.log_file = Some(log_file());
-    spec.defaults = Some(|| serde_json::to_value(Config::default()).unwrap_or_default());
+    spec.defaults = Some(defaults);
     let app = App {
         main: 0,
         cfg: Config::load(),
@@ -217,4 +241,18 @@ fn main() {
         places: None,
     };
     block::run(spec, app);
+}
+
+#[cfg(test)]
+mod describe_tests {
+    use super::*;
+
+    #[test]
+    /// Checks the description against its spec constants and defaults.
+    fn description_matches_defaults_and_spec() {
+        let description = describe();
+        assert_eq!(description.section, WIDGET_SECTION);
+        assert_eq!(description.class, WIDGET_CLASS);
+        taskbar_dock::describe::validate(&description).unwrap();
+    }
 }

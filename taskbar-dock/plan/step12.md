@@ -375,6 +375,24 @@ the end.
 - dockctl refuses with a package identity every command it would run in its own process (file
   commands for a stopped widget, `widgets …`, `startup …` and `describe` for a stopped widget):
   from the Claude app they would all see the private copy.
+- "Runs with a package identity" (F, G) is tested as `settings::redirected()`, not
+  `GetCurrentPackageFullName`: shells started from the Claude app have no package identity
+  (APPMODEL_ERROR_NO_PACKAGE) yet their `%APPDATA%` is still redirected. `redirected()` opens
+  settings.json and compares `GetFinalPathNameByHandleW` with the path asked for.
+- Registered exe paths (and the `startup` entries `register` updates) are stored without the
+  `\\?\` prefix `fs::canonicalize` adds (`describe::canonical_exe`).
+- The app's code is the bin's own modules (`src\settings_app\` via `#[path]`), not a library
+  module, so the widgets don't compile it; its manifest (per-monitor DPI v2) is embedded into
+  that bin only (`build.rs`, `rustc-link-arg-bin`).
+- Second-launch hand-over: `WM_COPYDATA` with `dwData` 0x444B_5350 and the page name as UTF-8.
+- A choice with `other` (weather `model`) is a dropdown ending in "Other…", which turns it into
+  a text box. An Auto switch turned off writes the inner default (the described default when it
+  isn't the word, else the inner kind's minimum or first option).
+- A number slider's value can also be typed (Enter / F2 / double click on the value).
+- Between jobs 3 and 4 the Dock and Developer entries show "This page comes in the next build."
+- Remove from list asks no confirmation (nothing is deleted; Register widget… puts it back).
+  Register widget… has no `dockctl settings` command (the file dialog needs a person);
+  `dockctl widgets register` covers it.
 
 ## Acceptance checks (live, after job 4)
 

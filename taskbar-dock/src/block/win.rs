@@ -55,6 +55,7 @@ struct State {
     content: Box<dyn Content>,
     core: Core,
     look: Look,
+    build_time: u64,
     main: HWND,
     /// The strip window (0: none right now).
     strip: HWND,
@@ -145,11 +146,17 @@ pub fn run<C: Content>(spec: Spec, content: C) {
         }
         let compact = read_bool(spec.section, COMPACT_KEY, false);
         let show = read_bool(spec.section, SHOW_KEY, true);
+        let build_time = std::env::current_exe()
+            .ok()
+            .and_then(|path| std::fs::metadata(path).ok()?.modified().ok())
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |duration| duration.as_secs());
         STATE.with(|s| {
             *s.borrow_mut() = Some(State {
                 content: Box::new(content),
                 core: Core { compact, show, ..Default::default() },
                 look: Look::current(),
+                build_time,
                 main,
                 strip: 0,
                 floating: false,
@@ -1158,7 +1165,7 @@ fn float_watch() {
 /// (backup for the hooks; re-asserts the z-order), re-hooks restarted processes.
 fn watch() {
     refresh_look(false);
-    follow_settings();
+    follow_settings(false);
     if let Some(strip) = st(|s| s.strip).filter(|h| *h != 0) {
         if unsafe { IsWindow(strip) } == 0 {
             st(|s| s.strip = 0);
@@ -1171,9 +1178,9 @@ fn watch() {
 }
 
 /// The settings file changed (an edit, or dockctl's `set`): Block's keys, then the widget.
-fn follow_settings() {
+fn follow_settings(force: bool) {
     let m = settings::mtime();
-    if let Some(Some(section)) = st(|s| (s.settings_mtime != m).then_some(s.spec.section)) {
+    if let Some(Some(section)) = st(|s| (force || s.settings_mtime != m).then_some(s.spec.section)) {
         let (compact, show) = (read_bool(section, COMPACT_KEY, false), read_bool(section, SHOW_KEY, true));
         st(|s| {
             s.settings_mtime = m;

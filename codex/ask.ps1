@@ -7,7 +7,7 @@ param(
     [ValidateSet('read-only', 'workspace-write')][string]$Sandbox = 'read-only',
     [string]$Review,                          # 'uncommitted', 'base:<branch>', 'commit:<sha>', or 'custom' (-PromptFile names target and focus)
     [switch]$Search,                          # live web search; read-only ask calls only
-    [ValidateSet('build', 'review')][string]$Role,  # model/effort/sandbox preset; inferred from the mode when omitted
+    [ValidateSet('build', 'review', 'quick')][string]$Role,  # model/effort/sandbox preset; inferred from the mode when omitted
     [string]$Model,
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'max', 'ultra')][string]$Effort = 'high',  # CLI default is 'none'
     [switch]$Worktree,                        # write in a fresh git worktree off HEAD (implies workspace-write)
@@ -91,10 +91,12 @@ if ($Resume) {
 if ($Review) { $Sandbox = 'read-only' }
 
 # Role presets (user's rule, 2026-10-11): builds get Luna and write access; reviews, critiques and second
-# opinions get Sol, read-only. An explicit -Model or -Effort still wins.
+# opinions get Sol, read-only; quick (user, 2026-10-12) = Luna low for small bounded jobs, read-only
+# or in a -Worktree as the call says. An explicit -Model or -Effort still wins.
 $roles = @{
     build  = @{ Model = 'gpt-6-luna';  Effort = 'high' }
     review = @{ Model = 'gpt-6.1-sol'; Effort = 'high' }
+    quick  = @{ Model = 'gpt-6-luna';  Effort = 'low' }
 }
 if (-not $Role) { $Role = if ($Worktree -or $Sandbox -eq 'workspace-write') { 'build' } else { 'review' } }
 $resumed = if ($Resume) { " (session $Resume was saved with that sandbox; start a fresh session instead)" } else { '' }

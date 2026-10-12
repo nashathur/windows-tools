@@ -442,9 +442,33 @@ impl Content for App {
     }
 }
 
+const WIDGET_CLASS: &str = "TaskbarMediaStrip";
+const WIDGET_SECTION: &str = "media";
+const WIDGET_TITLE: &str = "Now playing";
+const WIDGET_DESCRIPTION: &str = "What is playing, with play/pause and skip";
+/// Returns the media widget's stored defaults.
+fn defaults() -> serde_json::Value {
+    serde_json::to_value(config::Config::default()).unwrap_or_default()
+}
+/// Describes the media widget without starting its runtime.
+fn describe() -> block::Describe {
+    block::describe(
+        WIDGET_SECTION,
+        WIDGET_CLASS,
+        WIDGET_TITLE,
+        WIDGET_DESCRIPTION,
+        Some(config::settings),
+        Some(defaults),
+        Some(log_file()),
+    )
+}
+
 fn main() {
+    block::describe_if_asked(describe);
     unsafe { let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED); }
-    let mut spec = Spec::new("TaskbarMediaStrip", "media", "Now playing", log);
+    let mut spec = Spec::new(WIDGET_CLASS, WIDGET_SECTION, WIDGET_TITLE, log);
+    spec.description = WIDGET_DESCRIPTION;
+    spec.settings = Some(config::settings);
     spec.mutex = "Local\\TaskbarMedia.SingleInstance".into();
     // attaching fails, or no taskbar for 10 s: left of the tray and the docked widgets
     spec.float = Float::Fallback(FloatAt::BesideDock);
@@ -455,7 +479,7 @@ fn main() {
     // the text column follows the track: Block glides the width (unless `fixed_width`)
     spec.glide_width = true;
     spec.log_file = Some(log_file());
-    spec.defaults = Some(|| serde_json::to_value(Config::default()).unwrap_or_default());
+    spec.defaults = Some(defaults);
     log("started");
     let app = App {
         main: 0,
@@ -487,4 +511,18 @@ fn main() {
         panel: panel::State::default(),
     };
     block::run(spec, app);
+}
+
+#[cfg(test)]
+mod describe_tests {
+    use super::*;
+
+    #[test]
+    /// Checks the description against its spec constants and defaults.
+    fn description_matches_defaults_and_spec() {
+        let description = describe();
+        assert_eq!(description.section, WIDGET_SECTION);
+        assert_eq!(description.class, WIDGET_CLASS);
+        taskbar_dock::describe::validate(&description).unwrap();
+    }
 }

@@ -9,7 +9,10 @@ A widget is a `Spec` + a `Content` given to `block::run` (see "Building a new wi
 | Module | What it gives a widget |
 |---|---|
 | `block` | The strip window and all its behaviour (dock slot, drag, panels, right-click panel, tray icon, fit, Explorer restarts, floating fallback). A widget gives a `Spec` and a `Content` and calls `block::run`. BLOCK.md. |
-| `settings` | One settings file for all widgets: `%APPDATA%\TaskbarDock\settings.json`. Each widget has its own section and the shared one is `dock`. Each widget rewrites only its own section, and every write is atomic. |
+| `settings` | One settings file for all widgets: `%APPDATA%\TaskbarDock\settings.json`. Reads are pure; writes patch only the changed keys and are atomic. |
+| `describe` | Typed setting descriptions, validation, JSON conversion and the executable description cache. |
+| `registry` | Registered widget names, executable paths and window classes in the `widgets` setting. |
+| `client`, `control` | Shared v2 control requests and validated settings writes used by widgets and dockctl. |
 | `style` | The shared look and behaviour from `dock` (gap, font, radii, timings, hover delays, "follow Windows" switches), resolved into a `Look` for right now. |
 | `system` | The Windows settings that are followed live: theme, Animation effects, mouse hover time, Text size, time format, and display scale per monitor. Also time formatting. |
 | `draw` | Shared drawing for the strip and panels: text colour, icons, rounded shapes, text boxes, scrolling-list rows, buttons and highlights; anti-aliased through common helpers. |
@@ -20,7 +23,7 @@ A widget is a `Spec` + a `Content` given to `block::run` (see "Building a new wi
 | `theme` | The design code: every colour, font, font size and spacing, light and dark; the `brand` allow-list for brand and data colours. Widgets take all of them from here (`tests\theme_lint.rs` checks it). |
 | `emoji` | Colour emoji through Direct2D + DirectWrite (GDI draws emoji in one colour). |
 | `window` | `raise`: bring another app's window to the front; `exe_path`, `is_exe`. |
-| `dock`, `icons`, `panel`, `menu_panel`, `strip`, `startup`, `crash`, `ctl` | Block's internals; a widget doesn't call them: stacking and the fit next to the taskbar's buttons, reading those buttons, panel open/close, the right-click panel, strip motion, the Start with Windows list, the crash watchdog, dockctl's command format. |
+| `dock`, `icons`, `panel`, `menu_panel`, `strip`, `startup`, `crash`, `ctl` | Block's internals; stacking and fit, panel behaviour, strip motion, startup list, crash handling and dockctl command parsing. |
 
 ## The shared `dock` settings
 
@@ -172,9 +175,12 @@ cover, a width that follows its content), `taskbar-discord` (a worker, a width t
 
 ### dockctl: command-line control of widgets on Block
 
-`taskbar-dock\dockctl.exe [--timeout <s>] <weather|bus|discord|media|all> <command> [args]` talks to a running
-widget and prints JSON. A widget that isn't running is reported as `"absent": "not running"`;
-for `all` that isn't an error. Exit code: 0 all succeeded, 1 error or timeout, 2 usage error.
+`taskbar-dock\dockctl.exe [--timeout <s>] <widget|all> <command> [args]` talks to a running
+widget or uses the shared library for supported settings commands when it is stopped. It prints JSON.
+A stopped widget given any other command is reported as `"absent": "not running"`; for `all`
+that isn't an error. Commands dockctl runs in its own process (stopped-widget settings,
+`describe`, `startup`, `widgets`) are refused when it sees a private copy of the settings
+(started from the Claude app, `settings::redirected`): run it through a scheduled task. Exit code: 0 all succeeded, 1 error or timeout, 2 usage error.
 For `all`, 2 takes precedence if any widget reports a usage error. The default deadline is 5
 seconds, or 120 seconds for `do`; `--timeout` overrides it.
 
@@ -194,13 +200,17 @@ seconds, or 120 seconds for `do`; `--timeout` overrides it.
 | `set/get --dock ...` | set or inspect the shared `dock` section; changes are re-read and drawn before the reply |
 | `keys [--dock]` | sorted setting names with current and default values; secret values are masked |
 | `unset [--dock] <key>` | restore a setting's default |
+| `describe` | print the widget description and defaults |
+| `startup on\|off\|get` | inspect or change Start with Windows |
+| `reload`, `ping` | force settings/look refresh, or quietly return pid/build time |
+| `widgets list\|register <exe>\|remove <name>` | inspect or change the registered widget list |
 | `do help` | list this widget's content commands and one-line usage |
 | `do <name> [args]` | run a widget content command; the default timeout is 120 seconds |
 | `log [n]` | the widget's log, last n lines (`Spec::log_file`) |
 | `redraw`, `quit` | as Block does them |
 | `simulate taskbar-restarted`, `simulate look-changed` | test only: Block's Explorer-restart path; re-read Windows' theme and tell the widget even if unchanged |
 
-How it works (`src\ctl.rs`, `src\block\remote.rs`, `src\bin\dockctl.rs`): protocol v2 sends
+How it works (`src\ctl.rs`, `src\client.rs`, `src\block\remote.rs`): protocol v2 sends
 each `WM_COPYDATA` request with a process-unique id; replies echo it, and dockctl accepts a reply
 only from the widget window it asked. It pumps messages until the matching reply or deadline.
 Slow content work may reply later through Block's UI thread. The widget copies request bytes

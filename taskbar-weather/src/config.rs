@@ -3,6 +3,106 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use taskbar_dock::settings;
+use taskbar_dock::describe::{Kind, Setting};
+
+/// Returns the settings exposed by the weather widget.
+pub fn settings() -> Vec<Setting> {
+    let choice = |key: &str, label: &str, options: &[(&str, &str)]| {
+        Setting::new(
+            key,
+            label,
+            Kind::Choice {
+                options: options
+                    .iter()
+                    .map(|(value, label)| (json!(value), (*label).into()))
+                    .collect(),
+                other: false,
+            },
+        )
+    };
+    vec![
+        Setting::new(
+            "city",
+            "City",
+            Kind::Text {
+                placeholder: String::new(),
+                empty_ok: true,
+            },
+        )
+        .help("Empty: found by IP. Coordinates in Developer win over this")
+        .group("Location"),
+        choice("units", "Units", &[("celsius", "Celsius"), ("fahrenheit", "Fahrenheit")])
+            .group("Display"),
+        choice(
+            "label_position",
+            "Label position",
+            &[("auto", "Automatic"), ("left", "Left"), ("right", "Right")],
+        )
+        .group("Display"),
+        Setting::number("refresh_minutes", "Refresh interval", 5., 180., 5.)
+            .integer()
+            .unit("min")
+            .group("Data"),
+        Setting::new(
+            "model",
+            "Forecast model",
+            Kind::Choice {
+                options: vec![
+                    (json!("best_match"), "Best match".into()),
+                    (json!("knmi_seamless"), "KNMI HARMONIE".into()),
+                    (json!("dmi_seamless"), "DMI HARMONIE".into()),
+                    (json!("ecmwf_ifs025"), "ECMWF IFS".into()),
+                    (json!("icon_seamless"), "DWD ICON".into()),
+                ],
+                other: true,
+            },
+        )
+        .group("Data"),
+        Setting::new(
+            "latitude",
+            "Latitude",
+            Kind::Optional(Box::new(Kind::Number {
+                min: -90.,
+                max: 90.,
+                step: 0.0001,
+                integer: false,
+                unit: String::new(),
+            })),
+        )
+        .advanced(),
+        Setting::new(
+            "longitude",
+            "Longitude",
+            Kind::Optional(Box::new(Kind::Number {
+                min: -180.,
+                max: 180.,
+                step: 0.0001,
+                integer: false,
+                unit: String::new(),
+            })),
+        )
+        .advanced(),
+        Setting::new(
+            "location_name",
+            "Location name",
+            Kind::Text {
+                placeholder: String::new(),
+                empty_ok: true,
+            },
+        )
+        .advanced(),
+        Setting::new("knmi_api_key", "KNMI API key", Kind::Secret).advanced(),
+        Setting::new(
+            "knmi_station",
+            "KNMI station",
+            Kind::Text {
+                placeholder: String::new(),
+                empty_ok: true,
+            },
+        )
+        .advanced(),
+    ]
+}
 
 /// Weather settings: the "weather" section of the settings file shared with the other taskbar
 /// widgets, %APPDATA%\TaskbarDock\settings.json (see the taskbar-dock library). The shared look

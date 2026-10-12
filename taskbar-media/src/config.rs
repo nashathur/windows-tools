@@ -6,6 +6,51 @@
 
 use serde::{Deserialize, Serialize};
 use taskbar_dock::settings;
+use taskbar_dock::describe::{Kind, Setting};
+
+/// Returns the settings exposed by the media widget.
+pub fn settings() -> Vec<Setting> {
+    vec![
+        Setting::number("max_width", "Maximum strip width", 60., 400., 1.)
+            .unit("px")
+            .group("Strip"),
+        Setting::new("fixed_width", "Fixed width", Kind::Switch).group("Strip"),
+        Setting::number("click_panel_width", "Panel width", 280., 600., 1.)
+            .unit("px")
+            .group("Panel"),
+        Setting::number("hide_after_pause_s", "Hide after pause", 0., 3600., 5.)
+            .integer()
+            .unit("s")
+            .group("Playback"),
+        Setting::number("skip_seconds", "Skip interval", 1., 60., 1.)
+            .integer()
+            .unit("s")
+            .group("Playback"),
+        Setting::new(
+            "tint",
+            "Tint",
+            Kind::Choice {
+                options: vec![
+                    (serde_json::json!("brand"), "Brand".into()),
+                    (serde_json::json!("cover"), "Cover".into()),
+                    (serde_json::json!("off"), "Off".into()),
+                ],
+                other: false,
+            },
+        )
+        .group("Colour"),
+        Setting::number("tint_strength", "Tint strength", 0., 3., 0.05).group("Colour"),
+        Setting::new(
+            "live_color",
+            "Live colour",
+            Kind::Color {
+                hash: true,
+                empty_ok: false,
+            },
+        )
+        .group("Colour"),
+    ]
+}
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]

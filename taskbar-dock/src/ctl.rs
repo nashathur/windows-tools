@@ -64,7 +64,7 @@ pub enum Command {
     /// A row by id (decimal or 0x hex) or label; opens the menu first if it's closed.
     MenuClick(String),
     Tray(MouseButton),
-    Set(bool, String, Value),
+    Set(bool, String, String),
     Get(bool, Option<String>),
     Keys(bool),
     Unset(bool, String),
@@ -73,10 +73,14 @@ pub enum Command {
     Redraw,
     Quit,
     Simulate(Simulate),
+    Reload,
+    Ping,
+    Describe,
+    Startup(Option<bool>),
 }
 
 pub const USAGE: &str = "\
-usage: dockctl <weather|bus|discord|media|all> <command> [args]
+usage: dockctl <widget|all> <command> [args] | dockctl widgets list|register <exe>|remove <name>
   state                          strip, panel, menu, tray and look as JSON
   panel open|close|toggle        the left-click panel, as a click does
   panel open picker              the widget's picker panel
@@ -91,6 +95,11 @@ usage: dockctl <weather|bus|discord|media|all> <command> [args]
   get [key]                      one key, or the section (secrets masked)
   keys [--dock]                  list settings with current and default values
   set/get/unset --dock           edit or inspect shared dock settings
+  describe                       setting descriptions and defaults
+  startup on|off|get             change or inspect Start with Windows
+  reload                         re-read settings and redraw the widget
+  ping                           quiet process probe
+  widgets list|register|remove   manage registered widget executables
   do <name> [args]               run a widget command; do help lists available commands
   --timeout <s>                  reply deadline (default 5; do commands default to 120)
   log [n]                        last n lines of the widget's log (default 20)
@@ -121,8 +130,8 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
         ["menu", "click", row @ ..] if !row.is_empty() => Command::MenuClick(row.join(" ")),
         ["tray", "click", "left"] => Command::Tray(MouseButton::Left),
         ["tray", "click", "right"] => Command::Tray(MouseButton::Right),
-        ["set", "--dock", key, value @ ..] if !value.is_empty() => Command::Set(true, key.to_string(), value_of(&value.join(" "))),
-        ["set", key, value @ ..] if !value.is_empty() => Command::Set(false, key.to_string(), value_of(&value.join(" "))),
+        ["set", "--dock", key, value @ ..] if !value.is_empty() => Command::Set(true, key.to_string(), value.join(" ")),
+        ["set", key, value @ ..] if !value.is_empty() => Command::Set(false, key.to_string(), value.join(" ")),
         ["get", "--dock"] => Command::Get(true, None),
         ["get", "--dock", key] => Command::Get(true, Some(key.to_string())),
         ["get"] => Command::Get(false, None),
@@ -136,6 +145,12 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
         ["log", n] => Command::Log(n.parse().map_err(|_| format!("log: not a number: {n}"))?),
         ["redraw"] => Command::Redraw,
         ["quit"] => Command::Quit,
+        ["reload"] => Command::Reload,
+        ["ping"] => Command::Ping,
+        ["describe"] => Command::Describe,
+        ["startup", "get"] => Command::Startup(None),
+        ["startup", "on"] => Command::Startup(Some(true)),
+        ["startup", "off"] => Command::Startup(Some(false)),
         ["simulate", "taskbar-restarted"] => Command::Simulate(Simulate::TaskbarRestarted),
         ["simulate", "look-changed"] => Command::Simulate(Simulate::LookChanged),
         _ => return bad(),
@@ -207,7 +222,16 @@ pub fn is_secret(key: &str) -> bool {
 
 /// Masks a setting value when its name is secret, for both logs and replies.
 pub fn mask_setting(key: &str, value: &Value) -> Value {
-    if is_secret(key) && !value.is_null() && value.as_str() != Some("") { json!("***") } else { value.clone() }
+    if is_secret(key) { mask_secret(value) } else { value.clone() }
+}
+
+/// Masks a non-empty secret value.
+fn mask_secret(value: &Value) -> Value {
+    if !value.is_null() && value.as_str() != Some("") {
+        json!("***")
+    } else {
+        value.clone()
+    }
 }
 
 /// `v` with every secret key's value (at any depth) replaced by `"***"` (an empty one stays
@@ -224,6 +248,40 @@ pub fn mask(v: &Value) -> Value {
         Value::Array(a) => Value::Array(a.iter().map(mask).collect()),
         _ => v.clone(),
     }
+}
+
+/// Masks values whose keys are described as Secret, while retaining the name-based fallback.
+pub fn mask_with(v: &Value, secret_keys: &[String]) -> Value {
+    fn walk(v: &Value, keys: &[String], prefix: &str) -> Value {
+        match v {
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(key, value)| {
+                        let path = if prefix.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{prefix}.{key}")
+                        };
+                        let described = keys.iter().any(|secret| secret == &path || secret == key);
+                        let value = if described {
+                            mask_secret(value)
+                        } else if is_secret(key) {
+                            mask_setting(key, value)
+                        } else {
+                            walk(value, keys, &path)
+                        };
+                        (key.clone(), value)
+                    })
+                    .collect(),
+            ),
+            Value::Array(values) => {
+                Value::Array(values.iter().map(|value| walk(value, keys, prefix)).collect())
+            }
+            _ => v.clone(),
+        }
+    }
+
+    walk(v, secret_keys, "")
 }
 
 /// One settings row, masking the current and default values by the setting name.
@@ -325,8 +383,8 @@ mod tests {
         assert_eq!(p("menu click Compact mode"), Ok(Command::MenuClick("Compact mode".into())));
         assert_eq!(p("tray click left"), Ok(Command::Tray(MouseButton::Left)));
         assert_eq!(p("tray click right"), Ok(Command::Tray(MouseButton::Right)));
-        assert_eq!(p("set compact true"), Ok(Command::Set(false, "compact".into(), json!(true))));
-        assert_eq!(p("set --dock gap 4"), Ok(Command::Set(true, "gap".into(), json!(4))));
+        assert_eq!(p("set compact true"), Ok(Command::Set(false, "compact".into(), "true".into())));
+        assert_eq!(p("set --dock gap 4"), Ok(Command::Set(true, "gap".into(), "4".into())));
         assert_eq!(p("get"), Ok(Command::Get(false, None)));
         assert_eq!(p("get compact"), Ok(Command::Get(false, Some("compact".into()))));
         assert_eq!(p("get --dock"), Ok(Command::Get(true, None)));
@@ -342,6 +400,12 @@ mod tests {
         assert_eq!(p("quit"), Ok(Command::Quit));
         assert_eq!(p("simulate taskbar-restarted"), Ok(Command::Simulate(Simulate::TaskbarRestarted)));
         assert_eq!(p("simulate look-changed"), Ok(Command::Simulate(Simulate::LookChanged)));
+        assert_eq!(p("reload"), Ok(Command::Reload));
+        assert_eq!(p("ping"), Ok(Command::Ping));
+        assert_eq!(p("describe"), Ok(Command::Describe));
+        assert_eq!(p("startup on"), Ok(Command::Startup(Some(true))));
+        assert_eq!(p("startup off"), Ok(Command::Startup(Some(false))));
+        assert_eq!(p("startup get"), Ok(Command::Startup(None)));
     }
 
     #[test]
@@ -361,6 +425,14 @@ mod tests {
         assert_eq!(value_of("[1,2]"), json!([1, 2]));
         assert_eq!(value_of("Utrecht"), json!("Utrecht"));
         assert_eq!(value_of("null"), Value::Null);
+        assert_eq!(
+            parse(&["set", "stop_code", "59150850"]),
+            Ok(Command::Set(
+                false,
+                "stop_code".into(),
+                "59150850".into()
+            ))
+        );
     }
 
     #[test]
@@ -386,6 +458,14 @@ mod tests {
         let v = json!({ "knmi_api_key": "abc", "city": "Utrecht", "nested": { "Token": "t", "n": 1 }, "api_key": "", "password": null });
         assert_eq!(mask(&v), json!({ "knmi_api_key": "***", "city": "Utrecht", "nested": { "Token": "***", "n": 1 }, "api_key": "", "password": null }));
         assert!(is_secret("KNMI_API_KEY") && !is_secret("compact"));
+        let described = mask_with(
+            &json!({"opaque":"value","nested":{"credential":"x","empty":""}}),
+            &["opaque".into(), "nested.credential".into()],
+        );
+        assert_eq!(
+            described,
+            json!({"opaque":"***","nested":{"credential":"***","empty":""}})
+        );
     }
 
     #[test]

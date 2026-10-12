@@ -323,14 +323,38 @@ impl Content for App {
     }
 }
 
+const WIDGET_CLASS: &str = "TaskbarDiscordStrip";
+const WIDGET_SECTION: &str = "discord";
+const WIDGET_TITLE: &str = "Discord voice";
+const WIDGET_DESCRIPTION: &str = "Who is in your Discord voice call";
+/// Returns the Discord widget's stored defaults.
+fn defaults() -> serde_json::Value {
+    serde_json::to_value(config::Config::default()).unwrap_or_default()
+}
+/// Describes the Discord widget without starting its runtime.
+fn describe() -> block::Describe {
+    block::describe(
+        WIDGET_SECTION,
+        WIDGET_CLASS,
+        WIDGET_TITLE,
+        WIDGET_DESCRIPTION,
+        Some(config::settings),
+        Some(defaults),
+        Some(log_file()),
+    )
+}
+
 fn main() {
-    let mut spec = Spec::new("TaskbarDiscordStrip", "discord", "Discord voice", log);
+    block::describe_if_asked(describe);
+    let mut spec = Spec::new(WIDGET_CLASS, WIDGET_SECTION, WIDGET_TITLE, log);
+    spec.description = WIDGET_DESCRIPTION;
+    spec.settings = Some(config::settings);
     spec.mutex = "Local\\TaskbarDiscord.SingleInstance".into();
     spec.float = Float::Off; // as before: only on the taskbar
     // in a call the avatar column follows who's in it: Block glides the width (unless `fixed_width`)
     spec.glide_width = true;
     spec.log_file = Some(log_file());
-    spec.defaults = Some(|| serde_json::to_value(Config::default()).unwrap_or_default());
+    spec.defaults = Some(defaults);
     let cfg = Config::load();
     let status = if cfg.configured() || std::env::var_os("TASKBAR_DISCORD_TEST").is_some() { Status::Connecting } else { Status::NotConfigured };
     log("started");
@@ -349,4 +373,18 @@ fn main() {
         panel_scale: 1.0,
     };
     block::run(spec, app);
+}
+
+#[cfg(test)]
+mod describe_tests {
+    use super::*;
+
+    #[test]
+    /// Checks the description against its spec constants and defaults.
+    fn description_matches_defaults_and_spec() {
+        let description = describe();
+        assert_eq!(description.section, WIDGET_SECTION);
+        assert_eq!(description.class, WIDGET_CLASS);
+        taskbar_dock::describe::validate(&description).unwrap();
+    }
 }

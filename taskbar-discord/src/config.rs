@@ -2,6 +2,45 @@
 
 use serde::{Deserialize, Serialize};
 use taskbar_dock::settings;
+use taskbar_dock::describe::{Kind, Setting};
+
+/// Returns the settings exposed by the Discord widget.
+pub fn settings() -> Vec<Setting> {
+    vec![
+        Setting::new(
+            "max_avatars",
+            "Maximum avatars",
+            Kind::Number {
+                min: 1.,
+                max: 10.,
+                step: 1.,
+                integer: true,
+                unit: String::new(),
+            },
+        )
+        .group("Strip"),
+        Setting::new("fixed_width", "Fixed width", Kind::Switch).group("Strip"),
+        Setting::new(
+            "client_id",
+            "Client ID",
+            Kind::Text {
+                placeholder: String::new(),
+                empty_ok: true,
+            },
+        )
+        .advanced(),
+        Setting::new("client_secret", "Client secret", Kind::Secret).advanced(),
+        Setting::new(
+            "redirect_uri",
+            "Redirect URI",
+            Kind::Text {
+                placeholder: String::new(),
+                empty_ok: false,
+            },
+        )
+        .advanced(),
+    ]
+}
 
 /// The "discord" section of the settings file shared with the other taskbar widgets,
 /// %APPDATA%\TaskbarDock\settings.json. The shared look is its "dock" section (taskbar_dock::style).

@@ -180,7 +180,7 @@ pub(super) fn now_fields(a: &App) -> Value {
         "place": place,
         "temperature": temperature_value(weather),
         "unit": if a.cfg.fahrenheit() { "°F" } else { "°C" },
-        "conditions": weather.map(|w| describe(w.code, w.is_day).1),
+        "conditions": weather.map(|w| weather_desc(w.code, w.is_day).1),
         "updated": weather.map(|w| w.updated.as_str()),
         "age_s": weather.and(a.fetched_at).and_then(|at| SystemTime::now().duration_since(at).ok()).map(|age| age.as_secs()),
         "fetching": a.fetching,

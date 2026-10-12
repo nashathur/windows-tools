@@ -25,6 +25,48 @@ pub fn path() -> PathBuf {
     dir().join("settings.json")
 }
 
+/// True when this process reads and writes a private copy of the settings file instead of the
+/// real one: a process started from an MSIX-packaged app (the Claude desktop app) is redirected
+/// that way even without a package identity of its own. Asks Windows where the open file really
+/// is; false when the file doesn't exist yet or can't be opened.
+pub fn redirected() -> bool {
+    let asked = path();
+    match final_path(&asked) {
+        Some(real) => !same_path(&real, &asked.to_string_lossy()),
+        None => false,
+    }
+}
+
+/// Where `p` really is on disk (`GetFinalPathNameByHandleW`), or None if it can't be opened.
+fn final_path(p: &Path) -> Option<String> {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, GetFinalPathNameByHandleW, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    let name = crate::wide(&p.to_string_lossy());
+    let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    unsafe {
+        let h = CreateFileW(name.as_ptr(), FILE_READ_ATTRIBUTES, share, std::ptr::null(), OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
+        if h == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        let mut buf = vec![0u16; 1024];
+        let n = GetFinalPathNameByHandleW(h, buf.as_mut_ptr(), buf.len() as u32, 0);
+        CloseHandle(h);
+        if n == 0 || n as usize >= buf.len() {
+            return None;
+        }
+        Some(String::from_utf16_lossy(&buf[..n as usize]))
+    }
+}
+
+/// The same file, ignoring case and a `\\?\` prefix.
+fn same_path(a: &str, b: &str) -> bool {
+    let plain = |s: &str| s.strip_prefix("\\\\?\\").unwrap_or(s).to_lowercase();
+    plain(a) == plain(b)
+}
+
 /// Last change of the settings file, to notice edits (poll it, e.g. once a second).
 pub fn mtime() -> Option<SystemTime> {
     std::fs::metadata(path()).and_then(|m| m.modified()).ok()
@@ -200,6 +242,15 @@ pub fn update_with_lock(lock_name: &str, f: impl FnOnce(&mut Value)) -> io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn same_path_ignores_case_and_prefix() {
+        assert!(same_path("\\\\?\\C:\\Users\\a\\AppData\\Roaming\\TaskbarDock\\settings.json", "c:\\users\\a\\appdata\\roaming\\taskbardock\\settings.json"));
+        assert!(!same_path(
+            "\\\\?\\C:\\Users\\a\\AppData\\Local\\Packages\\Claude_x\\LocalCache\\Roaming\\TaskbarDock\\settings.json",
+            "C:\\Users\\a\\AppData\\Roaming\\TaskbarDock\\settings.json"
+        ));
+    }
 
     #[test]
     fn adds_missing_top_level_keys() {

@@ -7,7 +7,7 @@ use super::*;
 pub(crate) fn tip(a: &App) -> String {
     match &a.weather {
         Some(wx) => {
-            let (_, desc) = describe(wx.code, wx.is_day);
+            let (_, desc) = weather_desc(wx.code, wx.is_day);
             let mut tip = format!(
                 "{}{} {} – {}\nFeels like {} · Humidity {:.0}% · Wind {:.0} {}",
                 deg(wx.temp), &wx.unit()[2..], desc, wx.location,

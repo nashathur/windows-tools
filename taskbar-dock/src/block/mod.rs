@@ -84,6 +84,10 @@ pub struct Spec {
     pub section: &'static str,
     /// Window title.
     pub title: &'static str,
+    /// One line shown beside this widget in the settings app.
+    pub description: &'static str,
+    /// The widget's setting descriptions.
+    pub settings: Option<fn() -> Vec<crate::describe::Setting>>,
     /// Appends a line to the widget's log.
     pub log: fn(&str),
     /// Named mutex for one instance only (default `Local\<class>.SingleInstance`).
@@ -114,6 +118,8 @@ impl Spec {
             class,
             section,
             title,
+            description: "",
+            settings: None,
             log,
             mutex: format!("Local\\{class}.SingleInstance"),
             float: Float::Fallback(FloatAt::BesideDock),
@@ -126,6 +132,158 @@ impl Spec {
             log_file: None,
             defaults: None,
         }
+    }
+}
+
+/// Metadata returned by a widget's side-effect-free `--describe` entry point.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Describe {
+    /// Settings section name used by this widget.
+    pub section: String,
+    /// Window class used for the widget's hidden Block window.
+    pub class: String,
+    /// Display name shown by the settings app.
+    pub title: String,
+    /// One-line description shown by the settings app.
+    pub description: String,
+    /// All settings exposed by this widget, including Block's settings.
+    pub settings: Vec<crate::describe::Setting>,
+    /// Stored defaults for every described setting.
+    pub defaults: serde_json::Value,
+    /// Optional path to the widget log file.
+    pub log_file: Option<std::path::PathBuf>,
+}
+
+/// Builds a widget description and adds Block's shared settings and defaults.
+pub fn describe(
+    section: &str,
+    class: &str,
+    title: &str,
+    description: &str,
+    settings: Option<fn() -> Vec<crate::describe::Setting>>,
+    defaults: Option<fn() -> serde_json::Value>,
+    log_file: Option<std::path::PathBuf>,
+) -> Describe {
+    let mut defaults = defaults.map(|make| make()).unwrap_or_else(|| serde_json::json!({}));
+    if !defaults.is_object() {
+        defaults = serde_json::json!({});
+    }
+    defaults["show_on_taskbar"] = serde_json::json!(true);
+    defaults["compact"] = serde_json::json!(false);
+
+    let mut settings = settings.map(|make| make()).unwrap_or_default();
+    settings.push(crate::describe::Setting::new(
+        "show_on_taskbar",
+        "Show on taskbar",
+        crate::describe::Kind::Switch,
+    ));
+    settings.push(crate::describe::Setting::new(
+        "compact",
+        "Compact mode",
+        crate::describe::Kind::Switch,
+    ));
+
+    Describe {
+        section: section.into(),
+        class: class.into(),
+        title: title.into(),
+        description: description.into(),
+        settings,
+        defaults,
+        log_file,
+    }
+}
+
+impl Describe {
+    /// Serializes this description for `--describe` and dockctl's describe request.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "describe": DESCRIBE_VERSION,
+            "section": self.section,
+            "class": self.class,
+            "title": self.title,
+            "description": self.description,
+            "settings": crate::describe::to_json(&self.settings),
+            "defaults": self.defaults,
+            "log_file": self.log_file.as_ref().map(|path| path.display().to_string()),
+        })
+    }
+}
+
+/// Current version of the widget description JSON format.
+pub const DESCRIBE_VERSION: u32 = 1;
+
+impl Describe {
+    /// Parses and validates the JSON representation of a widget description.
+    pub fn from_json(v: &serde_json::Value) -> Result<Self, String> {
+        if v.get("describe").and_then(serde_json::Value::as_u64)
+            != Some(DESCRIBE_VERSION as u64)
+        {
+            return Err("unsupported describe version".into());
+        }
+        let string = |key: &str| {
+            v.get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| format!("{key} must be text"))
+        };
+        let settings = crate::describe::from_json(v.get("settings").ok_or("missing settings")?)?;
+        let defaults = v
+            .get("defaults")
+            .filter(|value| value.is_object())
+            .cloned()
+            .ok_or("defaults must be an object")?;
+        for setting in &settings {
+            let value = crate::describe::value_at(&defaults, &setting.key)
+                .ok_or_else(|| format!("default missing for {}", setting.key))?;
+            crate::describe::check(setting, value)
+                .map_err(|error| format!("invalid default for {}: {error}", setting.key))?;
+        }
+        /// Collects the leaf keys in a defaults object.
+        fn leaves(value: &serde_json::Value, prefix: String, output: &mut Vec<String>) {
+            if let Some(object) = value.as_object() {
+                for (key, value) in object {
+                    let path = if prefix.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{prefix}.{key}")
+                    };
+                    leaves(value, path, output);
+                }
+            } else {
+                output.push(prefix);
+            }
+        }
+        let mut keys = Vec::new();
+        leaves(&defaults, String::new(), &mut keys);
+        for key in keys {
+            if !settings.iter().any(|setting| setting.key == key) {
+                return Err(format!("default has no setting description: {key}"));
+            }
+        }
+        let log_file = v
+            .get("log_file")
+            .and_then(serde_json::Value::as_str)
+            .map(std::path::PathBuf::from);
+        Ok(Self {
+            section: string("section")?,
+            class: string("class")?,
+            title: string("title")?,
+            description: string("description")?,
+            settings,
+            defaults,
+            log_file,
+        })
+    }
+}
+
+/// Writes a description and exits before the widget initializes any runtime state.
+pub fn describe_if_asked(describe: fn() -> Describe) {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 3 && args[1] == "--describe" {
+        let output = serde_json::to_vec_pretty(&describe().to_json()).unwrap_or_default();
+        let result = std::fs::write(&args[2], output);
+        std::process::exit(if result.is_ok() { 0 } else { 1 });
     }
 }
 

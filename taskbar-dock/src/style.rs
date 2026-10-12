@@ -28,6 +28,7 @@
 use crate::settings;
 use crate::system::{self, System};
 use crate::theme::{tint_levels, TintLevels};
+use crate::describe::{Kind, Setting};
 use serde_json::{json, Map, Value};
 
 /// A setting that can follow Windows ("system") or be fixed.
@@ -95,6 +96,132 @@ impl Default for Style {
 /// The stored `dock` section, including follow values such as `"system"` and `"auto"`.
 pub fn dock_defaults() -> Value {
     Value::Object(Style::default().to_json())
+}
+
+/// Returns the settings supported by the shared `dock` section.
+pub fn dock_settings() -> Vec<crate::describe::Setting> {
+    use crate::describe::Kind::*;
+    let mut v = vec![
+        Setting::new("font", "Font", text("", false)).group("Text"),
+        Setting::new(
+            "font_size",
+            "Font size",
+            number_kind(6., 48., 0.5, "px", false),
+        )
+        .group("Text"),
+        Setting::new(
+            "text_size",
+            "Text size",
+            Auto {
+                word: "system".into(),
+                label: "Follow Windows' text size".into(),
+                inner: Box::new(number_kind(0.5, 3., 0.05, "", false)),
+            },
+        )
+        .group("Text"),
+        Setting::new(
+            "time_format",
+            "Time format",
+            Choice {
+                options: vec![
+                    (json!("system"), "Follow Windows".into()),
+                    (json!("12h"), "12h".into()),
+                    (json!("24h"), "24h".into()),
+                ],
+                other: false,
+            },
+        )
+        .group("Time"),
+    ];
+    for (key, label, max, unit) in [
+        ("gap", "Gap", 64., "px"),
+        ("panel_margin", "Panel margin", 64., "px"),
+        ("control_radius", "Control radius", 16., "px"),
+    ] {
+        v.push(Setting::new(key, label, number_kind(0., max, 1., unit, false)).group("Layout"));
+    }
+    v.extend([
+        Setting::new(
+            "animations",
+            "Animations",
+            Choice {
+                options: vec![
+                    (json!("system"), "Follow Windows".into()),
+                    (json!(true), "On".into()),
+                    (json!(false), "Off".into()),
+                ],
+                other: false,
+            },
+        )
+        .group("Motion"),
+        Setting::new(
+            "hover_open_ms",
+            "Hover open",
+            Auto {
+                word: "system".into(),
+                label: "Follow Windows".into(),
+                inner: Box::new(number_kind(0., 5000., 50., "ms", true)),
+            },
+        )
+        .group("Motion"),
+    ]);
+    for (key, label, max, step, unit, integer) in [
+        ("hover_close_ms", "Hover close", 5000., 50., "ms", true),
+        ("fade_ms", "Fade", 2000., 10., "ms", false),
+        ("glide_ms", "Glide", 2000., 10., "ms", false),
+        ("zoom_ms", "Zoom", 2000., 10., "ms", false),
+        ("drag_zoom", "Drag zoom", 2., 0.05, "", false),
+    ] {
+        let min = if key == "drag_zoom" { 1. } else { 0. };
+        v.push(
+            Setting::new(key, label, number_kind(min, max, step, unit, integer)).group("Motion"),
+        );
+    }
+    v.push(
+        Setting::new(
+            "tint_fixed",
+            "Fixed tint",
+            Auto {
+                word: "auto".into(),
+                label: "By state".into(),
+                inner: Box::new(number_kind(0., 1., 0.01, "", false)),
+            },
+        )
+        .group("Brand colour"),
+    );
+    for side in ["dark", "light"] {
+        for state in ["quiet", "active", "hover"] {
+            let key = format!("tint_{side}.{state}");
+            v.push(
+                Setting::new(
+                    key,
+                    format!("{} {state}", if side == "dark" { "Dark" } else { "Light" }),
+                    number_kind(0., 1., 0.01, "", false),
+                )
+                .group("Brand colour"),
+            );
+        }
+    }
+    v
+}
+
+/// Creates a text setting for the dock description.
+fn text(placeholder: &str, empty_ok: bool) -> Kind {
+    Kind::Text {
+        placeholder: placeholder.into(),
+        empty_ok,
+    }
+}
+
+/// Creates a numeric setting kind for the dock description.
+fn number_kind(min: f64, max: f64, step: f64, unit: &str, integer: bool) -> Kind {
+    Kind::Number {
+        min,
+        max,
+        step,
+        integer,
+        unit: unit.into(),
+    }
 }
 
 fn levels_json(t: TintLevels) -> Value {

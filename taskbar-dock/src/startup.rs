@@ -43,6 +43,11 @@ pub fn is_on(name: &str) -> bool {
 /// Puts the running exe on the list as `name`, or takes `name` off it.
 pub fn set(name: &str, on: bool) -> io::Result<()> {
     let exe = std::env::current_exe()?;
+    set_exe(name, &exe, on)
+}
+
+/// Puts the supplied executable on the startup list, or takes its name off.
+pub fn set_exe(name: &str, exe: &std::path::Path, on: bool) -> io::Result<()> {
     let exe = exe.to_string_lossy();
     crate::settings::update(|root| {
         if let Some(obj) = root.as_object_mut() {
