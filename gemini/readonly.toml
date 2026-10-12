@@ -1,0 +1,6 @@
+# Policy for ask.ps1: Gemini may read and search, never write, run commands or switch approval mode.
+# (In headless v0.63, exit_plan_mode would switch the run to YOLO.)
+[[rule]]
+toolName = ["write_file", "replace", "run_shell_command", "save_memory", "exit_plan_mode", "enter_plan_mode"]
+decision = "deny"
+priority = 999
