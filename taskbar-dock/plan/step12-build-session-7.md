@@ -10,7 +10,7 @@ plan is decided and approved: `taskbar-dock\plan\step12.md` section "12a" (decis
 and its seven checks, order of work, done-condition). Don't reopen decisions; where the plan has
 a gap, choose what fits, add it to step12.md "Build notes" and tell me in plain words.
 References: `plan\step12a-rating.md` (Sol's element table: WinUI sizes, radii, colours, fonts,
-control mapping) and `plan\step12a-native.md` (real Windows controls: WinUI 3, runtime, Rust
+control mapping; WinUI's own source, listed in step12.md "12a", has the exact values) and `plan\step12a-native.md` (real Windows controls: WinUI 3, runtime, Rust
 routes, icon-font codepoints, accent palette API, Mica).
 
 Where we are:

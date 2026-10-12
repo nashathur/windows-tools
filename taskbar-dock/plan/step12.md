@@ -440,6 +440,16 @@ its element-by-element table (WinUI sizes, radii, colours, fonts, control mappin
 decision 10's "same look as the panels" and its nav list for the app; the widgets keep their own
 look. Step 12 closes when 12a is done.
 
+The exact source for every size, radius, colour and state is WinUI's own code,
+`github.com/microsoft/microsoft-ui-xaml` (MIT), branch `main`, folder `controls/dev/`:
+`CommonStyles/Common_themeresources_any.xaml` (dark/light colours, strokes, focus), and per
+control `CommonStyles/{ToggleSwitch,Slider,Button,TextBox,RadioButton}_themeresources.xaml`,
+`ComboBox/`, `NumberBox/`, `NavigationView/`, `Expander/`, `InfoBar/`, `Breadcrumb/` (each
+`*_themeresources.xaml`; the `_perf2026` copies are build variants). Read them with
+`gh api repos/microsoft/microsoft-ui-xaml/contents/<path>`; where they differ from
+`step12a-rating.md`, they win. Under (a) they are the controls themselves; under (b) the numbers
+to copy. `Samples/` holds C++ desktop apps (e.g. `FolderTreeAppCpp`) for the C++ helper route.
+
 ### Decisions
 1. **Look**: Windows 11 Settings (WinUI / Fluent): Segoe UI Variable, 28 px page titles, 14 px
    regular labels, rounded cards with soft strokes, Fluent switches, sliders, buttons and focus
