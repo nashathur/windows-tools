@@ -149,11 +149,20 @@ pub fn set_key(section: &str, key: &str, value: Value) -> io::Result<()> {
     })
 }
 
-/// Writes `text` to `p` atomically: a temp file named after this process (two widgets writing
-/// at once never share one), then a rename over `p`. The rename is retried briefly, as an
-/// editor or virus scanner may hold `p` for a moment.
+static TEMP_FILE_COUNTER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Gives each atomic write its own temp path, even within one process and thread.
+fn atomic_temp_path(p: &Path) -> std::path::PathBuf {
+    let thread = format!("{:?}", std::thread::current().id());
+    let sequence = TEMP_FILE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    p.with_extension(format!("{}.{}.{}.tmp", std::process::id(), thread, sequence))
+}
+
+/// Writes `text` to `p` atomically: a unique temp file, then a rename over `p`. The rename is
+/// retried briefly, as an editor or virus scanner may hold `p` for a moment.
 pub fn write_atomic(p: &Path, text: &str) -> io::Result<()> {
-    let tmp = p.with_extension(format!("{}.tmp", std::process::id()));
+    let tmp = atomic_temp_path(p);
     std::fs::write(&tmp, text)?;
     let mut tries = 0;
     loop {
@@ -250,6 +259,12 @@ mod tests {
             "\\\\?\\C:\\Users\\a\\AppData\\Local\\Packages\\Claude_x\\LocalCache\\Roaming\\TaskbarDock\\settings.json",
             "C:\\Users\\a\\AppData\\Roaming\\TaskbarDock\\settings.json"
         ));
+    }
+
+    #[test]
+    fn atomic_temp_paths_are_unique_per_call() {
+        let path = Path::new("settings.json");
+        assert_ne!(atomic_temp_path(path), atomic_temp_path(path));
     }
 
     #[test]

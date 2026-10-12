@@ -179,6 +179,8 @@ pub enum State {
     Stopped,
     /// The launcher gave up restarting this widget and it is not running.
     KeepsCrashing,
+    /// The process snapshot failed, so the widget's state could not be determined.
+    Unknown,
 }
 
 /// A widget's observed state and optional process, build, and diagnostic details.
@@ -194,6 +196,43 @@ pub struct Status {
     pub build: Option<u64>,
     /// A short explanation for a non-running state.
     pub reason: Option<String>,
+}
+
+/// Describes a successful start and any watchdog cleanup warning.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StartResult {
+    /// The responding widget process id.
+    pub pid: u32,
+    /// A warning when the widget started but its watchdog record could not be cleared.
+    pub warning: Option<String>,
+}
+
+fn start_result(value: &Value, warning: Option<String>) -> Option<StartResult> {
+    if value.get("ok").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    crate::client::Ping::from_reply(value)
+        .ok()
+        .map(|ping| StartResult {
+            pid: ping.pid,
+            warning,
+        })
+}
+
+fn watchdog_warning(result: std::io::Result<()>) -> Option<String> {
+    result
+        .err()
+        .map(|error| format!("started, but watchdog record could not be cleared: {error}"))
+}
+
+fn unknown_status(name: &str, reason: &str) -> Status {
+    Status {
+        name: name.into(),
+        state: State::Unknown,
+        pid: None,
+        build: None,
+        reason: Some(reason.into()),
+    }
 }
 
 /// Resolves one widget's state using the process-over-record precedence from contract G.
@@ -227,7 +266,15 @@ pub fn status_all_with_records(
     entries: &[Entry],
     records: HashMap<String, crate::watchdog::GaveUp>,
 ) -> Vec<Status> {
-    let processes = process_snapshot();
+    let processes = match process_snapshot() {
+        Ok(processes) => processes,
+        Err(error) => {
+            return entries
+                .iter()
+                .map(|entry| unknown_status(&entry.name, &error))
+                .collect();
+        }
+    };
     let running: Vec<Option<u32>> = entries
         .iter()
         .map(|entry| {
@@ -279,6 +326,7 @@ pub fn status_all_with_records(
                 State::KeepsCrashing => {
                     record.map(|record| format!("exit code {:#010X}", record.exit_code as u32))
                 }
+                State::Unknown => None,
             };
             Status {
                 name: entry.name.clone(),
@@ -292,47 +340,45 @@ pub fn status_all_with_records(
 }
 
 /// Starts a registered widget, or returns the id of its existing process.
-pub fn start(entry: &Entry) -> Result<u32, String> {
-    if let Some((pid, _)) = process_snapshot()
+pub fn start(entry: &Entry) -> Result<StartResult, String> {
+    let already_running = process_snapshot()?
         .into_iter()
-        .find(|(_, path)| same_exe(path, &entry.exe))
-    {
-        crate::watchdog::clear(&entry.name).map_err(|error| error.to_string())?;
-        return Ok(pid);
-    }
-    let exe_text = entry.exe.to_string_lossy();
-    let application = crate::wide(&exe_text);
-    let directory = entry
-        .exe
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    let directory = crate::wide(&directory.to_string_lossy());
-    unsafe {
-        use windows_sys::Win32::System::Threading::{
-            CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
-        };
-        let mut startup: STARTUPINFOW = std::mem::zeroed();
-        startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
-        let mut process: PROCESS_INFORMATION = std::mem::zeroed();
-        let created = CreateProcessW(
-            application.as_ptr(),
-            std::ptr::null_mut(),
-            std::ptr::null(),
-            std::ptr::null(),
-            0,
-            0,
-            std::ptr::null(),
-            directory.as_ptr(),
-            &startup,
-            &mut process,
-        );
-        if created == 0 {
-            return Err(std::io::Error::last_os_error().to_string());
+        .any(|(_, path)| same_exe(&path, &entry.exe));
+    if !already_running {
+        let exe_text = entry.exe.to_string_lossy();
+        let application = crate::wide(&exe_text);
+        let directory = entry
+            .exe
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let directory = crate::wide(&directory.to_string_lossy());
+        unsafe {
+            use windows_sys::Win32::System::Threading::{
+                CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
+            };
+            let mut startup: STARTUPINFOW = std::mem::zeroed();
+            startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+            let mut process: PROCESS_INFORMATION = std::mem::zeroed();
+            let created = CreateProcessW(
+                application.as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                0,
+                std::ptr::null(),
+                directory.as_ptr(),
+                &startup,
+                &mut process,
+            );
+            if created == 0 {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            windows_sys::Win32::Foundation::CloseHandle(process.hThread);
+            windows_sys::Win32::Foundation::CloseHandle(process.hProcess);
         }
-        windows_sys::Win32::Foundation::CloseHandle(process.hThread);
-        windows_sys::Win32::Foundation::CloseHandle(process.hProcess);
     }
-    crate::watchdog::clear(&entry.name).map_err(|error| error.to_string())?;
+    let warning = watchdog_warning(crate::watchdog::clear(&entry.name));
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -343,9 +389,9 @@ pub fn start(entry: &Entry) -> Result<u32, String> {
             &["ping".to_string()],
             timeout,
         ) {
-            Ok(value) if value.get("ok").and_then(Value::as_bool) == Some(true) => {
-                if let Ok(ping) = crate::client::Ping::from_reply(&value) {
-                    return Ok(ping.pid);
+            Ok(value) => {
+                if let Some(result) = start_result(&value, warning.clone()) {
+                    return Ok(result);
                 }
             }
             _ => {}
@@ -361,7 +407,7 @@ pub fn start(entry: &Entry) -> Result<u32, String> {
 /// Asks a running widget to quit and waits up to five seconds for its process to end, so a
 /// Start right after it doesn't find the closing process and report it as running.
 pub fn quit(entry: &Entry) -> Result<(), String> {
-    let pid = process_snapshot()
+    let pid = process_snapshot()?
         .into_iter()
         .find(|(_, path)| same_exe(path, &entry.exe))
         .map(|(pid, _)| pid)
@@ -396,7 +442,7 @@ fn ask_quit(entry: &Entry) -> Result<(), String> {
 
 /// Quits the widget, waits up to five seconds for its process to end, then starts it again.
 pub fn restart(entry: &Entry) -> Result<u32, String> {
-    let pid = process_snapshot()
+    let pid = process_snapshot()?
         .into_iter()
         .find(|(_, path)| same_exe(path, &entry.exe))
         .map(|(pid, _)| pid)
@@ -405,7 +451,7 @@ pub fn restart(entry: &Entry) -> Result<u32, String> {
     if !wait_for_exit(pid) {
         return Err("didn't quit".into());
     }
-    start(entry)
+    start(entry).map(|result| result.pid)
 }
 
 /// Waits for a process to end with a bounded Windows wait and closes its process handle.
@@ -416,6 +462,7 @@ fn wait_for_exit(pid: u32) -> bool {
     let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
     if handle == 0 {
         return !process_snapshot()
+            .unwrap_or_default()
             .iter()
             .any(|(running, _)| *running == pid);
     }
@@ -429,6 +476,7 @@ fn wait_for_exit(pid: u32) -> bool {
 pub fn running_exe(file_name: &str) -> Option<std::path::PathBuf> {
     let wanted = file_name.to_lowercase();
     process_snapshot()
+        .ok()?
         .into_iter()
         .map(|(_, path)| std::path::PathBuf::from(path))
         .find(|path| {
@@ -438,12 +486,12 @@ pub fn running_exe(file_name: &str) -> Option<std::path::PathBuf> {
 }
 
 /// Reads all accessible process image paths from one Toolhelp snapshot.
-fn process_snapshot() -> Vec<(u32, String)> {
+fn process_snapshot() -> Result<Vec<(u32, String)>, String> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
-        return Vec::new();
+        return Err(std::io::Error::last_os_error().to_string());
     }
     let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
     entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
@@ -456,7 +504,7 @@ fn process_snapshot() -> Vec<(u32, String)> {
         more = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
     }
     unsafe { CloseHandle(snapshot) };
-    found
+    Ok(found)
 }
 
 /// Opens one process long enough to query its full executable path.
@@ -564,5 +612,36 @@ mod tests {
         );
         assert_eq!(decide(None, false, None, record), State::KeepsCrashing);
         assert_eq!(decide(None, false, None, None), State::Stopped);
+    }
+
+    #[test]
+    fn unknown_status_keeps_snapshot_failure_reason() {
+        let status = unknown_status("weather", "access denied");
+        assert_eq!(status.state, State::Unknown);
+        assert_eq!(status.reason.as_deref(), Some("access denied"));
+        assert_eq!(status.pid, None);
+    }
+
+    #[test]
+    fn starting_requires_a_valid_ping_and_reports_watchdog_warning() {
+        let warning = Some("watchdog locked".to_string());
+        assert_eq!(
+            start_result(
+                &serde_json::json!({"ok":true,"pid":17,"build":42}),
+                warning.clone()
+            ),
+            Some(StartResult { pid: 17, warning })
+        );
+        assert_eq!(start_result(&serde_json::json!({"ok":true}), None), None);
+        assert_eq!(
+            start_result(&serde_json::json!({"ok":false,"pid":17,"build":42}), None),
+            None
+        );
+        let warning = watchdog_warning(Err(std::io::Error::other("locked")));
+        assert_eq!(
+            warning.as_deref(),
+            Some("started, but watchdog record could not be cleared: locked")
+        );
+        assert_eq!(watchdog_warning(Ok(())), None);
     }
 }

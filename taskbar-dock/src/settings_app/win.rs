@@ -37,6 +37,15 @@ const DATA_TAG: usize = 0x444B_5350;
 const WM_MOUSE_LEAVE: u32 = 0x02A3;
 thread_local! { static MAIN: Cell<HWND> = const { Cell::new(0) }; }
 
+/// Defers a widget-page request until the registry worker has resolved its entry.
+fn initial_page(initial: Page) -> (Page, Option<Page>) {
+    if matches!(initial, Page::Widget(_)) {
+        (Page::Widgets, Some(initial))
+    } else {
+        (initial, None)
+    }
+}
+
 /// Starts the settings application, forwarding to an existing instance when present.
 pub fn run(initial: Page) -> i32 {
     unsafe {
@@ -178,6 +187,8 @@ struct App {
     hwnd: HWND,
     /// Current page.
     page: Page,
+    /// A requested widget page held until the registry has loaded.
+    pending_page: Option<Page>,
     /// Registered entries with descriptions.
     entries: Vec<work::LoadedEntry>,
     /// Whether the registry worker has delivered the current entries.
@@ -214,6 +225,8 @@ struct App {
     reveal_secret: bool,
     /// Active single-line editor.
     edit: Option<(usize, TextEdit)>,
+    /// High surrogate waiting for its WM_CHAR low surrogate.
+    pending_high_surrogate: Option<u16>,
     /// Numeric slider currently held, with its uncommitted value.
     slider_drag: Option<(usize, f64, Rect)>,
     /// Loaded entry list shared with the status worker.
@@ -222,10 +235,16 @@ struct App {
     writer: Sender<WriteJob>,
     /// Latest write sequence.
     sequence: u64,
+    /// Latest badge generation.
+    badge_sequence: u64,
+    /// Badge generation attached to each pending write.
+    write_badge_sequences: HashMap<u64, u64>,
     /// Latest accepted status round.
     status_round: u64,
     /// Whether the repeating status worker is already running.
     status_started: bool,
+    /// Requests an immediate status round on the status worker.
+    status_refresh: Option<Sender<()>>,
     /// Settings file modification time.
     mtime: Option<std::time::SystemTime>,
     /// Current page's nav labels and targets.
@@ -251,6 +270,7 @@ struct App {
 impl App {
     /// Creates the UI model and starts background loading after the window exists.
     fn new(hwnd: HWND, initial: Page) -> Self {
+        let (page, pending_page) = initial_page(initial);
         let fallback = taskbar_dock::style::Style::default();
         let theme = Theme::with(false, &fallback.font, None);
         let scale = taskbar_dock::system::scale_for(hwnd);
@@ -263,7 +283,8 @@ impl App {
         }
         Self {
             hwnd,
-            page: initial,
+            page,
+            pending_page,
             entries: Vec::new(),
             registry_loaded: false,
             rows: Vec::new(),
@@ -282,12 +303,16 @@ impl App {
             dropdown: None,
             reveal_secret: false,
             edit: None,
+            pending_high_surrogate: None,
             slider_drag: None,
             status_entries: Arc::new(RwLock::new(Vec::new())),
             writer,
             sequence: 0,
+            badge_sequence: 0,
+            write_badge_sequences: HashMap::new(),
             status_round: 0,
             status_started: false,
+            status_refresh: None,
             mtime: taskbar_dock::settings::mtime(),
             nav: Vec::new(),
             pending_remote: HashMap::new(),
@@ -351,6 +376,7 @@ impl App {
 
     /// Rebuilds rows from current file values and the current page's description.
     fn rebuild_rows(&mut self) {
+        self.prepare_for_row_rebuild();
         self.rows.clear();
         match &self.page {
             Page::Widget(name) => {
@@ -385,6 +411,22 @@ impl App {
             Page::Widgets => {}
         }
         self.scroll = 0;
+    }
+
+    /// Resolves transient controls before replacing the row model they refer to.
+    fn prepare_for_row_rebuild(&mut self) {
+        if self.edit.is_some() {
+            self.commit_edit();
+            if self.edit.is_some() {
+                self.cancel_edit();
+            }
+        }
+        self.dropdown = None;
+        self.cancel_slider();
+        self.reveal_secret = false;
+        unsafe {
+            ReleaseCapture();
+        }
     }
 
     /// Rebuilds the home rows from registry, current file values, and process status.
@@ -431,11 +473,15 @@ impl App {
                     *shared = entries.iter().map(|item| item.entry.clone()).collect();
                 }
                 if !self.status_started {
-                    work::status_loop(self.hwnd, self.status_entries.clone());
+                    self.status_refresh =
+                        Some(work::status_loop(self.hwnd, self.status_entries.clone()));
                     self.status_started = true;
                 }
                 self.entries = entries;
                 self.registry_loaded = true;
+                if let Some(page) = self.pending_page.take() {
+                    self.page = resolve_pending_page(page, &self.entries);
+                }
                 self.rebuild_nav();
                 self.rebuild_rows();
                 work::read_developer(
@@ -452,11 +498,17 @@ impl App {
                 work::read_developer(self.hwnd, self.entries.clone(), statuses, false);
             }
             WorkResult::Status { .. } => {}
-            WorkResult::File(Ok(value)) => {
+            WorkResult::File { mtime, .. } if file_snapshot_is_stale(mtime, self.mtime) => {
+                work::read_file(self.hwnd);
+            }
+            WorkResult::File {
+                result: Ok(value),
+                mtime,
+            } => {
                 let registry_changed = self.settings.get("widgets") != value.get("widgets");
                 self.banner = None;
                 self.settings = value;
-                self.mtime = taskbar_dock::settings::mtime();
+                self.mtime = mtime;
                 if registry_changed {
                     work::load_registry(self.hwnd);
                 }
@@ -499,7 +551,11 @@ impl App {
                     self.registry_loaded,
                 );
             }
-            WorkResult::File(Err(_)) => {
+            WorkResult::File {
+                result: Err(_),
+                mtime,
+            } => {
+                self.mtime = mtime;
                 self.banner = Some("settings.json has an error; fix it in Notepad".into());
                 for row in &mut self.rows {
                     row.enabled = false;
@@ -512,57 +568,63 @@ impl App {
                 result,
                 followed,
             } => {
+                let write_badge_sequence = self.write_badge_sequences.remove(&sequence);
+                let error = result.as_ref().err().cloned();
                 if let Some(row) = self
                     .rows
                     .iter_mut()
                     .find(|row| row.section == section && row.key == key)
                 {
                     let value = result.as_ref().ok().cloned();
-                    let error = result.as_ref().err().cloned();
-                    if row.apply_result(sequence, value, error.clone()) {
-                        let title = self
-                            .entries
-                            .iter()
-                            .find(|item| item.entry.name == section)
-                            .and_then(|item| item.describe.as_ref().ok())
-                            .map(|desc| desc.title.as_str())
-                            .unwrap_or(&section);
-                        self.badge = Some(error.map_or_else(
-                            || {
-                                followed.err().map_or("Saved".into(), |reason| {
-                                    let names = reason
-                                        .strip_suffix(" hasn't confirmed")
-                                        .unwrap_or(&reason)
-                                        .split(", ");
-                                    let titles = names
-                                        .map(|name| {
-                                            self.entries
-                                                .iter()
-                                                .find(|item| item.entry.name == name)
-                                                .and_then(|item| item.describe.as_ref().ok())
-                                                .map(|desc| desc.title.as_str())
-                                                .unwrap_or(name)
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join(", ");
-                                    if section == "dock" {
-                                        format!("Saved; {titles} haven't confirmed")
-                                    } else {
-                                        format!("Saved; {title} hasn't confirmed")
-                                    }
-                                })
-                            },
-                            |e| format!("Not saved: {e}"),
-                        ));
-                        self.badge_until = self
-                            .badge
-                            .as_deref()
-                            .filter(|text| *text == "Saved")
-                            .map(|_| Instant::now() + Duration::from_secs(2));
-                    }
+                    row.apply_result(sequence, value, error.clone());
+                }
+                if sequence == self.sequence
+                    && badge_result_is_current(write_badge_sequence, self.badge_sequence)
+                {
+                    let title = self
+                        .entries
+                        .iter()
+                        .find(|item| item.entry.name == section)
+                        .and_then(|item| item.describe.as_ref().ok())
+                        .map(|desc| desc.title.as_str())
+                        .unwrap_or(&section);
+                    let follow_error = followed.err();
+                    self.badge = Some(error.map_or_else(
+                        || {
+                            follow_error.map_or("Saved".into(), |reason| {
+                                let names = reason
+                                    .strip_suffix(" hasn't confirmed")
+                                    .unwrap_or(&reason)
+                                    .split(", ");
+                                let titles = names
+                                    .map(|name| {
+                                        self.entries
+                                            .iter()
+                                            .find(|item| item.entry.name == name)
+                                            .and_then(|item| item.describe.as_ref().ok())
+                                            .map(|desc| desc.title.as_str())
+                                            .unwrap_or(name)
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                if section == "dock" {
+                                    format!("Saved; {titles} haven't confirmed")
+                                } else {
+                                    format!("Saved; {title} hasn't confirmed")
+                                }
+                            })
+                        },
+                        |error| format!("Not saved: {error}"),
+                    ));
+                    self.badge_until = self
+                        .badge
+                        .as_deref()
+                        .filter(|text| *text == "Saved")
+                        .map(|_| Instant::now() + Duration::from_secs(2));
                 }
                 work::read_file(self.hwnd);
                 if let Some((sender, source, id)) = self.pending_remote.remove(&sequence) {
+                    invalidate(self.hwnd);
                     unsafe {
                         UpdateWindow(self.hwnd);
                     }
@@ -578,32 +640,38 @@ impl App {
                 name,
                 action,
                 result,
+                warning,
             } => {
                 let success = result.is_ok();
                 let error = result.as_ref().err().cloned();
                 self.busy_actions.remove(&name);
+                self.bump_badge_sequence();
                 self.badge = Some(result.map_or_else(
                     |e| format!("Couldn't {action}: {e}"),
                     |_| match action.as_str() {
-                        "start" => "Started".into(),
+                        "start" => warning.clone().map_or_else(
+                            || "Started".into(),
+                            |warning| format!("Started; {warning}"),
+                        ),
                         "quit" => "Quit".into(),
                         _ => "Restarted".into(),
                     },
                 ));
                 self.badge_until = Some(Instant::now() + Duration::from_secs(2));
-                let entries = self.status_entries.clone();
-                let hwnd = self.hwnd;
-                let round = self.status_round.wrapping_add(1);
-                std::thread::spawn(move || {
-                    let statuses =
-                        control::status_all(&entries.read().map(|e| e.clone()).unwrap_or_default());
-                    post_result(hwnd, WorkResult::Status { round, statuses });
-                });
+                if let Some(refresh) = &self.status_refresh {
+                    let _ = refresh.send(());
+                }
                 if let Some((sender, source, id)) = self.pending_actions.remove(&(name, action)) {
+                    invalidate(self.hwnd);
                     unsafe {
                         UpdateWindow(self.hwnd);
                     }
-                    remote::reply(sender, source, id, &json!({"ok":success,"error":error}));
+                    remote::reply(
+                        sender,
+                        source,
+                        id,
+                        &json!({"ok":success,"error":error,"warning":warning}),
+                    );
                 }
             }
             WorkResult::Developer { details, raw } => {
@@ -620,6 +688,7 @@ impl App {
             } => {
                 let succeeded = result.is_ok();
                 let name = result.as_ref().ok().cloned().unwrap_or_default();
+                self.bump_badge_sequence();
                 self.badge = Some(result.map_or_else(
                     |error| {
                         if operation == "register" {
@@ -642,6 +711,10 @@ impl App {
                 }
                 let key = format!("{operation}:{requested}");
                 if let Some((sender, source, id)) = self.pending_registry.remove(&key) {
+                    invalidate(self.hwnd);
+                    unsafe {
+                        UpdateWindow(self.hwnd);
+                    }
                     remote::reply(
                         sender,
                         source,
@@ -656,6 +729,11 @@ impl App {
 
     /// Navigates to a page and rebuilds page-local state.
     fn navigate(&mut self, page: Page) {
+        if matches!(page, Page::Widget(_)) && !self.registry_loaded {
+            self.pending_page = Some(page);
+            return;
+        }
+        self.pending_page = None;
         self.page = page;
         self.rebuild_rows();
         if self
@@ -665,6 +743,18 @@ impl App {
             self.focus = None;
         }
         invalidate(self.hwnd);
+    }
+
+    /// Advances the badge generation so an older async result cannot replace it.
+    fn bump_badge_sequence(&mut self) -> u64 {
+        self.badge_sequence = self.badge_sequence.wrapping_add(1).max(1);
+        self.badge_sequence
+    }
+
+    /// Associates a queued write with the current badge generation.
+    fn mark_write_badge(&mut self, sequence: u64) {
+        let badge_sequence = self.bump_badge_sequence();
+        self.write_badge_sequences.insert(sequence, badge_sequence);
     }
 
     /// Finds a loaded widget entry for a row.
@@ -689,6 +779,22 @@ impl App {
         }
         let section = row.section.clone();
         let key = row.key.clone();
+        let startup_enabled = if key == "startup" {
+            let value = match &input {
+                control::Input::Text(text) => describe::parse(&row.setting, text),
+                control::Input::Value(value) => Ok(value.clone()),
+            };
+            match value.ok().and_then(|value| value.as_bool()) {
+                Some(enabled) => Some(enabled),
+                None => {
+                    self.rows[index].error = Some("expected a switch value".into());
+                    invalidate(self.hwnd);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         let destination = if section == "dock" {
             Ok((None, Some(control::Target::dock())))
         } else if key == "startup" {
@@ -724,6 +830,7 @@ impl App {
         };
         self.sequence = self.sequence.wrapping_add(1).max(1);
         let sequence = self.sequence;
+        self.mark_write_badge(sequence);
         self.rows[index].pending = Some(sequence);
         self.rows[index].error = None;
         if key == "startup" {
@@ -734,7 +841,7 @@ impl App {
                 sequence,
                 name: section,
                 exe: entry.exe,
-                enabled: matches!(input, control::Input::Value(Value::Bool(true))),
+                enabled: startup_enabled.unwrap_or(false),
             });
         } else if let Some(target) = target {
             let _ = self.writer.send(WriteJob::Apply {
@@ -774,7 +881,7 @@ impl App {
                         model::Control::Color => "color",
                         model::Control::Secret => "secret",
                     };
-                    let secret = matches!(row.setting.kind, Kind::Secret)
+                    let secret = taskbar_dock::describe::is_secret_kind(&row.setting.kind)
                         || taskbar_dock::ctl::is_secret(&row.key);
                     let value =
                         if secret && row.value.as_str().is_some_and(|value| !value.is_empty()) {
@@ -817,6 +924,7 @@ impl App {
                         "title": widget.title,
                         "description": widget.description,
                         "status": widget.status,
+                        "status_text": widget_status_text(widget),
                         "pid": widget.pid,
                         "reason": widget.reason,
                         "show_on_taskbar": widget.show_on_taskbar
@@ -866,6 +974,9 @@ impl App {
                 })
             }
             crate::settings_app::keys::FocusKind::Action => format!("action:{}", focus.index),
+            crate::settings_app::keys::FocusKind::DeveloperAction => {
+                format!("developer_action:{}", focus.index)
+            }
         });
         json!({
             "ok": true,
@@ -907,7 +1018,7 @@ impl App {
             Ok(command) => match command {
                 taskbar_dock::ctl::SettingsCommand::State => self.state(),
                 taskbar_dock::ctl::SettingsCommand::Page(name) => {
-                    let page = parse_page(&name, &self.entries);
+                    let page = requested_page(&name, &self.entries, self.registry_loaded);
                     self.navigate(page);
                     json!({"ok":true})
                 }
@@ -937,6 +1048,7 @@ impl App {
                 }
             },
         };
+        invalidate(self.hwnd);
         unsafe {
             UpdateWindow(self.hwnd);
         }
@@ -1047,6 +1159,7 @@ impl App {
             };
             self.sequence = self.sequence.wrapping_add(1).max(1);
             let sequence = self.sequence;
+            self.mark_write_badge(sequence);
             self.rows[index].pending = Some(sequence);
             let _ = self.writer.send(WriteJob::Startup {
                 sequence,
@@ -1058,6 +1171,7 @@ impl App {
         }
         let target = target.unwrap();
         self.sequence = self.sequence.wrapping_add(1).max(1);
+        self.mark_write_badge(self.sequence);
         self.rows[index].pending = Some(self.sequence);
         let _ = self.writer.send(WriteJob::Reset {
             sequence: self.sequence,
@@ -1100,6 +1214,7 @@ impl App {
             let commands = model::developer_commands();
             if let Some(command) = commands.get(index) {
                 taskbar_dock::text_edit::clipboard_write(self.hwnd, command);
+                self.bump_badge_sequence();
                 self.badge = Some("Copied".into());
                 self.badge_until = Some(Instant::now() + Duration::from_secs(2));
                 return json!({"ok":true});
@@ -1113,8 +1228,10 @@ impl App {
             return json!({"ok":true});
         }
         if name == "notepad" {
-            open_notepad();
-            return json!({"ok":true});
+            return match self.open_settings_notepad() {
+                Ok(()) => json!({"ok":true}),
+                Err(error) => json!({"ok":false,"error":error}),
+            };
         }
         if self.banner.is_some() {
             return json!({"ok":false,"error":"settings.json has an error"});
@@ -1131,6 +1248,20 @@ impl App {
             }
         }
         json!({"ok":false,"error":"unknown action"})
+    }
+
+    /// Opens settings.json and records a visible badge if Notepad cannot start.
+    fn open_settings_notepad(&mut self) -> Result<(), String> {
+        match launch_notepad() {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.bump_badge_sequence();
+                self.badge = Some(format!("Not opened: {error}"));
+                self.badge_until = Some(Instant::now() + Duration::from_secs(4));
+                invalidate(self.hwnd);
+                Err(error)
+            }
+        }
     }
 
     /// Opens the standard executable picker and queues registry work off the UI thread.
@@ -1156,6 +1287,7 @@ impl App {
             .unwrap_or(file.len());
         let exe = std::path::PathBuf::from(String::from_utf16_lossy(&file[..length]));
         let _ = self.writer.send(WriteJob::Register { exe });
+        self.bump_badge_sequence();
         self.badge = Some("Registering".into());
         self.badge_until = None;
         invalidate(self.hwnd);
@@ -1244,7 +1376,7 @@ impl App {
         if let Some(row) = self.rows.get_mut(index) {
             row.draft = Some(initial.clone());
             let mut edit = TextEdit::new(initial);
-            if matches!(row.setting.kind, Kind::Secret) {
+            if taskbar_dock::describe::is_secret_kind(&row.setting.kind) {
                 edit.select_all();
             }
             self.edit = Some((index, edit));
@@ -1259,7 +1391,15 @@ impl App {
         } else {
             0
         };
-        let order = crate::settings_app::keys::focus_order(nav_count, &self.rows, action_count);
+        let order = if matches!(self.page, Page::Developer) {
+            crate::settings_app::keys::developer_focus_order(
+                nav_count,
+                &self.rows,
+                self.developer_action_rects().len(),
+            )
+        } else {
+            crate::settings_app::keys::focus_order(nav_count, &self.rows, action_count)
+        };
         if order.is_empty() {
             return;
         }
@@ -1281,7 +1421,174 @@ impl App {
             || target.kind == crate::settings_app::keys::FocusKind::Reset
         {
             self.ensure_focus_visible(target.index);
+        } else if target.kind == crate::settings_app::keys::FocusKind::DeveloperAction {
+            self.ensure_developer_control_visible(target.index);
         }
+    }
+
+    /// Returns Developer action rectangles in keyboard order.
+    fn developer_action_rects(&self) -> Vec<Rect> {
+        let nav_width = layout::px(theme::app::NAV_WIDTH, self.scale);
+        let width = unsafe {
+            let mut rect: RECT = std::mem::zeroed();
+            GetClientRect(self.hwnd, &mut rect);
+            rect.right - nav_width - 2 * layout::px(theme::app::CONTENT_PADDING, self.scale)
+        };
+        let content_top = layout::px(theme::app::HEADER_HEIGHT, self.scale)
+            + self.banner.as_ref().map_or(0, |_| {
+                layout::px(theme::space::XL * 2.0 + theme::space::S, self.scale)
+            })
+            + developer_warning_height(&self.page, self.scale);
+        let heights = self
+            .rows
+            .iter()
+            .map(|row| self.measured_card_height(row, width))
+            .collect::<Vec<_>>();
+        let advanced = layout::page_layout(&self.rows, &heights, width, self.scale, content_top, 0);
+        let cards = layout::developer_layout(
+            content_top + advanced.content_height + layout::px(theme::app::CARD_GAP, self.scale),
+            width,
+            self.scale,
+            self.scroll,
+            self.developer_details.len(),
+            self.entries.len(),
+            model::developer_commands().len(),
+        );
+        let mut rects = vec![cards.register_button];
+        rects.extend(cards.remove_buttons);
+        rects.push(cards.raw_notepad);
+        rects.extend(cards.copy_buttons);
+        rects
+    }
+
+    /// Focuses a Developer action and scrolls it into view.
+    fn focus_developer_control(&mut self, index: usize) {
+        self.focus_item = Some(crate::settings_app::keys::Focus {
+            kind: crate::settings_app::keys::FocusKind::DeveloperAction,
+            index,
+        });
+        self.focus = None;
+        self.ensure_developer_control_visible(index);
+    }
+
+    /// Activates the currently focused Developer button.
+    fn activate_developer_focus(&mut self) {
+        let Some(focus) = self
+            .focus_item
+            .filter(|focus| focus.kind == crate::settings_app::keys::FocusKind::DeveloperAction)
+        else {
+            return;
+        };
+        let remove_start = 1;
+        let notepad_index = remove_start + self.entries.len();
+        let copy_start = notepad_index + 1;
+        match focus.index {
+            0 => self.register_widget_dialog(),
+            index if (remove_start..notepad_index).contains(&index) => {
+                if let Some(item) = self.entries.get(index - remove_start) {
+                    let _ = self.writer.send(WriteJob::Remove {
+                        name: item.entry.name.clone(),
+                    });
+                }
+            }
+            index if index == notepad_index => {
+                let _ = self.open_settings_notepad();
+            }
+            index if index >= copy_start => {
+                let _ = self.click_remote(&format!("copy:{}", index - copy_start));
+            }
+            _ => {}
+        }
+    }
+
+    /// Brings a focused Developer action into the content viewport.
+    fn ensure_developer_control_visible(&mut self, index: usize) {
+        let Some(rect) = self.developer_action_rects().get(index).copied() else {
+            return;
+        };
+        let visible_top = layout::px(theme::app::HEADER_HEIGHT, self.scale)
+            + self.banner.as_ref().map_or(0, |_| {
+                layout::px(theme::space::XL * 2.0 + theme::space::S, self.scale)
+            })
+            + developer_warning_height(&self.page, self.scale);
+        let client_bottom = unsafe {
+            let mut client: RECT = std::mem::zeroed();
+            GetClientRect(self.hwnd, &mut client);
+            client.bottom
+        };
+        if rect.top < visible_top {
+            self.scroll = (self.scroll - (visible_top - rect.top)).max(0);
+        } else if rect.bottom > client_bottom {
+            self.scroll += rect.bottom - client_bottom;
+        }
+        invalidate(self.hwnd);
+    }
+
+    /// Returns the option index under an open dropdown item.
+    fn dropdown_option_at_point(&self, index: usize, x: i32, y: i32) -> Option<usize> {
+        let row = self.rows.get(index)?;
+        let nav_width = layout::px(theme::app::NAV_WIDTH, self.scale);
+        let width = unsafe {
+            let mut rect: RECT = std::mem::zeroed();
+            GetClientRect(self.hwnd, &mut rect);
+            rect.right - nav_width - 2 * layout::px(theme::app::CONTENT_PADDING, self.scale)
+        };
+        let left = nav_width + layout::px(theme::app::CONTENT_PADDING, self.scale);
+        let banner_height = self.banner.as_ref().map_or(0, |_| {
+            layout::px(theme::space::XL * 2.0 + theme::space::S, self.scale)
+        });
+        let content_top = layout::px(theme::app::HEADER_HEIGHT, self.scale)
+            + banner_height
+            + developer_warning_height(&self.page, self.scale);
+        let heights = self
+            .rows
+            .iter()
+            .map(|row| self.measured_card_height(row, width))
+            .collect::<Vec<_>>();
+        let positions = layout::page_layout(
+            &self.rows,
+            &heights,
+            width,
+            self.scale,
+            content_top,
+            self.scroll,
+        );
+        let top = positions.cards.get(index)?.top;
+        let card_height = positions.cards[index].bottom - top;
+        let local = layout::row_rects(
+            width,
+            top,
+            card_height,
+            layout::px(theme::app::CONTROL_WIDTH, self.scale),
+            layout::full_line(row),
+            row.reset_visible(),
+            self.measured_error_height(row, width),
+            self.scale,
+        );
+        let trigger = Rect {
+            left: left + local.control.left,
+            top: local.control.top,
+            right: left + local.control.right,
+            bottom: local.control.bottom,
+        };
+        let client_height = unsafe {
+            let mut rect: RECT = std::mem::zeroed();
+            GetClientRect(self.hwnd, &mut rect);
+            rect.bottom
+        };
+        let control = layout::control_model(
+            row,
+            trigger,
+            self.scale,
+            Rect {
+                left,
+                top: layout::px(theme::app::HEADER_HEIGHT, self.scale),
+                right: left + width,
+                bottom: client_height,
+            },
+            true,
+        );
+        layout::dropdown_option_at(&control.parts, x, y)
     }
 
     /// Lists the visible home-page switches and process buttons in display order.
@@ -1463,13 +1770,10 @@ impl App {
                 index,
                 control::Input::Value(Value::Bool(row.value.as_bool() != Some(true))),
             ),
-            Kind::Choice { options, .. } => {
+            Kind::Choice { options, other } => {
                 if row.control() == model::Control::Dropdown {
                     // Open on the current choice ("Other…" when the value is no option).
-                    let current = options
-                        .iter()
-                        .position(|(value, _)| *value == row.value)
-                        .unwrap_or(options.len());
+                    let current = dropdown_selection(options, *other, &row.value);
                     self.dropdown = Some((index, current));
                     invalidate(self.hwnd);
                     return;
@@ -1564,6 +1868,7 @@ impl App {
             .badge_until
             .is_some_and(|until| Instant::now() >= until)
         {
+            self.bump_badge_sequence();
             self.badge = None;
             self.badge_until = None;
         }
@@ -1574,10 +1879,15 @@ impl App {
         let Some((index, edit)) = self.edit.take() else {
             return;
         };
-        if let Err(error) = describe::parse(&self.rows[index].setting, edit.text()) {
-            self.rows[index].draft = Some(edit.text().into());
-            self.rows[index].error = Some(error);
-            self.edit = Some((index, edit));
+        let Some(setting) = self.rows.get(index).map(|row| row.setting.clone()) else {
+            return;
+        };
+        if let Err(error) = describe::parse(&setting, edit.text()) {
+            if let Some(row) = self.rows.get_mut(index) {
+                row.draft = Some(edit.text().into());
+                row.error = Some(error);
+                self.edit = Some((index, edit));
+            }
             invalidate(self.hwnd);
             return;
         }
@@ -1739,6 +2049,7 @@ impl App {
                 row.draft = Some(edit.text().to_string());
             }
         }
+        invalidate(self.hwnd);
     }
 
     /// Dispatches normal page navigation and control actions.
@@ -1799,6 +2110,8 @@ impl App {
                     }
                 } else if focus.kind == crate::settings_app::keys::FocusKind::Action {
                     self.activate_home_focus();
+                } else if focus.kind == crate::settings_app::keys::FocusKind::DeveloperAction {
+                    self.activate_developer_focus();
                 }
             } else {
                 self.begin_edit();
@@ -1809,6 +2122,10 @@ impl App {
                 .is_some_and(|focus| focus.kind == crate::settings_app::keys::FocusKind::Action)
             {
                 self.activate_home_focus();
+            } else if self.focus_item.is_some_and(|focus| {
+                focus.kind == crate::settings_app::keys::FocusKind::DeveloperAction
+            }) {
+                self.activate_developer_focus();
             } else if let Some(index) = self.focus {
                 if matches!(
                     self.rows.get(index).map(Row::control),
@@ -1917,6 +2234,19 @@ impl App {
             }
         }
         let open_dropdown = self.dropdown.take();
+        if let Some((index, _)) = open_dropdown {
+            if let Some(row) = self.rows.get(index) {
+                if let Some(option) = self.dropdown_option_at_point(index, x, y) {
+                    if matches!(row.setting.kind, Kind::Auto { .. }) {
+                        self.choose_auto_dropdown(index, option);
+                    } else {
+                        self.choose_dropdown(index, option);
+                    }
+                }
+            }
+            invalidate(self.hwnd);
+            return;
+        }
         if x < nav_width {
             let client_height = unsafe {
                 let mut rect: RECT = std::mem::zeroed();
@@ -1981,7 +2311,7 @@ impl App {
             )
             .is_some()
             {
-                open_notepad();
+                let _ = self.open_settings_notepad();
                 return;
             }
         }
@@ -1989,67 +2319,31 @@ impl App {
             return;
         }
         if matches!(self.page, Page::Widgets) {
+            let width = unsafe {
+                let mut rect: RECT = std::mem::zeroed();
+                GetClientRect(self.hwnd, &mut rect);
+                rect.right - nav_width - 2 * layout::px(theme::app::CONTENT_PADDING, self.scale)
+            };
+            let left = nav_width + layout::px(theme::app::CONTENT_PADDING, self.scale);
+            let top = layout::px(theme::app::HEADER_HEIGHT, self.scale) - self.scroll;
             let row_height = layout::px(theme::app::NAV_ROW_HEIGHT * 2.0, self.scale);
-            let idx = ((y - layout::px(theme::app::HEADER_HEIGHT, self.scale) + self.scroll)
-                / (row_height + layout::px(theme::app::CARD_GAP, self.scale)))
-            .max(0) as usize;
-            if let Some(widget) = self.widgets.get(idx).cloned() {
-                let width = unsafe {
-                    let mut rect: RECT = std::mem::zeroed();
-                    GetClientRect(self.hwnd, &mut rect);
-                    rect.right - nav_width - 2 * layout::px(theme::app::CONTENT_PADDING, self.scale)
-                };
-                let left = nav_width + layout::px(theme::app::CONTENT_PADDING, self.scale);
-                let action_width = layout::px(theme::app::HOME_ACTION_WIDTH, self.scale);
-                let switch_width = layout::px(theme::app::HOME_SWITCH_WIDTH, self.scale);
-                let pad = layout::px(theme::app::CARD_PADDING, self.scale);
-                let button_y = y
-                    >= layout::px(theme::app::HEADER_HEIGHT, self.scale) - self.scroll + row_height
-                        - pad
-                        - layout::px(theme::app::CONTROL_HEIGHT, self.scale)
-                    && y < layout::px(theme::app::HEADER_HEIGHT, self.scale) - self.scroll
-                        + row_height
-                        - pad;
-                let switch_left = left + width - pad - switch_width - action_width * 2 - pad;
-                let action_left = left + width - action_width * 2 - pad;
-                let actions = [
-                    (
-                        Rect {
-                            left: action_left,
-                            top: y + row_height
-                                - pad
-                                - layout::px(theme::app::CONTROL_HEIGHT, self.scale),
-                            right: action_left + action_width,
-                            bottom: y + row_height - pad,
-                        },
-                        layout::Hit::Action(0),
-                    ),
-                    (
-                        Rect {
-                            left: action_left + action_width + pad / 2,
-                            top: y + row_height
-                                - pad
-                                - layout::px(theme::app::CONTROL_HEIGHT, self.scale),
-                            right: left + width - pad,
-                            bottom: y + row_height - pad,
-                        },
-                        layout::Hit::Action(1),
-                    ),
-                ];
-                let action_hit = layout::hit_test(x, y, &actions);
-                if button_y && x >= switch_left && x < action_left - pad / 2 {
+            let stride = row_height + layout::px(theme::app::CARD_GAP, self.scale);
+            if let Some((idx, widget)) = self.widgets.iter().enumerate().find(|(index, widget)| {
+                let running = widget.status == "running" || widget.status == "not responding";
+                layout::widget_row_rects(top + *index as i32 * stride, width, self.scale, running)
+                    .card
+                    .contains(x - left, y)
+            }) {
+                let running = widget.status == "running" || widget.status == "not responding";
+                let rects =
+                    layout::widget_row_rects(top + idx as i32 * stride, width, self.scale, running);
+                if rects.show_on_taskbar.contains(x - left, y) {
                     self.focus_home_control(idx, 0);
                     self.write_show_on_taskbar(idx);
-                } else if button_y && matches!(action_hit, Some(layout::Hit::Action(0))) {
+                } else if rects.action.contains(x - left, y) {
                     self.focus_home_control(idx, 1);
-                    let action = if widget.status == "running" || widget.status == "not responding"
-                    {
-                        "quit"
-                    } else {
-                        "start"
-                    };
-                    self.home_action(idx, action);
-                } else if button_y && matches!(action_hit, Some(layout::Hit::Action(1))) {
+                    self.home_action(idx, if running { "quit" } else { "start" });
+                } else if rects.restart.is_some_and(|rect| rect.contains(x - left, y)) {
                     self.focus_home_control(idx, 2);
                     self.home_action(idx, "restart");
                 } else {
@@ -2087,59 +2381,6 @@ impl App {
                 let top = positions.cards[index].top;
                 let full_line = layout::full_line(&row);
                 let card_height = positions.cards[index].bottom - top;
-                if let Some((open_index, _)) = open_dropdown {
-                    if open_index == index {
-                        let local = layout::row_rects(
-                            width,
-                            top,
-                            card_height,
-                            layout::px(theme::app::CONTROL_WIDTH, self.scale),
-                            full_line,
-                            row.reset_visible(),
-                            self.measured_error_height(&row, width),
-                            self.scale,
-                        );
-                        let trigger = Rect {
-                            left: left + local.control.left,
-                            top: local.control.top,
-                            right: left + local.control.right,
-                            bottom: local.control.bottom,
-                        };
-                        let client_height = unsafe {
-                            let mut rect: RECT = std::mem::zeroed();
-                            GetClientRect(self.hwnd, &mut rect);
-                            rect.bottom
-                        };
-                        let control = layout::control_model(
-                            &row,
-                            trigger,
-                            self.scale,
-                            Rect {
-                                left,
-                                top: layout::px(theme::app::HEADER_HEIGHT, self.scale),
-                                right: left + width,
-                                bottom: client_height,
-                            },
-                            true,
-                        );
-                        if let Some(option) = control.parts.iter().find_map(|(part, rect)| {
-                            if let layout::ControlPart::DropdownItem(index)
-                            | layout::ControlPart::AutoInnerDropdownItem(index) = part
-                            {
-                                rect.contains(x, y).then_some(*index)
-                            } else {
-                                None
-                            }
-                        }) {
-                            if matches!(row.setting.kind, Kind::Auto { .. }) {
-                                self.choose_auto_dropdown(index, option);
-                            } else {
-                                self.choose_dropdown(index, option);
-                            }
-                            return;
-                        }
-                    }
-                }
                 if y >= top && y < top + card_height {
                     if !row.enabled {
                         return;
@@ -2188,20 +2429,9 @@ impl App {
                         },
                         false,
                     );
-                    let card_hit = Rect {
-                        left: 0,
-                        top,
-                        right: width,
-                        bottom: top + card_height,
-                    };
-                    let mut hit_items = vec![
-                        (card_hit, layout::Hit::Row(index)),
-                        (local.control, layout::Hit::Control(index)),
-                    ];
-                    if let Some(reset) = local.reset.filter(|_| reset_visible) {
-                        hit_items.push((reset, layout::Hit::Reset(index)));
-                    }
-                    let hit = layout::hit_test(x - left, y, &hit_items);
+                    let hit_items =
+                        layout::row_hit_targets(index, left, local, &control_model.parts);
+                    let hit = layout::hit_test(x, y, &hit_items);
                     if matches!(hit, Some(layout::Hit::Reset(_))) {
                         self.focus_item = Some(crate::settings_app::keys::Focus {
                             kind: crate::settings_app::keys::FocusKind::Reset,
@@ -2210,7 +2440,7 @@ impl App {
                         self.focus = Some(index);
                         self.ensure_focus_visible(index);
                         let _ = self.reset_remote(&row_id);
-                    } else if matches!(hit, Some(layout::Hit::Control(_))) {
+                    } else if matches!(hit, Some(layout::Hit::Control(_, _))) {
                         self.focus_item = Some(crate::settings_app::keys::Focus {
                             kind: crate::settings_app::keys::FocusKind::Control,
                             index,
@@ -2372,14 +2602,17 @@ impl App {
                     model::developer_commands().len(),
                 );
                 if cards.register_button.contains(x - left, y) {
+                    self.focus_developer_control(0);
                     self.register_widget_dialog();
                 } else if cards.raw_notepad.contains(x - left, y) {
-                    open_notepad();
+                    self.focus_developer_control(self.entries.len() + 1);
+                    let _ = self.open_settings_notepad();
                 } else if let Some(index) = cards
                     .remove_buttons
                     .iter()
                     .position(|rect| rect.contains(x - left, y))
                 {
+                    self.focus_developer_control(index + 1);
                     if let Some(item) = self.entries.get(index) {
                         let name = item.entry.name.clone();
                         let _ = self.writer.send(WriteJob::Remove { name });
@@ -2389,6 +2622,7 @@ impl App {
                     .iter()
                     .position(|rect| rect.contains(x - left, y))
                 {
+                    self.focus_developer_control(self.entries.len() + 2 + index);
                     let _ = self.click_remote(&format!("copy:{index}"));
                 }
             }
@@ -2527,13 +2761,17 @@ impl App {
 
     /// Writes the overview's Show on taskbar switch through control::apply.
     fn write_show_on_taskbar(&mut self, index: usize) {
-        let Some(widget) = self.widgets.get(index) else {
+        let Some((widget_name, show_on_taskbar)) = self
+            .widgets
+            .get(index)
+            .map(|widget| (widget.name.clone(), widget.show_on_taskbar))
+        else {
             return;
         };
         let Some(item) = self
             .entries
             .iter()
-            .find(|item| item.entry.name == widget.name)
+            .find(|item| item.entry.name == widget_name)
         else {
             return;
         };
@@ -2541,14 +2779,16 @@ impl App {
             return;
         };
         let target = control::Target::from_describe(desc);
+        let follow_entry = item.entry.clone();
         self.sequence = self.sequence.wrapping_add(1).max(1);
-        let input = control::Input::Value(Value::Bool(!widget.show_on_taskbar));
+        self.mark_write_badge(self.sequence);
+        let input = control::Input::Value(Value::Bool(!show_on_taskbar));
         let _ = self.writer.send(WriteJob::Apply {
             sequence: self.sequence,
             target,
             key: "show_on_taskbar".into(),
             input,
-            follow: vec![item.entry.clone()],
+            follow: vec![follow_entry],
         });
     }
 
@@ -2634,7 +2874,7 @@ unsafe extern "system" fn window_proc(
                     data.cbData as usize,
                 ))
                 .to_string();
-                let target = parse_page(&page, &state.entries);
+                let target = requested_page(&page, &state.entries, state.registry_loaded);
                 state.navigate(target);
                 ShowWindow(hwnd, SW_RESTORE);
                 SetForegroundWindow(hwnd);
@@ -2727,6 +2967,14 @@ unsafe extern "system" fn window_proc(
             InvalidateRect(hwnd, std::ptr::null(), 0);
             0
         }
+        WM_KILLFOCUS => {
+            state.commit_edit();
+            0
+        }
+        WM_ACTIVATE if (wparam & 0xFFFF) as u32 == WA_INACTIVE => {
+            state.commit_edit();
+            0
+        }
         WM_LBUTTONUP => {
             state.finish_slider();
             state.reveal_secret = false;
@@ -2739,15 +2987,9 @@ unsafe extern "system" fn window_proc(
         }
         WM_CHAR => {
             if let Some((index, edit)) = state.edit.as_mut() {
-                match wparam as u16 {
-                    8 => edit.backspace(),
-                    127 => edit.delete(),
-                    c if c >= 32 => {
-                        if let Some(ch) = char::from_u32(c as u32) {
-                            edit.insert(&ch.to_string());
-                        }
-                    }
-                    _ => {}
+                let c = wparam as u16;
+                if let Some(ch) = printable_char(c, &mut state.pending_high_surrogate) {
+                    edit.insert(&ch.to_string());
                 }
                 if let Some(row) = state.rows.get_mut(*index) {
                     row.draft = Some(edit.text().to_string());
@@ -2759,7 +3001,15 @@ unsafe extern "system" fn window_proc(
         WM_KEYDOWN => {
             match crate::settings_app::keys::target(state.edit.is_some(), state.dropdown.is_some())
             {
-                model::KeyTarget::Text => state.edit_key(wparam as u32),
+                model::KeyTarget::Text => {
+                    state.edit_key(wparam as u32);
+                    if let Some((index, edit)) = state.edit.as_ref() {
+                        if let Some(row) = state.rows.get_mut(*index) {
+                            row.draft = Some(edit.text().to_string());
+                        }
+                    }
+                    invalidate(hwnd);
+                }
                 model::KeyTarget::Dropdown | model::KeyTarget::Page => {
                     state.page_key(wparam as u32)
                 }
@@ -2828,6 +3078,10 @@ unsafe extern "system" fn window_proc(
                         .then_some(focus.index)
                 }),
                 focus_home: state.home_focus(),
+                focus_developer: state.focus_item.and_then(|focus| {
+                    (focus.kind == crate::settings_app::keys::FocusKind::DeveloperAction)
+                        .then_some(focus.index)
+                }),
                 dropdown: state.dropdown,
                 reveal_secret: state.reveal_secret,
                 height: client.bottom,
@@ -2866,6 +3120,30 @@ fn parse_page(name: &str, entries: &[work::LoadedEntry]) -> Page {
     }
 }
 
+/// Keeps an unresolved widget page pending until the registry is available.
+fn requested_page(name: &str, entries: &[work::LoadedEntry], registry_loaded: bool) -> Page {
+    let page = parse_page(name, entries);
+    if !registry_loaded
+        && page == Page::Widgets
+        && !matches!(name, "widgets" | "dock" | "developer")
+    {
+        Page::Widget(name.into())
+    } else {
+        page
+    }
+}
+
+/// Resolves a pending widget page after the registry snapshot arrives.
+fn resolve_pending_page(page: Page, entries: &[work::LoadedEntry]) -> Page {
+    match page {
+        Page::Widget(name) if entries.iter().any(|item| item.entry.name == name) => {
+            Page::Widget(name)
+        }
+        Page::Widget(_) => Page::Widgets,
+        page => page,
+    }
+}
+
 /// Converts the library process state to its stable wire and display label.
 fn state_name(state: control::State) -> &'static str {
     match state {
@@ -2873,7 +3151,22 @@ fn state_name(state: control::State) -> &'static str {
         control::State::Stopped => "stopped",
         control::State::NotResponding => "not responding",
         control::State::KeepsCrashing => "keeps crashing",
+        control::State::Unknown => "unknown",
     }
+}
+
+/// Formats the status shown in the overview and returned in its state JSON.
+fn widget_status_text(widget: &WidgetRow) -> String {
+    if widget.status == "unknown" {
+        return format!(
+            "unknown: {}",
+            widget.reason.as_deref().unwrap_or("status unavailable")
+        );
+    }
+    widget.reason.as_ref().map_or_else(
+        || widget.status.clone(),
+        |reason| format!("{}: {reason}", widget.status),
+    )
 }
 
 /// Returns the warning-line height included before Developer advanced settings.
@@ -2885,13 +3178,117 @@ fn developer_warning_height(page: &Page, scale: f32) -> i32 {
     }
 }
 
-/// Posts an already constructed worker result to the UI thread.
-fn post_result(hwnd: HWND, result: WorkResult) {
-    let data = Box::into_raw(Box::new(result));
-    if unsafe { PostMessageW(hwnd, WM_WORK, 0, data as LPARAM) } == 0 {
-        unsafe {
-            drop(Box::from_raw(data));
+/// Identifies file snapshots older than the newest timestamp already observed.
+fn file_snapshot_is_stale(
+    snapshot: Option<std::time::SystemTime>,
+    current: Option<std::time::SystemTime>,
+) -> bool {
+    matches!((snapshot, current), (Some(snapshot), Some(current)) if snapshot < current)
+}
+
+/// Checks whether a write may still update the current badge.
+fn badge_result_is_current(write_sequence: Option<u64>, current_sequence: u64) -> bool {
+    write_sequence == Some(current_sequence)
+}
+
+/// Selects the stored choice or falls back to the first option or Other entry.
+fn dropdown_selection(options: &[(Value, String)], other: bool, value: &Value) -> usize {
+    options
+        .iter()
+        .position(|(option, _)| option == value)
+        .unwrap_or_else(|| if other { options.len() } else { 0 })
+}
+
+/// Decodes printable WM_CHAR units, including paired UTF-16 surrogates.
+fn printable_char(unit: u16, pending_high: &mut Option<u16>) -> Option<char> {
+    match unit {
+        0xd800..=0xdbff => {
+            *pending_high = Some(unit);
+            None
         }
+        0xdc00..=0xdfff => {
+            let high = pending_high.take()?;
+            let codepoint = 0x1_0000 + (((high as u32 - 0xd800) << 10) | (unit as u32 - 0xdc00));
+            char::from_u32(codepoint)
+        }
+        _ => {
+            pending_high.take();
+            if unit < 32 || unit == 127 {
+                None
+            } else {
+                char::from_u32(unit as u32)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        badge_result_is_current, dropdown_selection, file_snapshot_is_stale, initial_page,
+        printable_char, quote_windows_argument, requested_page, resolve_pending_page,
+    };
+    use crate::settings_app::model::Page;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn older_file_snapshot_is_rejected() {
+        let old = UNIX_EPOCH + Duration::from_secs(10);
+        let new = UNIX_EPOCH + Duration::from_secs(20);
+        assert!(file_snapshot_is_stale(Some(old), Some(new)));
+        assert!(!file_snapshot_is_stale(Some(new), Some(old)));
+        assert!(!file_snapshot_is_stale(None, Some(old)));
+    }
+
+    #[test]
+    fn older_write_cannot_replace_a_newer_badge() {
+        assert!(badge_result_is_current(Some(8), 8));
+        assert!(!badge_result_is_current(Some(7), 8));
+        assert!(!badge_result_is_current(None, 8));
+    }
+
+    #[test]
+    fn wm_char_decoder_keeps_printable_unicode_and_ignores_controls() {
+        let mut pending = None;
+        assert_eq!(printable_char(8, &mut pending), None);
+        assert_eq!(printable_char(127, &mut pending), None);
+        assert_eq!(printable_char('é' as u16, &mut pending), Some('é'));
+        assert_eq!(printable_char(0xd83d, &mut pending), None);
+        assert_eq!(printable_char(0xde00, &mut pending), Some('😀'));
+    }
+
+    #[test]
+    fn dropdown_without_other_highlights_first_option_for_unknown_value() {
+        let options = vec![(serde_json::json!("first"), "First".into())];
+        assert_eq!(
+            dropdown_selection(&options, false, &serde_json::json!("unknown")),
+            0
+        );
+        assert_eq!(
+            dropdown_selection(&options, true, &serde_json::json!("unknown")),
+            1
+        );
+    }
+
+    #[test]
+    fn widget_page_waits_for_registry_resolution() {
+        assert_eq!(
+            initial_page(Page::Widget("weather".into())),
+            (Page::Widgets, Some(Page::Widget("weather".into())))
+        );
+        assert_eq!(initial_page(Page::Dock), (Page::Dock, None));
+        let pending = requested_page("weather", &[], false);
+        assert_eq!(pending, Page::Widget("weather".into()));
+        assert_eq!(resolve_pending_page(pending, &[]), Page::Widgets);
+    }
+
+    #[test]
+    fn notepad_path_argument_is_quoted() {
+        assert_eq!(
+            quote_windows_argument(r"C:\Taskbar Dock\settings.json"),
+            r#""C:\Taskbar Dock\settings.json""#
+        );
+        assert_eq!(quote_windows_argument("a\\\"b"), r#""a\\\"b""#);
     }
 }
 
@@ -2909,22 +3306,22 @@ fn post_close(hwnd: HWND) {
     }
 }
 
-/// Opens the current settings.json path in Notepad using CreateProcessW.
-fn open_notepad() {
+/// Opens the current settings.json path in Notepad using a quoted command line.
+fn launch_notepad() -> Result<(), String> {
     use windows_sys::Win32::System::Threading::*;
-    let exe = wide("notepad.exe");
-    let file = wide(&taskbar_dock::settings::path().to_string_lossy());
+    let path = taskbar_dock::settings::path();
+    let command_line = format!(
+        "{} {}",
+        quote_windows_argument("notepad.exe"),
+        quote_windows_argument(&path.to_string_lossy())
+    );
+    let mut command = wide(&command_line);
     unsafe {
         let mut startup: STARTUPINFOW = std::mem::zeroed();
         startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
         let mut process: PROCESS_INFORMATION = std::mem::zeroed();
-        let mut command = [
-            exe[..exe.len() - 1].to_vec(),
-            file[..file.len() - 1].to_vec(),
-        ]
-        .concat();
-        command.push(0);
         if CreateProcessW(
+            // No application name: Windows searches PATH for the quoted command's program.
             std::ptr::null(),
             command.as_mut_ptr(),
             std::ptr::null(),
@@ -2939,6 +3336,33 @@ fn open_notepad() {
         {
             CloseHandle(process.hThread);
             CloseHandle(process.hProcess);
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error().to_string())
         }
     }
+}
+
+/// Quotes one Windows command-line argument, including embedded quotes and trailing slashes.
+fn quote_windows_argument(argument: &str) -> String {
+    let mut quoted = String::from("\"");
+    let mut slashes = 0;
+    for character in argument.chars() {
+        match character {
+            '\\' => slashes += 1,
+            '"' => {
+                quoted.push_str(&"\\".repeat(slashes * 2 + 1));
+                quoted.push('"');
+                slashes = 0;
+            }
+            _ => {
+                quoted.push_str(&"\\".repeat(slashes));
+                slashes = 0;
+                quoted.push(character);
+            }
+        }
+    }
+    quoted.push_str(&"\\".repeat(slashes * 2));
+    quoted.push('"');
+    quoted
 }

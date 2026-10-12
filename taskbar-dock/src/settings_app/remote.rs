@@ -59,13 +59,23 @@ pub fn reply(sender: HWND, source: HWND, id: u64, value: &serde_json::Value) {
         cbData: bytes.len() as u32,
         lpData: bytes.as_ptr() as *mut _,
     };
-    unsafe {
-        SendMessageW(
+    let mut reply = 0;
+    let sent = unsafe {
+        SendMessageTimeoutW(
             sender,
             WM_COPYDATA,
             source as WPARAM,
             &cds as *const _ as LPARAM,
-        );
+            SMTO_ABORTIFHUNG,
+            2000,
+            &mut reply,
+        )
+    };
+    if sent == 0 {
+        super::work::log_line(&format!(
+            "remote reply failed sender={sender} id={id} error={}",
+            unsafe { GetLastError() }
+        ));
     }
 }
 

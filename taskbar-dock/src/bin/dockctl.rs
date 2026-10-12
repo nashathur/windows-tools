@@ -93,6 +93,15 @@ fn main() {
                 control::State::NotResponding => "not responding",
                 control::State::Stopped => "stopped",
                 control::State::KeepsCrashing => "keeps crashing",
+                control::State::Unknown => "unknown",
+            };
+            let state = if status.state == control::State::Unknown {
+                format!(
+                    "unknown: {}",
+                    status.reason.as_deref().unwrap_or("unknown error")
+                )
+            } else {
+                state.to_string()
             };
             let mut value = json!({
                 "ok": true,
@@ -132,12 +141,14 @@ fn main() {
         let target = &targets[0];
         let entry = process_entry(target);
         let result = match process_command {
-            Some(ctl::ProcessCommand::Start) => control::start(&entry),
-            Some(ctl::ProcessCommand::Restart) => control::restart(&entry),
+            Some(ctl::ProcessCommand::Start) => {
+                control::start(&entry).map(|result| (result.pid, result.warning))
+            }
+            Some(ctl::ProcessCommand::Restart) => control::restart(&entry).map(|pid| (pid, None)),
             _ => unreachable!(),
         };
         let value = match result {
-            Ok(pid) => json!({"ok":true,"name":target.name,"pid":pid}),
+            Ok((pid, warning)) => json!({"ok":true,"name":target.name,"pid":pid,"warning":warning}),
             Err(error) => json!({"ok":false,"name":target.name,"error":error}),
         };
         println!(
@@ -425,7 +436,7 @@ fn applied_reply(key: &str, a: control::Applied, target: &Target) -> Value {
     }
     let secret = target
         .setting(key)
-        .is_some_and(|s| matches!(s.kind, taskbar_dock::describe::Kind::Secret));
+        .is_some_and(|s| taskbar_dock::describe::is_secret_kind(&s.kind));
     let value = a.value.map(|value| {
         if secret {
             ctl::mask_with(&json!({key:value}), &[key.into()])[key].clone()
@@ -455,7 +466,7 @@ fn get_reply(t: &Target, key: Option<&str>) -> Value {
             let secrets = t
                 .settings
                 .iter()
-                .filter(|setting| matches!(setting.kind, taskbar_dock::describe::Kind::Secret))
+                .filter(|setting| taskbar_dock::describe::is_secret_kind(&setting.kind))
                 .map(|setting| setting.key.clone())
                 .collect::<Vec<_>>();
             json!({
@@ -466,9 +477,9 @@ fn get_reply(t: &Target, key: Option<&str>) -> Value {
         }
         Some(key) => taskbar_dock::describe::value_at(&current, key)
             .map(|value| {
-                let secret = t.setting(key).is_some_and(|setting| {
-                    matches!(setting.kind, taskbar_dock::describe::Kind::Secret)
-                });
+                let secret = t
+                    .setting(key)
+                    .is_some_and(|setting| taskbar_dock::describe::is_secret_kind(&setting.kind));
                 let value = if secret {
                     ctl::mask_with(&json!({key:value}), &[key.into()])[key].clone()
                 } else {
@@ -490,7 +501,7 @@ fn keys_reply(t: &Target) -> Value {
     let secrets: Vec<_> = t
         .settings
         .iter()
-        .filter(|s| matches!(s.kind, taskbar_dock::describe::Kind::Secret))
+        .filter(|s| taskbar_dock::describe::is_secret_kind(&s.kind))
         .map(|s| s.key.clone())
         .collect();
     let rows: Vec<_> = t

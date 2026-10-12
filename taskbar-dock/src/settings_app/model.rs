@@ -315,7 +315,7 @@ pub fn masked_raw_settings(
                 .ok()
                 .into_iter()
                 .flat_map(|desc| desc.settings.iter())
-                .filter(|setting| matches!(setting.kind, Kind::Secret))
+                .filter(|setting| taskbar_dock::describe::is_secret_kind(&setting.kind))
                 .map(|setting| format!("{}.{}", item.entry.name, setting.key))
         })
         .collect::<Vec<_>>();

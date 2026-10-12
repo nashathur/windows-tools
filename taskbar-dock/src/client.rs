@@ -105,6 +105,13 @@ fn reply_window() -> Result<HWND, SendError> {
     REPLY_WINDOW.with(|slot| {
         let existing = slot.get();
         if existing != 0 {
+            // A thread that hasn't checked its messages for 5 s counts as hung, and the widget's
+            // reply (sent with SMTO_ABORTIFHUNG) would be dropped: a worker thread idle between
+            // requests (the settings app's writer) lost its first reply after every pause.
+            unsafe {
+                let mut msg: MSG = std::mem::zeroed();
+                PeekMessageW(&mut msg, 0, 0, 0, PM_NOREMOVE);
+            }
             return Ok(existing);
         }
         unsafe {
@@ -174,6 +181,18 @@ fn matches(exe: &ExeMatch, path: &str) -> bool {
 /// Normalizes a Windows path for case-insensitive comparison.
 fn normalize_path(p: &str) -> String {
     p.strip_prefix("\\\\?\\").unwrap_or(p).to_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batched_send_timeout_is_bounded_by_round_time_remaining() {
+        assert_eq!(send_timeout_ms(Duration::from_secs(1)), 200);
+        assert_eq!(send_timeout_ms(Duration::from_millis(75)), 75);
+        assert_eq!(send_timeout_ms(Duration::ZERO), 1);
+    }
 }
 /// Finds a top-level window of the requested class and executable.
 unsafe fn find(class: &str, exe: &ExeMatch) -> Option<(HWND, u32)> {
@@ -324,6 +343,10 @@ pub fn send_all(
     let deadline = Instant::now() + timeout;
     unsafe {
         for (index, (target, args)) in targets.iter().enumerate() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
             let id = ((std::process::id() as u64) << 20)
                 .wrapping_add(NEXT.fetch_add(1, Ordering::Relaxed));
             ids[index] = Some(id);
@@ -343,12 +366,12 @@ pub fn send_all(
                 me as WPARAM,
                 &cds as *const _ as LPARAM,
                 SMTO_ABORTIFHUNG,
-                200,
+                send_timeout_ms(remaining),
                 &mut message_result,
             );
             if sent == 0 {
-                results[index] = Some(Err(SendError::Timeout(Duration::from_millis(200))));
-                remove_expected(*target, id);
+                // SendMessageTimeout can time out while the target is still processing the
+                // request. Keep accepting its reply until the common round deadline.
             } else if message_result == 0 {
                 results[index] = Some(Err(SendError::Failed(
                     "this widget's build is older than dockctl: rebuild it".into(),
@@ -404,4 +427,13 @@ pub fn send_all(
             })
         })
         .collect()
+}
+
+/// Limits each synchronous send to 200 ms and never lets it outlive the round deadline.
+fn send_timeout_ms(remaining: Duration) -> u32 {
+    remaining
+        .min(Duration::from_millis(200))
+        .as_millis()
+        .max(1)
+        .min(u32::MAX as u128) as u32
 }

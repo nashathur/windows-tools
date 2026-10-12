@@ -46,7 +46,12 @@ pub enum WorkResult {
         statuses: Vec<control::Status>,
     },
     /// A settings file read result.
-    File(Result<serde_json::Value, String>),
+    File {
+        /// Parsed settings snapshot.
+        result: Result<serde_json::Value, String>,
+        /// File modification time around the read.
+        mtime: Option<std::time::SystemTime>,
+    },
     /// A completed setting write.
     Write {
         sequence: u64,
@@ -60,6 +65,7 @@ pub enum WorkResult {
         name: String,
         action: String,
         result: Result<u32, String>,
+        warning: Option<String>,
     },
     /// Refreshed diagnostic details and masked raw settings for Developer.
     Developer {
@@ -88,16 +94,11 @@ pub fn writer(window: isize) -> Sender<WriteJob> {
     let (tx, rx) = mpsc::channel::<WriteJob>();
     std::thread::spawn(move || {
         while let Ok(job) = rx.recv() {
-            let mut queued = vec![job];
+            let mut batch = vec![job];
             while let Ok(next) = rx.try_recv() {
-                let key = write_key(&next);
-                if let Some(position) = queued.iter().position(|job| write_key(job) == key) {
-                    queued[position] = next;
-                } else {
-                    queued.push(next);
-                }
+                batch.push(next);
             }
-            for job in queued {
+            for (job, replaced_sequences) in coalesce_jobs(batch) {
                 match job {
                     WriteJob::Apply {
                         sequence,
@@ -112,20 +113,19 @@ pub fn writer(window: isize) -> Sender<WriteJob> {
                             result.value.as_ref(),
                             result.saved.as_ref().err(),
                             target.setting(&key).is_some_and(|setting| {
-                                matches!(&setting.kind, taskbar_dock::describe::Kind::Secret)
+                                taskbar_dock::describe::is_secret_kind(&setting.kind)
                             }),
                         );
-                        post(
+                        post_write_result(
                             window,
-                            WorkResult::Write {
-                                sequence,
-                                section: target.section,
-                                key,
-                                result: result.value.ok_or_else(|| {
-                                    result.saved.err().unwrap_or_else(|| "not saved".into())
-                                }),
-                                followed: result.followed,
-                            },
+                            sequence,
+                            target.section,
+                            key,
+                            result.value.ok_or_else(|| {
+                                result.saved.err().unwrap_or_else(|| "not saved".into())
+                            }),
+                            result.followed,
+                            &replaced_sequences,
                         );
                     }
                     WriteJob::Reset {
@@ -140,20 +140,19 @@ pub fn writer(window: isize) -> Sender<WriteJob> {
                             result.value.as_ref(),
                             result.saved.as_ref().err(),
                             target.setting(&key).is_some_and(|setting| {
-                                matches!(&setting.kind, taskbar_dock::describe::Kind::Secret)
+                                taskbar_dock::describe::is_secret_kind(&setting.kind)
                             }),
                         );
-                        post(
+                        post_write_result(
                             window,
-                            WorkResult::Write {
-                                sequence,
-                                section: target.section,
-                                key,
-                                result: result.value.ok_or_else(|| {
-                                    result.saved.err().unwrap_or_else(|| "not saved".into())
-                                }),
-                                followed: result.followed,
-                            },
+                            sequence,
+                            target.section,
+                            key,
+                            result.value.ok_or_else(|| {
+                                result.saved.err().unwrap_or_else(|| "not saved".into())
+                            }),
+                            result.followed,
+                            &replaced_sequences,
                         );
                     }
                     WriteJob::Startup {
@@ -171,15 +170,14 @@ pub fn writer(window: isize) -> Sender<WriteJob> {
                             result.as_ref().err(),
                             false,
                         );
-                        post(
+                        post_write_result(
                             window,
-                            WorkResult::Write {
-                                sequence,
-                                section: name,
-                                key: "startup".into(),
-                                result,
-                                followed: Ok(()),
-                            },
+                            sequence,
+                            name,
+                            "startup".into(),
+                            result,
+                            Ok(()),
+                            &replaced_sequences,
                         );
                     }
                     WriteJob::Remove { name } => {
@@ -321,18 +319,83 @@ fn format_local_time(seconds: u64) -> String {
 }
 
 /// Identifies a setting target for queued-write coalescing.
-fn write_key(job: &WriteJob) -> (String, String) {
+fn write_key(job: &WriteJob) -> Option<(String, String)> {
     match job {
         WriteJob::Apply { target, key, .. } | WriteJob::Reset { target, key, .. } => {
-            (target.section.clone(), key.clone())
+            Some((target.section.clone(), key.clone()))
         }
-        WriteJob::Startup { name, .. } => (name.clone(), "startup".into()),
-        WriteJob::Remove { name } => (name.clone(), "registry.remove".into()),
-        WriteJob::Register { exe } => (
-            exe.to_string_lossy().into_owned(),
-            "registry.register".into(),
-        ),
+        WriteJob::Startup { name, .. } => Some((name.clone(), "startup".into())),
+        WriteJob::Remove { .. } | WriteJob::Register { .. } => None,
     }
+}
+
+/// Returns a setting write's sequence, when it has one.
+fn write_sequence(job: &WriteJob) -> Option<u64> {
+    match job {
+        WriteJob::Apply { sequence, .. }
+        | WriteJob::Reset { sequence, .. }
+        | WriteJob::Startup { sequence, .. } => Some(*sequence),
+        WriteJob::Remove { .. } | WriteJob::Register { .. } => None,
+    }
+}
+
+/// Coalesces each batch while retaining displaced sequences for the final outcome.
+fn coalesce_jobs(jobs: Vec<WriteJob>) -> Vec<(WriteJob, Vec<u64>)> {
+    let mut queued = Vec::new();
+    for next in jobs {
+        let key = write_key(&next);
+        if let Some(position) = key.and_then(|key| {
+            queued
+                .iter()
+                .position(|(job, _)| write_key(job).as_ref() == Some(&key))
+        }) {
+            let (replaced, mut sequences) =
+                std::mem::replace(&mut queued[position], (next, Vec::new()));
+            if let Some(sequence) = write_sequence(&replaced) {
+                sequences.push(sequence);
+            }
+            queued[position].1 = sequences;
+        } else {
+            queued.push((next, Vec::new()));
+        }
+    }
+    queued
+}
+
+/// Posts the same applied outcome for the write and each request it replaced.
+fn post_write_result(
+    window: isize,
+    sequence: u64,
+    section: String,
+    key: String,
+    result: Result<serde_json::Value, String>,
+    followed: Result<(), String>,
+    replaced_sequences: &[u64],
+) {
+    for result in write_results(sequence, section, key, result, followed, replaced_sequences) {
+        post(window, result);
+    }
+}
+
+/// Builds an applied outcome for the write and every request it replaced.
+fn write_results(
+    sequence: u64,
+    section: String,
+    key: String,
+    result: Result<serde_json::Value, String>,
+    followed: Result<(), String>,
+    replaced_sequences: &[u64],
+) -> Vec<WorkResult> {
+    std::iter::once(sequence)
+        .chain(replaced_sequences.iter().copied())
+        .map(|sequence| WorkResult::Write {
+            sequence,
+            section: section.clone(),
+            key: key.clone(),
+            result: result.clone(),
+            followed: followed.clone(),
+        })
+        .collect()
 }
 
 /// Loads the registry and cached descriptions away from the UI thread.
@@ -353,7 +416,8 @@ pub fn load_registry(window: isize) {
 pub fn status_loop(
     window: isize,
     entries: std::sync::Arc<std::sync::RwLock<Vec<registry::Entry>>>,
-) {
+) -> Sender<()> {
+    let (refresh, requests) = mpsc::channel();
     std::thread::spawn(move || {
         let mut round = 0u64;
         loop {
@@ -364,37 +428,59 @@ pub fn status_loop(
             let statuses = control::status_all(&current);
             round = round.wrapping_add(1);
             post(window, WorkResult::Status { round, statuses });
-            std::thread::sleep(Duration::from_secs(2));
+            if requests
+                .recv_timeout(Duration::from_secs(2))
+                .is_err_and(|error| matches!(error, mpsc::RecvTimeoutError::Disconnected))
+            {
+                break;
+            }
         }
     });
+    refresh
 }
 
 /// Reads settings.json away from the UI thread.
 pub fn read_file(window: isize) {
     std::thread::spawn(move || {
+        let before = taskbar_dock::settings::mtime();
+        let mut result = taskbar_dock::settings::read().map_err(|e| e.to_string());
+        let mut after = taskbar_dock::settings::mtime();
+        if before != after {
+            result = taskbar_dock::settings::read().map_err(|e| e.to_string());
+            after = taskbar_dock::settings::mtime();
+        }
         post(
             window,
-            WorkResult::File(taskbar_dock::settings::read().map_err(|e| e.to_string())),
-        )
+            WorkResult::File {
+                result,
+                mtime: after,
+            },
+        );
     });
 }
 
 /// Starts a widget process action away from the UI thread.
 pub fn action(window: isize, entry: registry::Entry, action: String) {
     std::thread::spawn(move || {
-        let result = match action.as_str() {
-            "start" => taskbar_dock::control::start(&entry),
-            "quit" => taskbar_dock::control::quit(&entry).map(|_| 0),
-            _ => taskbar_dock::control::restart(&entry),
+        let (result, warning) = match action.as_str() {
+            "start" => match taskbar_dock::control::start(&entry) {
+                Ok(started) => (Ok(started.pid), started.warning),
+                Err(error) => (Err(error), None),
+            },
+            "quit" => (taskbar_dock::control::quit(&entry).map(|_| 0), None),
+            _ => (taskbar_dock::control::restart(&entry), None),
         };
         log_line(&format!(
-            "{} {} {}",
+            "{} {} {}{}",
             action,
             entry.name,
             result
                 .as_ref()
                 .map(|pid| pid.to_string())
-                .unwrap_or_else(|error| format!("failed: {error}"))
+                .unwrap_or_else(|error| format!("failed: {error}")),
+            warning
+                .as_deref()
+                .map_or(String::new(), |warning| format!(" warning: {warning}"))
         ));
         post(
             window,
@@ -402,6 +488,7 @@ pub fn action(window: isize, entry: registry::Entry, action: String) {
                 name: entry.name,
                 action,
                 result,
+                warning,
             },
         );
     });
@@ -431,7 +518,7 @@ fn log_write(
 }
 
 /// Appends a line to settings-app.log and trims it to the last 128 KiB above 256 KiB.
-fn log_line(line: &str) {
+pub(crate) fn log_line(line: &str) {
     use std::io::Write;
     let path = taskbar_dock::settings::dir().join("settings-app.log");
     let _ = std::fs::create_dir_all(taskbar_dock::settings::dir());
@@ -461,5 +548,62 @@ fn post(window: isize, result: WorkResult) {
         unsafe {
             drop(Box::from_raw(data));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn startup(sequence: u64, enabled: bool) -> WriteJob {
+        WriteJob::Startup {
+            sequence,
+            name: "weather".into(),
+            exe: "weather.exe".into(),
+            enabled,
+        }
+    }
+
+    #[test]
+    fn coalescing_keeps_newest_job_and_completes_each_replaced_sequence() {
+        let queued = coalesce_jobs(vec![startup(1, true), startup(2, false), startup(3, true)]);
+
+        assert_eq!(queued.len(), 1);
+        assert!(matches!(queued[0].0, WriteJob::Startup { sequence: 3, .. }));
+        assert_eq!(queued[0].1, [1, 2]);
+        let completions = write_results(
+            3,
+            "weather".into(),
+            "startup".into(),
+            Ok(serde_json::json!(true)),
+            Ok(()),
+            &queued[0].1,
+        );
+        assert!(matches!(
+            completions.as_slice(),
+            [
+                WorkResult::Write { sequence: 3, section, key, result: Ok(value), .. },
+                WorkResult::Write { sequence: 1, result: Ok(first_value), .. },
+                WorkResult::Write { sequence: 2, result: Ok(second_value), .. }
+            ] if section == "weather"
+                && key == "startup"
+                && value == &serde_json::json!(true)
+                && first_value == value
+                && second_value == value
+        ));
+    }
+
+    #[test]
+    fn coalescing_does_not_merge_different_targets() {
+        let queued = coalesce_jobs(vec![startup(1, true), {
+            let mut job = startup(2, false);
+            if let WriteJob::Startup { name, .. } = &mut job {
+                *name = "bus".into();
+            }
+            job
+        }]);
+
+        assert_eq!(queued.len(), 2);
+        assert!(queued.iter().all(|(_, replaced)| replaced.is_empty()));
     }
 }

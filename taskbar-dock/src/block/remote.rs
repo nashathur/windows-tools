@@ -129,7 +129,7 @@ fn command_log(cmd: &Command) -> String {
                     .into_iter()
                     .any(|setting| {
                         setting.key == *key
-                            && matches!(setting.kind, crate::describe::Kind::Secret)
+                            && crate::describe::is_secret_kind(&setting.kind)
                     })
             } else {
                 st(|state| {
@@ -139,7 +139,7 @@ fn command_log(cmd: &Command) -> String {
                         .and_then(|make| make().into_iter().find(|setting| setting.key == *key))
                 })
                 .flatten()
-                .is_some_and(|setting| matches!(setting.kind, crate::describe::Kind::Secret))
+                .is_some_and(|setting| crate::describe::is_secret_kind(&setting.kind))
             };
             let shown = if (described || ctl::is_secret(key)) && !value.is_empty() {
                 "***".to_string()
@@ -169,7 +169,7 @@ fn secret_keys(dock: bool) -> Vec<String> {
         .settings
         .into_iter()
         .filter_map(|setting| {
-            matches!(setting.kind, crate::describe::Kind::Secret).then_some(setting.key)
+            crate::describe::is_secret_kind(&setting.kind).then_some(setting.key)
         })
         .collect()
 }
@@ -212,6 +212,56 @@ fn settings_written(dock: bool) {
         redraw();
         tray_sync(false, false);
     }
+}
+
+/// Replies after other registered widgets have had a chance to reload shared dock settings.
+fn reply_after_write(to: ReplyTo, dock: bool, mut value: Value) {
+    if !dock {
+        return send_reply(to, &ctl::ok(value));
+    }
+    let current = st(|state| state.spec.section).unwrap_or("");
+    std::thread::spawn(move || {
+        let entries: Vec<_> = crate::registry::list()
+            .into_iter()
+            .filter(|entry| entry.name != current)
+            .collect();
+        let workers: Vec<_> = entries
+            .into_iter()
+            .map(|entry| {
+                std::thread::spawn(move || {
+                    let args = vec!["reload".to_string()];
+                    let result = crate::client::send(
+                        &entry.class,
+                        crate::client::ExeMatch::Path(entry.exe),
+                        &args,
+                        std::time::Duration::from_secs(5),
+                    );
+                    // A stopped widget reads the new value when it starts (as control::apply).
+                    let confirmed = matches!(
+                        result,
+                        Ok(ref reply) if reply.get("ok").and_then(Value::as_bool) == Some(true)
+                    ) || matches!(result, Err(crate::client::SendError::NotRunning));
+                    (entry.name, confirmed)
+                })
+            })
+            .collect();
+        let failed: Vec<_> = workers
+            .into_iter()
+            .filter_map(|worker| match worker.join() {
+                Ok((_name, true)) => None,
+                Ok((name, false)) => Some(name),
+                Err(_) => Some("reload worker".into()),
+            })
+            .collect();
+        if let Some(warning) = reload_warning(&failed) {
+            value["warning"] = json!(warning);
+        }
+        send_reply(to, &ctl::ok(value));
+    });
+}
+
+fn reload_warning(failed: &[String]) -> Option<String> {
+    (!failed.is_empty()).then(|| format!("{} hasn't confirmed", failed.join(", ")))
 }
 
 /// Writes a described key through control validation or uses the legacy value conversion.
@@ -286,7 +336,7 @@ fn unset(to: ReplyTo, dock: bool, key: &str) {
         Ok(value) => {
             settings_written(dock);
             let shown = ctl::mask_with(&json!({key:value}), &secret_keys(dock))[key].clone();
-            send_reply(to, &ctl::ok(json!({"key":key,"value":shown})));
+            reply_after_write(to, dock, json!({"key":key,"value":shown}));
         }
         Err(crate::control::WriteError::Invalid(error)) => {
             send_reply(to, &usage_reply(&error, None))
@@ -441,7 +491,7 @@ fn run(to: ReplyTo, cmd: Command) {
                     } else {
                         ctl::mask_setting(&key, &value)
                     };
-                    ok(json!({"key":key,"value":shown}));
+                    reply_after_write(to, dock, json!({"key":key,"value":shown}));
                 }
                 Err(crate::control::WriteError::Invalid(error)) => {
                     send_reply(to, &usage_reply(&error, None))
@@ -679,5 +729,14 @@ mod tests {
         let line = command_log(&Command::Set(false, "knmi_api_key".into(), "sensitive".into()));
         assert_eq!(line, "dockctl: Set(\"knmi_api_key\", \"***\")");
         assert!(!line.contains("sensitive"));
+    }
+
+    #[test]
+    fn dock_reload_warning_names_every_widget_that_did_not_confirm() {
+        assert_eq!(reload_warning(&[]), None);
+        assert_eq!(
+            reload_warning(&["weather".into(), "bus".into()]).as_deref(),
+            Some("weather, bus hasn't confirmed")
+        );
     }
 }

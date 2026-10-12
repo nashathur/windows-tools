@@ -46,6 +46,8 @@ pub enum FocusKind {
     Reset,
     /// Widget action button.
     Action,
+    /// Developer page button.
+    DeveloperAction,
 }
 
 /// A focus target identified in display order.
@@ -84,6 +86,16 @@ pub fn focus_order(nav_count: usize, rows: &[Row], action_count: usize) -> Vec<F
     }
     focus.extend((0..action_count).map(|index| Focus {
         kind: FocusKind::Action,
+        index,
+    }));
+    focus
+}
+
+/// Builds Developer focus order after nav and advanced row controls.
+pub fn developer_focus_order(nav_count: usize, rows: &[Row], action_count: usize) -> Vec<Focus> {
+    let mut focus = focus_order(nav_count, rows, 0);
+    focus.extend((0..action_count).map(|index| Focus {
+        kind: FocusKind::DeveloperAction,
         index,
     }));
     focus
@@ -223,6 +235,29 @@ mod tests {
         let order = focus_order(1, &[unchanged], 0);
         assert_eq!(order.len(), 2);
         assert_eq!(order[1].kind, FocusKind::Control);
+    }
+
+    #[test]
+    fn developer_actions_follow_advanced_rows_in_order() {
+        let row = Row::new(
+            "w",
+            Setting::new("x", "X", Kind::Switch),
+            json!(true),
+            json!(false),
+        );
+        let order = developer_focus_order(2, &[row], 4);
+        assert_eq!(order[0].kind, FocusKind::Navigation);
+        assert_eq!(order[2].kind, FocusKind::Control);
+        assert_eq!(order[3].kind, FocusKind::Reset);
+        assert_eq!(
+            order[4..]
+                .iter()
+                .map(|focus| (focus.kind, focus.index))
+                .collect::<Vec<_>>(),
+            (0..4)
+                .map(|index| (FocusKind::DeveloperAction, index))
+                .collect::<Vec<_>>()
+        );
     }
 
     /// Checks the text, dropdown, and page precedence table.

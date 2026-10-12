@@ -53,6 +53,15 @@ pub enum Kind {
     },
 }
 
+/// Returns whether a setting kind stores a secret, including wrapped kinds.
+pub fn is_secret_kind(kind: &Kind) -> bool {
+    match kind {
+        Kind::Secret => true,
+        Kind::Optional(inner) | Kind::Auto { inner, .. } => is_secret_kind(inner),
+        _ => false,
+    }
+}
+
 impl Setting {
     /// Creates a setting with empty help and group labels.
     pub fn new(key: impl Into<String>, label: impl Into<String>, kind: Kind) -> Self {
@@ -263,9 +272,16 @@ fn parse_kind(kind: &Kind, input: &str) -> Result<Value, String> {
             }
         }
         Kind::Choice { options, other } => {
-            if let Some((v, _)) = options.iter().find(|(v, label)| {
-                v.to_string().eq_ignore_ascii_case(input) || label.eq_ignore_ascii_case(input)
+            if let Some((v, _)) = options.iter().find(|(v, _)| {
+                v.as_str()
+                    .is_some_and(|value| value.eq_ignore_ascii_case(input))
             }) {
+                return Ok(v.clone());
+            }
+            if let Some((v, _)) = options
+                .iter()
+                .find(|(_, label)| label.eq_ignore_ascii_case(input))
+            {
                 return Ok(v.clone());
             }
             if let Ok(v) = serde_json::from_str::<Value>(input) {
@@ -529,7 +545,9 @@ pub fn canonical_exe(exe: &std::path::Path) -> Result<std::path::PathBuf, String
     let canonical =
         std::fs::canonicalize(exe).map_err(|error| format!("{}: {error}", exe.display()))?;
     let full_path = canonical.to_string_lossy();
-    Ok(std::path::PathBuf::from(full_path.strip_prefix("\\\\?\\").unwrap_or(&full_path)))
+    Ok(std::path::PathBuf::from(
+        full_path.strip_prefix("\\\\?\\").unwrap_or(&full_path),
+    ))
 }
 
 /// Gets a validated description from the executable cache.
@@ -751,6 +769,55 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn secret_predicate_follows_wrappers() {
+        assert!(is_secret_kind(&Kind::Secret));
+        assert!(is_secret_kind(&Kind::Optional(Box::new(Kind::Secret))));
+        assert!(is_secret_kind(&Kind::Auto {
+            word: "system".into(),
+            label: "Follow Windows".into(),
+            inner: Box::new(Kind::Secret),
+        }));
+        assert!(!is_secret_kind(&Kind::Optional(Box::new(Kind::Text {
+            placeholder: String::new(),
+            empty_ok: true,
+        }))));
+    }
+
+    #[test]
+    fn choice_parsing_matches_string_values_before_labels() {
+        let position = Setting::new(
+            "label_position",
+            "Label position",
+            Kind::Choice {
+                options: vec![
+                    (json!("left"), "Left".into()),
+                    (json!("auto"), "Automatic".into()),
+                ],
+                other: false,
+            },
+        );
+        assert_eq!(parse(&position, "AUTO"), Ok(json!("auto")));
+        assert_eq!(parse(&position, "Automatic"), Ok(json!("auto")));
+
+        let animations = Setting::new(
+            "animations",
+            "Animations",
+            Kind::Choice {
+                options: vec![
+                    (json!("system"), "Follow Windows".into()),
+                    (json!(true), "On".into()),
+                    (json!(false), "Off".into()),
+                ],
+                other: false,
+            },
+        );
+        assert_eq!(parse(&animations, "system"), Ok(json!("system")));
+        assert_eq!(parse(&animations, "On"), Ok(json!(true)));
+        assert_eq!(parse(&animations, "true"), Ok(json!(true)));
+    }
+
     #[test]
     /// Checks dock descriptions against every dock default leaf.
     fn dock_descriptions_and_defaults_match_both_ways() {

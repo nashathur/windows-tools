@@ -31,10 +31,8 @@ pub enum Hit {
     Row(usize),
     /// Row reset action.
     Reset(usize),
-    /// Interactive row control.
-    Control(usize),
-    /// Status action.
-    Action(usize),
+    /// Interactive row control sub-rectangle and its part.
+    Control(usize, ControlPart),
     /// Notepad button.
     Notepad,
 }
@@ -52,6 +50,31 @@ pub struct RowRects {
     pub second_line: Option<Rect>,
     /// Optional reset button.
     pub reset: Option<Rect>,
+}
+
+/// Builds an ordered hit list for a row: reset, control parts, then the card body.
+pub fn row_hit_targets(
+    index: usize,
+    left: i32,
+    rects: RowRects,
+    control_parts: &[(ControlPart, Rect)],
+) -> Vec<(Rect, Hit)> {
+    let offset = |mut rect: Rect| {
+        rect.left += left;
+        rect.right += left;
+        rect
+    };
+    let mut targets = Vec::new();
+    if let Some(reset) = rects.reset {
+        targets.push((offset(reset), Hit::Reset(index)));
+    }
+    targets.extend(
+        control_parts
+            .iter()
+            .map(|(part, rect)| (*rect, Hit::Control(index, *part))),
+    );
+    targets.push((offset(rects.card), Hit::Row(index)));
+    targets
 }
 
 /// How many lines of a widget's log the Developer page's Widget details show.
@@ -97,6 +120,56 @@ pub struct DeveloperLayout {
     pub copy_buttons: Vec<Rect>,
     /// Content height below the Developer advanced rows.
     pub content_height: i32,
+}
+
+/// Shared card and control rectangles for one Widgets overview entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WidgetRowRects {
+    /// Overview card body.
+    pub card: Rect,
+    /// Show on taskbar control area.
+    pub show_on_taskbar: Rect,
+    /// Start or Quit action.
+    pub action: Rect,
+    /// Restart action, present while the widget is running.
+    pub restart: Option<Rect>,
+}
+
+/// Computes overview row geometry used by both drawing and click handling.
+pub fn widget_row_rects(y: i32, width: i32, scale: f32, running: bool) -> WidgetRowRects {
+    let pad = px(theme::app::CARD_PADDING, scale);
+    let row_height = px(theme::app::NAV_ROW_HEIGHT * 2.0, scale);
+    let control_height = px(theme::app::CONTROL_HEIGHT, scale);
+    let action_width = px(theme::app::HOME_ACTION_WIDTH, scale);
+    let switch_width = px(theme::app::HOME_SWITCH_WIDTH, scale);
+    let button_y = y + row_height - pad - control_height;
+    let action_left = width - action_width * 2 - pad;
+    WidgetRowRects {
+        card: Rect {
+            left: 0,
+            top: y,
+            right: width,
+            bottom: y + row_height,
+        },
+        show_on_taskbar: Rect {
+            left: width - pad - switch_width - action_width * 2 - pad,
+            top: button_y,
+            right: action_left - pad,
+            bottom: button_y + control_height,
+        },
+        action: Rect {
+            left: action_left,
+            top: button_y,
+            right: action_left + action_width,
+            bottom: button_y + control_height,
+        },
+        restart: running.then_some(Rect {
+            left: action_left + action_width + pad / 2,
+            top: button_y,
+            right: width - pad,
+            bottom: button_y + control_height,
+        }),
+    }
 }
 
 /// A control-high button at the right end of a row, centred vertically, `inset` from the right.
@@ -689,11 +762,89 @@ pub fn hit_test(x: i32, y: i32, items: &[(Rect, Hit)]) -> Option<Hit> {
         .map(|(_, hit)| hit.clone())
 }
 
+/// Returns the dropdown option whose rectangle contains the point, if any.
+pub fn dropdown_option_at(control_parts: &[(ControlPart, Rect)], x: i32, y: i32) -> Option<usize> {
+    control_parts.iter().find_map(|(part, rect)| {
+        if let ControlPart::DropdownItem(index) | ControlPart::AutoInnerDropdownItem(index) = part {
+            rect.contains(x, y).then_some(*index)
+        } else {
+            None
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
     use taskbar_dock::describe::{Kind, Setting};
+
+    #[test]
+    fn row_hit_targets_prioritize_reset_and_each_control_part_over_card() {
+        let card = Rect {
+            left: 0,
+            top: 0,
+            right: 400,
+            bottom: 100,
+        };
+        let rects = RowRects {
+            card,
+            label: card,
+            control: card,
+            second_line: None,
+            reset: Some(Rect {
+                left: 300,
+                top: 0,
+                right: 360,
+                bottom: 20,
+            }),
+        };
+        let parts = [
+            (
+                ControlPart::Segment(1),
+                Rect {
+                    left: 100,
+                    top: 20,
+                    right: 150,
+                    bottom: 40,
+                },
+            ),
+            (
+                ControlPart::SliderTrack,
+                Rect {
+                    left: 100,
+                    top: 45,
+                    right: 250,
+                    bottom: 55,
+                },
+            ),
+            (
+                ControlPart::Eye,
+                Rect {
+                    left: 250,
+                    top: 45,
+                    right: 280,
+                    bottom: 65,
+                },
+            ),
+        ];
+        let targets = row_hit_targets(7, 20, rects, &parts);
+
+        assert_eq!(hit_test(330, 10, &targets), Some(Hit::Reset(7)));
+        assert_eq!(
+            hit_test(125, 30, &targets),
+            Some(Hit::Control(7, ControlPart::Segment(1)))
+        );
+        assert_eq!(
+            hit_test(125, 50, &targets),
+            Some(Hit::Control(7, ControlPart::SliderTrack))
+        );
+        assert_eq!(
+            hit_test(260, 50, &targets),
+            Some(Hit::Control(7, ControlPart::Eye))
+        );
+        assert_eq!(hit_test(25, 80, &targets), Some(Hit::Row(7)));
+    }
 
     /// Checks scaled layout and full-line controls at 100 and 150 percent.
     #[test]
@@ -770,7 +921,7 @@ mod tests {
                     right: 120,
                     bottom: 40,
                 },
-                Hit::Control(1),
+                Hit::Control(1, ControlPart::Main),
             ),
             (
                 Rect {
@@ -784,7 +935,10 @@ mod tests {
         ];
         assert_eq!(hit_test(10, 10, &items), Some(Hit::Nav(0)));
         assert_eq!(hit_test(50, 10, &items), Some(Hit::Row(1)));
-        assert_eq!(hit_test(90, 10, &items), Some(Hit::Control(1)));
+        assert_eq!(
+            hit_test(90, 10, &items),
+            Some(Hit::Control(1, ControlPart::Main))
+        );
         assert_eq!(hit_test(130, 10, &items), Some(Hit::Reset(1)));
     }
 
@@ -822,6 +976,16 @@ mod tests {
         );
         assert_eq!(above.first().unwrap().top, 8);
         assert!(above.last().unwrap().bottom <= trigger.top);
+        let parts = above
+            .iter()
+            .enumerate()
+            .map(|(index, rect)| (ControlPart::DropdownItem(index), *rect))
+            .collect::<Vec<_>>();
+        assert_eq!(dropdown_option_at(&parts, 25, 12), Some(0));
+        assert_eq!(dropdown_option_at(&parts, 190, 12), None);
+        let auto_parts = [(ControlPart::AutoInnerDropdownItem(2), above[1])];
+        let point = (above[1].left + 1, above[1].top + 1);
+        assert_eq!(dropdown_option_at(&auto_parts, point.0, point.1), Some(2));
     }
 
     /// Builds and hit-tests the shared model for switches, choices, sliders, text, and secrets.
@@ -876,8 +1040,15 @@ mod tests {
             3
         );
         assert_eq!(
-            hit_test(25, 50, &[(segment_model.parts[0].1, Hit::Control(0))]),
-            Some(Hit::Control(0))
+            hit_test(
+                25,
+                50,
+                &[(
+                    segment_model.parts[0].1,
+                    Hit::Control(0, ControlPart::Segment(0))
+                )],
+            ),
+            Some(Hit::Control(0, ControlPart::Segment(0)))
         );
         let dropdown = Row::new(
             "w",
@@ -938,8 +1109,12 @@ mod tests {
             .unwrap()
             .1;
         assert_eq!(
-            hit_test(eye.left + 1, eye.top + 1, &[(eye, Hit::Control(1))]),
-            Some(Hit::Control(1))
+            hit_test(
+                eye.left + 1,
+                eye.top + 1,
+                &[(eye, Hit::Control(1, ControlPart::Eye))],
+            ),
+            Some(Hit::Control(1, ControlPart::Eye))
         );
         let reset = row_rects(500, 0, 120, 180, false, true, 0, 1.5)
             .reset
@@ -1167,5 +1342,34 @@ mod tests {
             layout.cards[1].bottom + px(theme::app::CARD_GAP, 1.0)
         );
         assert!(layout.content_height > layout.cards[2].bottom - 80);
+    }
+
+    /// Shared overview geometry hits row two's controls after scrolling.
+    #[test]
+    fn widget_row_geometry_targets_scrolled_second_row_actions_and_body() {
+        let scale = 1.0;
+        let top = px(theme::app::HEADER_HEIGHT, scale);
+        let height = px(theme::app::NAV_ROW_HEIGHT * 2.0, scale);
+        let stride = height + px(theme::app::CARD_GAP, scale);
+        let scroll = stride + 12;
+        let second_top = top + stride - scroll;
+        let running = widget_row_rects(second_top, 700, scale, true);
+        assert!(running.show_on_taskbar.contains(
+            (running.show_on_taskbar.left + running.show_on_taskbar.right) / 2,
+            running.show_on_taskbar.top + 1,
+        ));
+        assert!(running
+            .action
+            .contains(running.action.left + 1, running.action.top + 1));
+        assert!(running
+            .restart
+            .is_some_and(|rect| rect.contains(rect.left + 1, rect.top + 1)));
+        let stopped = widget_row_rects(second_top, 700, scale, false);
+        assert!(stopped
+            .action
+            .contains(stopped.action.left + 1, stopped.action.top + 1));
+        assert!(stopped.restart.is_none());
+        assert!(stopped.card.contains(1, stopped.card.top + 1));
+        assert_eq!(running.card.top, second_top);
     }
 }

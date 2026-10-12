@@ -160,6 +160,8 @@ pub struct Frame<'a> {
     pub focus_nav: Option<usize>,
     /// Focused home widget and control kind (show, primary, restart).
     pub focus_home: Option<(usize, u8)>,
+    /// Focused Developer action index in the keyboard order.
+    pub focus_developer: Option<usize>,
     /// Open dropdown row and highlighted option.
     pub dropdown: Option<(usize, usize)>,
     /// Whether a secret is temporarily revealed while its eye is held.
@@ -539,6 +541,14 @@ fn draw_developer(dc: HDC, left: i32, y: i32, width: i32, height: i32, frame: &F
             "Remove",
             frame,
         );
+        if frame.focus_developer == Some(index + 1) {
+            outline(
+                dc,
+                offset_rect(cards.remove_buttons[index], left),
+                frame.theme.status.accent,
+                frame.scale,
+            );
+        }
         if let Some(error) = error {
             text(
                 dc,
@@ -562,6 +572,14 @@ fn draw_developer(dc: HDC, left: i32, y: i32, width: i32, height: i32, frame: &F
         "Register widget…",
         frame,
     );
+    if frame.focus_developer == Some(0) {
+        outline(
+            dc,
+            offset_rect(cards.register_button, left),
+            frame.theme.status.accent,
+            frame.scale,
+        );
+    }
     draw_panel(dc, left, cards.raw, "Raw settings", frame);
     let raw_view = offset_rect(cards.raw_view, left);
     fill(dc, raw_view, frame.theme.color.input);
@@ -595,6 +613,14 @@ fn draw_developer(dc: HDC, left: i32, y: i32, width: i32, height: i32, frame: &F
         "Open in Notepad",
         frame,
     );
+    if frame.focus_developer == Some(frame.registered.len() + 1) {
+        outline(
+            dc,
+            offset_rect(cards.raw_notepad, left),
+            frame.theme.status.accent,
+            frame.scale,
+        );
+    }
     draw_panel(dc, left, cards.commands, "Console commands", frame);
     for (index, command) in crate::settings_app::model::developer_commands()
         .iter()
@@ -621,6 +647,14 @@ fn draw_developer(dc: HDC, left: i32, y: i32, width: i32, height: i32, frame: &F
             "Copy",
             frame,
         );
+        if frame.focus_developer == Some(frame.registered.len() + 2 + index) {
+            outline(
+                dc,
+                offset_rect(cards.copy_buttons[index], left),
+                frame.theme.status.accent,
+                frame.scale,
+            );
+        }
     }
 }
 
@@ -695,6 +729,8 @@ fn draw_widgets(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: 
     let pad = layout::px(theme::app::CARD_PADDING, frame.scale);
     let row_h = layout::px(theme::app::NAV_ROW_HEIGHT * 2.0, frame.scale);
     for (index, widget) in frame.widgets.iter().enumerate() {
+        let running = widget.status == "running" || widget.status == "not responding";
+        let geometry = layout::widget_row_rects(y, width, frame.scale, running);
         if y + row_h < layout::px(theme::app::HEADER_HEIGHT, frame.scale) || y > height {
             y += row_h + layout::px(theme::app::CARD_GAP, frame.scale);
             continue;
@@ -703,9 +739,9 @@ fn draw_widgets(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: 
             dc,
             RECT {
                 left,
-                top: y,
-                right: left + width,
-                bottom: y + row_h,
+                top: geometry.card.top,
+                right: left + geometry.card.right,
+                bottom: geometry.card.bottom,
             },
             frame.theme.color.input,
         );
@@ -713,16 +749,14 @@ fn draw_widgets(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: 
             "running" => frame.theme.status.ok,
             "not responding" => frame.theme.status.warn,
             "keeps crashing" => frame.theme.status.danger,
+            "unknown" => frame.theme.status.warn,
             _ => frame.theme.color.dim,
         };
-        let switch_width = layout::px(theme::app::HOME_SWITCH_WIDTH, frame.scale);
-        let action_width = layout::px(theme::app::HOME_ACTION_WIDTH, frame.scale);
-        let button_y = y + row_h - pad - layout::px(theme::app::CONTROL_HEIGHT, frame.scale);
         let switch_rect = RECT {
-            left: left + width - pad - switch_width - action_width * 2 - pad,
-            top: button_y,
-            right: left + width - action_width * 2 - pad * 2,
-            bottom: button_y + layout::px(theme::app::CONTROL_HEIGHT, frame.scale),
+            left: left + geometry.show_on_taskbar.left,
+            top: geometry.show_on_taskbar.top,
+            right: left + geometry.show_on_taskbar.right,
+            bottom: geometry.show_on_taskbar.bottom,
         };
         text(
             dc,
@@ -759,13 +793,11 @@ fn draw_widgets(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: 
         if frame.focus_home == Some((index, 0)) {
             outline(dc, switch_rect, frame.theme.status.accent, frame.scale);
         }
-        let action_left = left + width - action_width * 2 - pad;
-        let running = widget.status == "running" || widget.status == "not responding";
         let action_rect = RECT {
-            left: action_left,
-            top: button_y,
-            right: action_left + action_width,
-            bottom: button_y + layout::px(theme::app::CONTROL_HEIGHT, frame.scale),
+            left: left + geometry.action.left,
+            top: geometry.action.top,
+            right: left + geometry.action.right,
+            bottom: geometry.action.bottom,
         };
         let busy = frame.busy_actions.get(&widget.name);
         round_fill(
@@ -801,12 +833,20 @@ fn draw_widgets(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: 
             outline(dc, action_rect, frame.theme.status.accent, frame.scale);
         }
         if running {
-            let restart = RECT {
-                left: action_left + action_width + pad / 2,
-                top: button_y,
-                right: left + width - pad,
-                bottom: button_y + layout::px(theme::app::CONTROL_HEIGHT, frame.scale),
-            };
+            let restart = geometry
+                .restart
+                .map(|rect| RECT {
+                    left: left + rect.left,
+                    top: rect.top,
+                    right: left + rect.right,
+                    bottom: rect.bottom,
+                })
+                .unwrap_or(RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                });
             round_fill(
                 dc,
                 restart,
@@ -878,14 +918,21 @@ fn draw_widgets(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: 
         );
         text(
             dc,
-            &format!(
-                "{}{}",
-                status_label(&widget.status),
-                widget
-                    .reason
-                    .as_deref()
-                    .map_or(String::new(), |reason| format!("  {reason}"))
-            ),
+            &if widget.status == "unknown" {
+                format!(
+                    "unknown: {}",
+                    widget.reason.as_deref().unwrap_or("status unavailable")
+                )
+            } else {
+                format!(
+                    "{}{}",
+                    status_label(&widget.status),
+                    widget
+                        .reason
+                        .as_deref()
+                        .map_or(String::new(), |reason| format!("  {reason}"))
+                )
+            },
             status_rect,
             status,
             frame.theme,
@@ -1397,14 +1444,7 @@ fn draw_control(dc: HDC, rect: RECT, row: &Row, value: &str, index: usize, frame
             fill(dc, rect, theme.color.input);
             border(dc, rect, theme.color.input_border, frame.scale);
             let swatch = if row.control() == Control::Color {
-                value
-                    .trim_start_matches('#')
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|_| value.trim_start_matches('#').len() == 6)
-                    .map(|rgb| {
-                        taskbar_dock::theme::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
-                    })
+                color_swatch(&value)
             } else {
                 None
             };
@@ -1592,7 +1632,15 @@ fn draw_control(dc: HDC, rect: RECT, row: &Row, value: &str, index: usize, frame
         let text_rect = control_model
             .parts
             .iter()
-            .find_map(|(part, rect)| (*part == layout::ControlPart::Text).then_some(*rect))
+            .find_map(|(part, rect)| {
+                matches!(
+                    part,
+                    layout::ControlPart::Text
+                        | layout::ControlPart::Value
+                        | layout::ControlPart::AutoInnerValue
+                )
+                .then_some(*rect)
+            })
             .map_or(rect, |part| RECT {
                 left: part.left + layout::px(theme::app::FIELD_PADDING, frame.scale),
                 top: part.top,
@@ -1603,7 +1651,7 @@ fn draw_control(dc: HDC, rect: RECT, row: &Row, value: &str, index: usize, frame
             dc,
             text_rect,
             edit,
-            matches!(row.setting.kind, taskbar_dock::describe::Kind::Secret),
+            taskbar_dock::describe::is_secret_kind(&row.setting.kind),
             theme,
             frame.scale,
         );
@@ -1612,19 +1660,23 @@ fn draw_control(dc: HDC, rect: RECT, row: &Row, value: &str, index: usize, frame
 
 /// Formats a row value without revealing secrets.
 fn value_text(row: &Row, reveal_secret: bool, editing_text: Option<&str>) -> String {
-    if matches!(row.setting.kind, taskbar_dock::describe::Kind::Secret) {
+    let draft = editing_text.or(row.draft.as_deref());
+    if taskbar_dock::describe::is_secret_kind(&row.setting.kind) {
         return if reveal_secret {
-            editing_text
+            draft
                 .unwrap_or_else(|| row.value.as_str().unwrap_or(""))
                 .to_string()
         } else {
             "•".repeat(
-                editing_text
+                draft
                     .unwrap_or_else(|| row.value.as_str().unwrap_or(""))
                     .chars()
                     .count(),
             )
         };
+    }
+    if let Some(draft) = draft {
+        return draft.to_string();
     }
     if row.key == "startup" || row.setting.key == "show_on_taskbar" || row.setting.key == "compact"
     {
@@ -1635,17 +1687,33 @@ fn value_text(row: &Row, reveal_secret: bool, editing_text: Option<&str>) -> Str
         };
     }
     if let taskbar_dock::describe::Kind::Choice { options, .. } = &row.setting.kind {
-        if let Some((_, label)) = options.iter().find(|(value, _)| value == &row.value) {
+        if let Some((_, label)) = options.iter().find(|(value, _)| {
+            draft.map_or(value == &row.value, |text| value.as_str() == Some(text))
+        }) {
             return label.clone();
         }
     }
     if row.value.is_null() {
         return String::new();
     }
-    row.draft
-        .clone()
-        .or_else(|| row.value.as_str().map(str::to_string))
+    row.value
+        .as_str()
+        .map(str::to_string)
         .unwrap_or_else(|| row.value.to_string())
+}
+
+/// Parses an optional `#RRGGBB` swatch value.
+fn color_swatch(value: &str) -> Option<taskbar_dock::theme::Rgb> {
+    let hex = value.trim_start_matches('#');
+    if hex.len() != 6 {
+        return None;
+    }
+    let rgb = u32::from_str_radix(hex, 16).ok()?;
+    Some(taskbar_dock::theme::Rgb(
+        (rgb >> 16) as u8,
+        (rgb >> 8) as u8,
+        rgb as u8,
+    ))
 }
 
 /// Returns the selected page's visible title.
@@ -1671,7 +1739,62 @@ fn status_label(status: &str) -> &'static str {
         "stopped" => "Stopped",
         "not responding" => "Not responding",
         "keeps crashing" => "Keeps crashing",
+        "unknown" => "Unknown",
         _ => "Stopped",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use taskbar_dock::describe::{Kind, Setting};
+
+    #[test]
+    fn editor_draft_precedes_saved_value_formatting() {
+        let mut optional = Row::new(
+            "weather",
+            Setting::new(
+                "latitude",
+                "Latitude",
+                Kind::Optional(Box::new(Kind::Number {
+                    min: -90.0,
+                    max: 90.0,
+                    step: 0.1,
+                    integer: false,
+                    unit: String::new(),
+                })),
+            ),
+            json!(null),
+            json!(null),
+        );
+        optional.draft = Some("12.5".into());
+        assert_eq!(value_text(&optional, false, None), "12.5");
+
+        let choice = Row::new(
+            "weather",
+            Setting::new(
+                "label_position",
+                "Label position",
+                Kind::Choice {
+                    options: vec![(json!("auto"), "Automatic".into())],
+                    other: false,
+                },
+            ),
+            json!("auto"),
+            json!("auto"),
+        );
+        assert_eq!(value_text(&choice, false, Some("auto")), "auto");
+    }
+
+    #[test]
+    fn color_swatch_parses_hex_rgb() {
+        assert_eq!(
+            color_swatch("#a1B2c3"),
+            Some(taskbar_dock::theme::Rgb(0xa1, 0xb2, 0xc3))
+        );
+        assert_eq!(color_swatch("#12xz56"), None);
+        assert_eq!(color_swatch("#12345"), None);
     }
 }
 
