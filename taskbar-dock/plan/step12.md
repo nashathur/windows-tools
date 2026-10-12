@@ -393,6 +393,11 @@ the end.
 - Remove from list asks no confirmation (nothing is deleted; Register widget… puts it back).
   Register widget… has no `dockctl settings` command (the file dialog needs a person);
   `dockctl widgets register` covers it.
+- dockctl `status` / `start` / `restart` for a widget not in the registry (always so from a Claude
+  session, which sees the private copy) use the full path of the running process with the
+  built-in table's file name (`control::running_exe`), else dockctl's folder.
+- Status colours: Running `Status.ok`, Stopped `Colors.dim` (theme has no grey status colour),
+  Not responding `Status.warn`, Keeps crashing `Status.danger`.
 
 ## Acceptance checks (live, after job 4)
 

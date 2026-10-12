@@ -12,7 +12,7 @@ A widget is a `Spec` + a `Content` given to `block::run` (see "Building a new wi
 | `settings` | One settings file for all widgets: `%APPDATA%\TaskbarDock\settings.json`. Reads are pure; writes patch only the changed keys and are atomic. |
 | `describe` | Typed setting descriptions, validation, JSON conversion and the executable description cache. |
 | `registry` | Registered widget names, executable paths and window classes in the `widgets` setting. |
-| `client`, `control` | Shared v2 control requests and validated settings writes used by widgets and dockctl. |
+| `client`, `control` | Shared v2 control requests, batched status pings and process control, plus validated settings writes used by widgets and dockctl. |
 | `style` | The shared look and behaviour from `dock` (gap, font, radii, timings, hover delays, "follow Windows" switches), resolved into a `Look` for right now. |
 | `system` | The Windows settings that are followed live: theme, Animation effects, mouse hover time, Text size, time format, and display scale per monitor. Also time formatting. |
 | `draw` | Shared drawing for the strip and panels: text colour, icons, rounded shapes, text boxes, scrolling-list rows, buttons and highlights; anti-aliased through common helpers. |
@@ -23,7 +23,7 @@ A widget is a `Spec` + a `Content` given to `block::run` (see "Building a new wi
 | `theme` | The design code: every colour, font, font size and spacing, light and dark; the `brand` allow-list for brand and data colours. Widgets take all of them from here (`tests\theme_lint.rs` checks it). |
 | `emoji` | Colour emoji through Direct2D + DirectWrite (GDI draws emoji in one colour). |
 | `window` | `raise`: bring another app's window to the front; `exe_path`, `is_exe`. |
-| `dock`, `icons`, `panel`, `menu_panel`, `strip`, `startup`, `crash`, `ctl` | Block's internals; stacking and fit, panel behaviour, strip motion, startup list, crash handling and dockctl command parsing. |
+| `dock`, `icons`, `panel`, `menu_panel`, `strip`, `startup`, `crash`, `watchdog`, `ctl` | Block's internals; stacking and fit, panel behaviour, strip motion, startup list, crash handling and dockctl command parsing. `watchdog` stores launcher give-up records. |
 
 ## The shared `dock` settings
 
@@ -151,8 +151,9 @@ cover, a width that follows its content), `taskbar-discord` (a worker, a width t
    `startup.log`). It then stays as a watchdog: a widget it started that crashes (exit code
    0xC0000xxx) is started again after 2, 4, 8 … s, and given up on after 5 crashes in 10 min; Quit
    or being stopped is left alone (`taskbar_dock::crash`; Block logs the panic reason in the
-   widget's log). Use the launcher, never the `HKCU\...\Run` key (its values are skipped at
-   sign-in on this PC).
+   widget's log). Give-ups are recorded in `%APPDATA%\TaskbarDock\watchdog.json` for dockctl
+   status; a successful launcher start clears that widget's record. Use the launcher, never the
+   `HKCU\...\Run` key (its values are skipped at sign-in on this PC).
 8. **Block's job, not the widget's** (the same for every widget): the strip
    window and its DPI handling, the dock slot, order, drag and drop, fit next to the taskbar's
    buttons (narrow, compact, hide), instant reflow on neighbours' changes, hover / click / pin
@@ -179,8 +180,10 @@ cover, a width that follows its content), `taskbar-discord` (a worker, a width t
 widget or uses the shared library for supported settings commands when it is stopped. It prints JSON.
 A stopped widget given any other command is reported as `"absent": "not running"`; for `all`
 that isn't an error. Commands dockctl runs in its own process (stopped-widget settings,
-`describe`, `startup`, `widgets`) are refused when it sees a private copy of the settings
-(started from the Claude app, `settings::redirected`): run it through a scheduled task. Exit code: 0 all succeeded, 1 error or timeout, 2 usage error.
+`describe`, `startup`, `widgets`, `start`, `restart`) are refused when it sees a private copy of
+the settings (started from the Claude app, `settings::redirected`): run it through a scheduled
+task. `status` still reads process state, but reports that crash records aren't visible there.
+Exit code: 0 all succeeded, 1 error or timeout, 2 usage error.
 For `all`, 2 takes precedence if any widget reports a usage error. The default deadline is 5
 seconds, or 120 seconds for `do`; `--timeout` overrides it.
 
@@ -202,6 +205,8 @@ seconds, or 120 seconds for `do`; `--timeout` overrides it.
 | `unset [--dock] <key>` | restore a setting's default |
 | `describe` | print the widget description and defaults |
 | `startup on\|off\|get` | inspect or change Start with Windows |
+| `status` | process state, pid, build and reason; status is read locally and works while stopped |
+| `start`, `restart` | start a widget, or quit and start it again; refused from a private Claude copy |
 | `reload`, `ping` | force settings/look refresh, or quietly return pid/build time |
 | `widgets list\|register <exe>\|remove <name>` | inspect or change the registered widget list |
 | `do help` | list this widget's content commands and one-line usage |

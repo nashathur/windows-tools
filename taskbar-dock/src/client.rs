@@ -2,6 +2,7 @@
 use crate::{ctl, wide};
 use serde_json::Value;
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::*;
@@ -48,9 +49,32 @@ impl std::fmt::Display for SendError {
     }
 }
 impl std::error::Error for SendError {}
+/// The process id and executable build time returned by the quiet `ping` command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ping {
+    /// The widget process id.
+    pub pid: u32,
+    /// The widget executable's build timestamp.
+    pub build: u64,
+}
+
+impl Ping {
+    /// Parses the `pid` and `build` fields from a successful ping reply.
+    pub fn from_reply(value: &Value) -> Result<Self, SendError> {
+        let pid = value
+            .get("pid")
+            .and_then(Value::as_u64)
+            .and_then(|pid| u32::try_from(pid).ok())
+            .ok_or_else(|| SendError::Failed("ping reply has no valid pid".into()))?;
+        let build = value
+            .get("build")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| SendError::Failed("ping reply has no valid build".into()))?;
+        Ok(Self { pid, build })
+    }
+}
 thread_local! {
-    static EXPECT: Cell<Option<(HWND, u64)>> = const { Cell::new(None) };
-    static REPLY: RefCell<Option<String>> = const { RefCell::new(None) };
+    static EXPECTED: RefCell<HashMap<(HWND, u64), Option<String>>> = RefCell::new(HashMap::new());
     static REPLY_WINDOW: Cell<HWND> = const { Cell::new(0) };
 }
 static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -63,10 +87,12 @@ unsafe extern "system" fn wndproc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRES
             // Decode and own the reply bytes before WM_COPYDATA returns.
             if let Ok((id, text)) = ctl::decode_reply2(b) {
                 let sender = w as HWND;
-                // A late reply from another window or request must not satisfy this send.
-                if EXPECT.with(|e| e.get()) == Some((sender, id)) {
-                    REPLY.with(|r| *r.borrow_mut() = Some(text));
-                }
+                // A late reply from another window or request must not satisfy a request.
+                EXPECTED.with(|expected| {
+                    if let Some(reply) = expected.borrow_mut().get_mut(&(sender, id)) {
+                        *reply = Some(text);
+                    }
+                });
             }
             return 1;
         }
@@ -210,8 +236,9 @@ pub fn send(
             cbData: bytes.len() as u32,
             lpData: bytes.as_ptr() as *mut _,
         };
-        REPLY.with(|r| r.borrow_mut().take());
-        EXPECT.with(|e| e.set(Some((target, id))));
+        EXPECTED.with(|expected| {
+            expected.borrow_mut().insert((target, id), None);
+        });
         let deadline = Instant::now() + timeout;
         let mut result = 0;
         let sent = SendMessageTimeoutW(
@@ -224,30 +251,28 @@ pub fn send(
             &mut result,
         );
         // A fast reply can arrive before SendMessageTimeoutW reports its result.
-        if let Some(text) = REPLY.with(|r| r.borrow_mut().take()) {
-            EXPECT.with(|e| e.set(None));
+        if let Some(text) = take_reply(target, id) {
             return serde_json::from_str(&text)
                 .map_err(|error| SendError::Failed(format!("bad reply: {error}")));
         }
         if sent == 0 {
-            EXPECT.with(|e| e.set(None));
+            remove_expected(target, id);
             return Err(SendError::Timeout(timeout));
         }
         if result == 0 {
-            EXPECT.with(|e| e.set(None));
+            remove_expected(target, id);
             return Err(SendError::Failed(
                 "this widget's build is older than dockctl: rebuild it".into(),
             ));
         }
         loop {
-            if let Some(text) = REPLY.with(|r| r.borrow_mut().take()) {
-                EXPECT.with(|e| e.set(None));
+            if let Some(text) = take_reply(target, id) {
                 return serde_json::from_str(&text)
                     .map_err(|e| SendError::Failed(format!("bad reply: {e}")));
             }
             let now = Instant::now();
             if now >= deadline {
-                EXPECT.with(|e| e.set(None));
+                remove_expected(target, id);
                 return Err(SendError::Timeout(timeout));
             }
             MsgWaitForMultipleObjects(
@@ -264,4 +289,119 @@ pub fn send(
             }
         }
     }
+}
+
+/// Removes and returns a decoded JSON reply for one sender and request id.
+fn take_reply(sender: HWND, id: u64) -> Option<String> {
+    EXPECTED.with(|expected| {
+        let mut expected = expected.borrow_mut();
+        if expected.get(&(sender, id)).is_some_and(Option::is_some) {
+            expected.remove(&(sender, id)).flatten()
+        } else {
+            None
+        }
+    })
+}
+
+/// Stops accepting late replies for one request.
+fn remove_expected(sender: HWND, id: u64) {
+    EXPECTED.with(|expected| {
+        expected.borrow_mut().remove(&(sender, id));
+    });
+}
+
+/// Sends several requests from this thread's own message window and collects replies together.
+pub fn send_all(
+    targets: &[(HWND, Vec<String>)],
+    timeout: Duration,
+) -> Vec<Result<Value, SendError>> {
+    let mut results = vec![None; targets.len()];
+    let mut ids = vec![None; targets.len()];
+    let me = match reply_window() {
+        Ok(window) => window,
+        Err(error) => return (0..targets.len()).map(|_| Err(error.clone())).collect(),
+    };
+    let deadline = Instant::now() + timeout;
+    unsafe {
+        for (index, (target, args)) in targets.iter().enumerate() {
+            let id = ((std::process::id() as u64) << 20)
+                .wrapping_add(NEXT.fetch_add(1, Ordering::Relaxed));
+            ids[index] = Some(id);
+            EXPECTED.with(|expected| {
+                expected.borrow_mut().insert((*target, id), None);
+            });
+            let bytes = ctl::encode2(id, args);
+            let cds = COPYDATASTRUCT {
+                dwData: ctl::REQUEST2,
+                cbData: bytes.len() as u32,
+                lpData: bytes.as_ptr() as *mut _,
+            };
+            let mut message_result = 0;
+            let sent = SendMessageTimeoutW(
+                *target,
+                WM_COPYDATA,
+                me as WPARAM,
+                &cds as *const _ as LPARAM,
+                SMTO_ABORTIFHUNG,
+                200,
+                &mut message_result,
+            );
+            if sent == 0 {
+                results[index] = Some(Err(SendError::Timeout(Duration::from_millis(200))));
+                remove_expected(*target, id);
+            } else if message_result == 0 {
+                results[index] = Some(Err(SendError::Failed(
+                    "this widget's build is older than dockctl: rebuild it".into(),
+                )));
+                remove_expected(*target, id);
+            }
+        }
+        loop {
+            for (index, (target, _)) in targets.iter().enumerate() {
+                if results[index].is_some() {
+                    continue;
+                }
+                if let Some(id) = ids[index] {
+                    let reply = take_reply(*target, id);
+                    if let Some(text) = reply {
+                        results[index] = Some(
+                            serde_json::from_str(&text)
+                                .map_err(|error| SendError::Failed(format!("bad reply: {error}"))),
+                        );
+                    }
+                }
+            }
+            if results.iter().all(Option::is_some) {
+                break;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                break;
+            }
+            MsgWaitForMultipleObjects(
+                0,
+                std::ptr::null(),
+                0,
+                (deadline - now).as_millis().max(1).min(u32::MAX as u128) as u32,
+                QS_ALLINPUT,
+            );
+            let mut msg: MSG = std::mem::zeroed();
+            while PeekMessageW(&mut msg, 0, 0, 0, PM_REMOVE) != 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+    }
+    results
+        .into_iter()
+        .enumerate()
+        .map(|(index, result)| {
+            result.unwrap_or_else(|| {
+                if let (Some((target, _)), Some(id)) = (targets.get(index), ids[index]) {
+                    remove_expected(*target, id);
+                }
+                Err(SendError::Timeout(timeout))
+            })
+        })
+        .collect()
 }

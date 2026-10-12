@@ -63,14 +63,88 @@ fn main() {
         widgets_command(cmd);
         return;
     }
-    if let Err(e) = ctl::parse(cmd) {
-        usage(&e);
+    let process_command = ctl::parse_process_command(cmd);
+    if process_command.is_none() {
+        if let Err(e) = ctl::parse(cmd) {
+            usage(&e);
+        }
     }
     let targets = resolve(who);
     if targets.is_empty() {
         usage(&format!("unknown widget {who:?}"));
     }
     let all = who == "all";
+    if process_command == Some(ctl::ProcessCommand::Status) {
+        let private = private_copy();
+        let entries: Vec<_> = targets.iter().map(process_entry).collect();
+        let statuses = if private {
+            control::status_all_with_records(&entries, std::collections::HashMap::new())
+        } else {
+            control::status_all(&entries)
+        };
+        let mut output = serde_json::Map::new();
+        for status in statuses {
+            let state = match status.state {
+                control::State::Running => "running",
+                control::State::NotResponding => "not responding",
+                control::State::Stopped => "stopped",
+                control::State::KeepsCrashing => "keeps crashing",
+            };
+            let mut value = json!({
+                "ok": true,
+                "name": status.name,
+                "status": state,
+                "pid": status.pid,
+                "build": status.build,
+                "reason": status.reason,
+            });
+            if private {
+                value["note"] = json!("crash records aren't visible from the Claude app");
+            }
+            output.insert(status.name, value);
+        }
+        let value = if all {
+            Value::Object(output)
+        } else {
+            output.into_values().next().unwrap_or(Value::Null)
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).unwrap_or_default()
+        );
+        return;
+    }
+    if matches!(
+        process_command,
+        Some(ctl::ProcessCommand::Start | ctl::ProcessCommand::Restart)
+    ) {
+        if all {
+            usage("start and restart require one widget name");
+        }
+        if private_copy() {
+            println!("{}", json!({"ok":false,"error":PRIVATE_ERROR}));
+            std::process::exit(1);
+        }
+        let target = &targets[0];
+        let entry = process_entry(target);
+        let result = match process_command {
+            Some(ctl::ProcessCommand::Start) => control::start(&entry),
+            Some(ctl::ProcessCommand::Restart) => control::restart(&entry),
+            _ => unreachable!(),
+        };
+        let value = match result {
+            Ok(pid) => json!({"ok":true,"name":target.name,"pid":pid}),
+            Err(error) => json!({"ok":false,"name":target.name,"error":error}),
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).unwrap_or_default()
+        );
+        if value["ok"] == false {
+            std::process::exit(1);
+        }
+        return;
+    }
     let mut failed = false;
     let mut usage_failed = false;
     let mut out = serde_json::Map::new();
@@ -135,6 +209,21 @@ fn entry_target(e: &registry::Entry) -> TargetExe {
         class: e.class.clone(),
         exe: ExeMatch::Path(e.exe.clone()),
         fallback_path: e.exe.clone(),
+    }
+}
+/// The registry entry process control uses for a target. A target known only by file name
+/// (no registry entry) takes the path of its running process, else dockctl's fallback path.
+fn process_entry(t: &TargetExe) -> registry::Entry {
+    let exe = match &t.exe {
+        ExeMatch::Path(path) => path.clone(),
+        ExeMatch::FileName(name) => {
+            control::running_exe(name).unwrap_or_else(|| t.fallback_path.clone())
+        }
+    };
+    registry::Entry {
+        name: t.name.clone(),
+        exe,
+        class: t.class.clone(),
     }
 }
 /// Converts a built-in widget into a dockctl target.

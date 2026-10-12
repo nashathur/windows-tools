@@ -79,6 +79,28 @@ pub enum Command {
     Startup(Option<bool>),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// A dockctl process command handled by dockctl itself, never sent to Block.
+pub enum ProcessCommand {
+    /// Read the process state and ping reply for a widget.
+    Status,
+    /// Start the widget executable.
+    Start,
+    /// Quit and then start the widget executable.
+    Restart,
+}
+
+/// Parses process-control commands reserved for dockctl rather than Block.
+pub fn parse_process_command<S: AsRef<str>>(args: &[S]) -> Option<ProcessCommand> {
+    let args: Vec<_> = args.iter().map(|arg| arg.as_ref()).collect();
+    match args.as_slice() {
+        ["status"] => Some(ProcessCommand::Status),
+        ["start"] => Some(ProcessCommand::Start),
+        ["restart"] => Some(ProcessCommand::Restart),
+        _ => None,
+    }
+}
+
 pub const USAGE: &str = "\
 usage: dockctl <widget|all> <command> [args] | dockctl widgets list|register <exe>|remove <name>
   state                          strip, panel, menu, tray and look as JSON
@@ -97,6 +119,9 @@ usage: dockctl <widget|all> <command> [args] | dockctl widgets list|register <ex
   set/get/unset --dock           edit or inspect shared dock settings
   describe                       setting descriptions and defaults
   startup on|off|get             change or inspect Start with Windows
+  status                         process and quiet ping status
+  start                          start this widget
+  restart                        quit and start this widget
   reload                         re-read settings and redraw the widget
   ping                           quiet process probe
   widgets list|register|remove   manage registered widget executables
@@ -406,6 +431,19 @@ mod tests {
         assert_eq!(p("startup on"), Ok(Command::Startup(Some(true))));
         assert_eq!(p("startup off"), Ok(Command::Startup(Some(false))));
         assert_eq!(p("startup get"), Ok(Command::Startup(None)));
+        assert_eq!(
+            parse_process_command(&["status"]),
+            Some(ProcessCommand::Status)
+        );
+        assert_eq!(
+            parse_process_command(&["start"]),
+            Some(ProcessCommand::Start)
+        );
+        assert_eq!(
+            parse_process_command(&["restart"]),
+            Some(ProcessCommand::Restart)
+        );
+        assert_eq!(parse_process_command(&["status", "extra"]), None);
     }
 
     #[test]

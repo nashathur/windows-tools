@@ -57,6 +57,7 @@ pub mod system;
 pub mod text_edit;
 pub mod theme;
 pub mod window;
+pub mod watchdog;
 
 /// A UTF-16, NUL-terminated copy of `s` for Win32 calls.
 pub fn wide(s: &str) -> Vec<u16> {

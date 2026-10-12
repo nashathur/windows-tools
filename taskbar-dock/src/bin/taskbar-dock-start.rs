@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use taskbar_dock::crash::{is_crash, Restarts};
-use taskbar_dock::{settings, startup};
+use taskbar_dock::{settings, startup, watchdog};
 
 fn log(line: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -24,6 +24,9 @@ fn log(line: &str) {
 }
 
 fn spawn(name: &str, exe: &Path) -> Option<Child> {
+    if let Err(err) = watchdog::clear(name) {
+        log(&format!("{name}: could not clear watchdog record: {err}"));
+    }
     let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
     match Command::new(exe).current_dir(dir).spawn() {
         Ok(c) => Some(c),
@@ -76,6 +79,9 @@ fn main() {
                     }
                     None => {
                         log(&format!("{} crashed (exit code {code:#010X}) again; it keeps crashing, not starting it again", w.name));
+                        if let Err(err) = watchdog::record_gave_up(&w.name, code) {
+                            log(&format!("{}: could not record watchdog give-up: {err}", w.name));
+                        }
                         return false;
                     }
                 }
