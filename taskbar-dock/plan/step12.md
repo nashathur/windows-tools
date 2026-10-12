@@ -431,19 +431,81 @@ the end.
   record change didn't break sign-in).
 - Every real setting changed in a check is noted first and put back.
 
-## 12a. UI fixes (found in the final live checks, 2026-10-12)
+## 12a. Windows Settings look (decided 2026-10-12)
 
-Cosmetic faults of the app, fixed before step 12 is closed; each checked with a screenshot in
-dark and light mode, and with `s7_click.ps1` where it touches clicks.
-1. **Nav focus ring**: a ring stays on a nav entry on every page although no key was pressed in
-   the window (set by `dockctl settings key` tests). The ring shows only after keyboard
-   navigation in this window, as on the Widgets page's controls.
-2. **Segment labels cut**: "Follow Windows" (Dock, Time format) shows "Follow Win…"; segments
-   split `CONTROL_WIDTH` evenly. A segment row is as wide as its measured labels need.
-3. **Slider value caret**: a number typed into a slider's value box puts the caret inside the
-   unit ("999 |min"). The edited text and caret exclude the unit; the unit stays beside it.
-4. **Box behind sliders**: `Control::Slider` fills the whole control with `color.input` (a solid
-   dark-grey / white box). Track, knob and value are drawn straight on the card; the value looks
-   like a text box only while it is typed into. Same for an Auto row's inner slider.
-Done: the four fixed, `cargo test` green in the five crates, smoke passes, screenshots of every
-page in both modes look right.
+The app is made to look like the Windows 11 Settings app. Sol rated the current look 5/10;
+its element-by-element table (WinUI sizes, radii, colours, fonts, control mapping) is
+`step12a-rating.md`, and the research on borrowing real Windows controls is
+`step12a-native.md`. Edges look jagged because GDI draws shapes without smoothing. This replaces
+decision 10's "same look as the panels" and its nav list for the app; the widgets keep their own
+look. Step 12 closes when 12a is done.
+
+### Decisions
+1. **Look**: Windows 11 Settings (WinUI / Fluent): Segoe UI Variable, 28 px page titles, 14 px
+   regular labels, rounded cards with soft strokes, Fluent switches, sliders, buttons and focus
+   rings; icons from Windows' icon font (Segoe Fluent Icons); Mica where it works.
+2. **How it is built is decided by the test below**: (a) the app's look half (drawing, layout,
+   keys, nav: `paint.rs`, `layout.rs`, `keys.rs`, the UI part of `win.rs`) is replaced by real
+   WinUI 3 controls, all at once, since islands can't be mixed per control into our drawn page;
+   or (b) our own controls are redrawn with Direct2D (smooth at any scale; the library already
+   uses it in `emoji.rs`) to WinUI's sizes and colours, one control at a time. The app's "brain"
+   (`model.rs`, `work.rs`, `remote.rs`, writes, registry, dockctl paths) stays either way.
+   Classic comctl32 controls are out (Windows 7–10 look, no proper dark mode).
+3. **Nav**: three entries, together at the top: Widgets, Dock, Developer, each with a Fluent
+   icon; rounded selection with the accent pill. A widget's page opens from its row on the
+   Widgets page (">" chevron), titled "Widgets › Weather" with "Widgets" clickable to go back;
+   Widgets stays selected in the nav. Edit settings… still opens the widget's page directly.
+4. **Widgets page rows**: widget icon (cloud, bus, music note, headset), name, status,
+   description, Show on taskbar switch, chevron. Stop / Start / Restart stay on the row, smaller
+   and placed neatly, and are also at the top of the widget's page. "Quit" reads **"Stop"** in
+   the app (the widget's own menu keeps "Quit"). Clicking the switch or a button doesn't open the
+   page.
+5. **Accent**: the Windows accent colour and its lighter/darker shades, not the theme's lime.
+6. **Choices**: 2–3-option segments become drop-downs (WinUI ComboBox), like the other choices.
+   (Old fault "Follow Win…" cut off goes with them.)
+7. **Numbers**: "feel" values (sizes, gaps, scales, opacity) stay sliders; counts and times
+   (refresh minutes, number of departures, timeouts) become number boxes with up/down arrows.
+   Sliders sit on the right of the row beside the name, the value to their left, with no box
+   behind them (old fault). The unit is drawn beside the edited text, never inside it, and the
+   caret never enters it (old fault "999 |min").
+8. **Reset**: the per-row Reset goes; one **"Restore defaults"** button per section.
+9. **Developer page**: a small warning bar at the top; one fold-out section per widget (Weather,
+   Bus, Media, Discord) and one for diagnostics.
+10. **Focus ring** (old fault: a ring stayed on a nav entry with no key pressed): shown only
+    after a key press in the window; a mouse click hides it; keys keep working either way. One
+    rule for every ring in the app.
+11. **Other PCs** (the widgets may be installed elsewhere): if (a) is chosen, the app uses the
+    Windows App Runtime copy that ships with Windows when it can; when none is usable, a short
+    message with Microsoft's installer link, and Edit settings… falls back to Notepad.
+12. **Monitor of another scale**: the user has none; that acceptance check is marked "not done,
+    no such screen". 125% and 150% are checked on the one screen instead.
+
+### The test (first; Codex Luna builds it in a throwaway folder, the app untouched)
+A small window with real WinUI 3 controls laid out like the weather page: the three-entry nav, a
+switch (Compact), a drop-down (units), a number box (refresh minutes) and a slider, wired to the
+real library paths (describe, `control::apply`) so changes are saved. Rust first (Microsoft's
+`windows-reactor`); if that can't do it, a small C++/WinRT helper behind a C interface.
+Checks; a failure is looked into and fixed where possible before falling back to (b):
+1. Opens in about a second (today 0.7 s).
+2. Sharp at 100%, 125% and 150%.
+3. Follows a Windows dark/light switch within a second, without a restart.
+4. Units and refresh changed in it are saved, and the weather widget follows within a second.
+5. dockctl can still read and change its settings, send keys and click its controls (through UI
+   Automation if needed).
+6. Tab and arrows move as in Windows Settings.
+7. It runs on the Windows App Runtime copy that ships with Windows alone (no separate install);
+   the folder size a bundled runtime would add is measured.
+The results go to the user, who chooses (a) or (b).
+
+### Order of work (after the test)
+1. Focus ring and slider caret (skipped under (a): WinUI replaces that code).
+2. The three-entry nav and widget pages opened from the Widgets page.
+3. The new look: controls, drop-downs, number boxes, icons, accent, Restore defaults, Developer
+   fold-outs.
+4. The Widgets-page row layout.
+5. Screenshots of every page in dark and light (Claude switches Windows' mode and puts it back to
+   dark), then one Codex Sol review of the whole change.
+
+Done: all of the above, `cargo test` green in the five crates, `settings_smoke.ps1` passes, the
+acceptance checks still pass (dockctl paths updated for the new nav), screenshots of every page
+in both modes look right.

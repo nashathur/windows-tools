@@ -11,9 +11,11 @@ The control panel for every registered widget, with a Dock page and a Developer 
 reaches every setting through the same library path. Decisions, contracts, jobs and checks:
 `step12.md`.
 
-## 12a. UI fixes (next)
+## 12a. Windows Settings look (next)
 
-Four cosmetic faults of the settings app found in the final checks: `step12.md` "12a".
+The settings app made to look like Windows 11 Settings (three-entry nav, drop-downs, Windows
+accent); a WinUI 3 test decides between real Windows controls and our own redrawn with Direct2D:
+`step12.md` "12a".
 
 ## 13. One tray icon (idea)
 
