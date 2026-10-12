@@ -25,6 +25,44 @@ A widget is a `Spec` + a `Content` given to `block::run` (see "Building a new wi
 | `window` | `raise`: bring another app's window to the front; `exe_path`, `is_exe`. |
 | `dock`, `icons`, `panel`, `menu_panel`, `strip`, `startup`, `crash`, `watchdog`, `ctl` | Block's internals; stacking and fit, panel behaviour, strip motion, startup list, crash handling and dockctl command parsing. `watchdog` stores launcher give-up records. |
 
+The settings app is not a library module: `src\bin\taskbar-dock-settings.rs` with its own
+modules in `src\settings_app\` (`model.rs` pages and rows, `layout.rs` rects and hit testing,
+`keys.rs`, `win.rs` window, `paint.rs`, `remote.rs` answers `dockctl settings`, `work.rs`
+writer and worker threads).
+
+## Settings app
+
+`taskbar-dock-settings.exe` is the control panel for registered widgets and shared Dock settings.
+It has a Widgets overview, a page for each widget, a Dock page, and a Developer tab. It applies
+validated edits immediately and follows settings-file changes while open.
+
+Build and install it from this crate:
+
+```powershell
+cargo build --release --bin taskbar-dock-settings
+Copy-Item target\release\taskbar-dock-settings.exe .
+```
+
+Block's Edit settings… runs the installed copy in this folder.
+
+Launch with no arguments for Widgets, `--widget <name>` for a widget page, `--dock` for Dock,
+`--developer` for Developer, or `--register <exe>` to register a widget without opening a window.
+
+`dockctl settings` drives the running app and returns JSON:
+
+| Command | Does |
+|---|---|
+| `state` | Read the current page, rows, window and app status. |
+| `page <widgets\|dock\|developer\|name>` | Navigate to a page. |
+| `row <id> set <text>`, `row <id> reset`, `row <id> toggle` | Edit or reset a setting row. |
+| `click <id>` | Activate a page action such as `start:<name>`, `quit:<name>`, `restart:<name>`, `remove:<name>`, `copy:<n>` (Developer's console line n, from 0) or `notepad`. |
+| `key <name>`, `type <text>` | Send supported keyboard input. |
+| `quit` | Close the settings app. |
+
+After installing the app and `dockctl.exe`, run `scripts\settings_smoke.ps1` for the read-only
+settings-app smoke check. It starts the installed app through a one-off scheduled task, visits
+the pages, compares widget rows with descriptions and `get`, then closes the app.
+
 ## The shared `dock` settings
 
 ```json

@@ -180,6 +180,8 @@ struct App {
     page: Page,
     /// Registered entries with descriptions.
     entries: Vec<work::LoadedEntry>,
+    /// Whether the registry worker has delivered the current entries.
+    registry_loaded: bool,
     /// Current widget rows.
     rows: Vec<Row>,
     /// Home page rows.
@@ -234,6 +236,14 @@ struct App {
     pending_actions: HashMap<(String, String), (HWND, HWND, u64)>,
     /// Process actions currently running, by widget name.
     busy_actions: HashMap<String, String>,
+    /// Developer diagnostics refreshed by background workers.
+    developer_details: Vec<Value>,
+    /// Masked pretty-printed settings snapshot.
+    developer_raw: String,
+    /// Scroll offset inside the Developer raw-settings box.
+    developer_raw_scroll: i32,
+    /// Deferred registry action replies, keyed by the action name.
+    pending_registry: HashMap<String, (HWND, HWND, u64)>,
     /// Pointer position used for hover highlights.
     hover: Option<(i32, i32)>,
 }
@@ -255,6 +265,7 @@ impl App {
             hwnd,
             page: initial,
             entries: Vec::new(),
+            registry_loaded: false,
             rows: Vec::new(),
             widgets: Vec::new(),
             last_status: Vec::new(),
@@ -282,6 +293,10 @@ impl App {
             pending_remote: HashMap::new(),
             pending_actions: HashMap::new(),
             busy_actions: HashMap::new(),
+            developer_details: Vec::new(),
+            developer_raw: String::new(),
+            developer_raw_scroll: 0,
+            pending_registry: HashMap::new(),
             hover: None,
         }
     }
@@ -337,23 +352,37 @@ impl App {
     /// Rebuilds rows from current file values and the current page's description.
     fn rebuild_rows(&mut self) {
         self.rows.clear();
-        if let Page::Widget(name) = &self.page {
-            if let Some(item) = self.entries.iter().find(|item| item.entry.name == *name) {
-                if let Ok(desc) = &item.describe {
-                    let current = self
-                        .settings
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_else(|| json!({}));
-                    self.rows = model::widget_rows(
-                        name,
-                        &desc.settings,
-                        &current,
-                        &desc.defaults,
-                        taskbar_dock::startup::is_on(name),
-                    );
+        match &self.page {
+            Page::Widget(name) => {
+                if let Some(item) = self.entries.iter().find(|item| item.entry.name == *name) {
+                    if let Ok(desc) = &item.describe {
+                        let current = self
+                            .settings
+                            .get(name)
+                            .cloned()
+                            .unwrap_or_else(|| json!({}));
+                        self.rows = model::widget_rows(
+                            name,
+                            &desc.settings,
+                            &current,
+                            &desc.defaults,
+                            taskbar_dock::startup::is_on(name),
+                        );
+                    }
                 }
             }
+            Page::Dock => {
+                let current = self
+                    .settings
+                    .get("dock")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                self.rows = model::dock_rows(&current, &taskbar_dock::style::dock_defaults());
+            }
+            Page::Developer => {
+                self.rows = model::advanced_rows(&self.entries, &self.settings);
+            }
+            Page::Widgets => {}
         }
         self.scroll = 0;
     }
@@ -406,13 +435,21 @@ impl App {
                     self.status_started = true;
                 }
                 self.entries = entries;
+                self.registry_loaded = true;
                 self.rebuild_nav();
                 self.rebuild_rows();
+                work::read_developer(
+                    self.hwnd,
+                    self.entries.clone(),
+                    self.last_status.clone(),
+                    true,
+                );
             }
             WorkResult::Status { round, statuses } if round > self.status_round => {
                 self.status_round = round;
-                self.last_status = statuses;
+                self.last_status = statuses.clone();
                 self.rebuild_widgets();
+                work::read_developer(self.hwnd, self.entries.clone(), statuses, false);
             }
             WorkResult::Status { .. } => {}
             WorkResult::File(Ok(value)) => {
@@ -442,7 +479,25 @@ impl App {
                         }
                     }
                 }
+                if matches!(self.page, Page::Dock) {
+                    let fixed = self
+                        .settings
+                        .get("dock")
+                        .and_then(|dock| dock.get("tint_fixed"))
+                        .is_some_and(Value::is_number);
+                    for row in &mut self.rows {
+                        if row.key.starts_with("tint_dark.") || row.key.starts_with("tint_light.") {
+                            row.enabled = !fixed;
+                        }
+                    }
+                }
                 self.rebuild_widgets();
+                work::read_developer(
+                    self.hwnd,
+                    self.entries.clone(),
+                    self.last_status.clone(),
+                    self.registry_loaded,
+                );
             }
             WorkResult::File(Err(_)) => {
                 self.banner = Some("settings.json has an error; fix it in Notepad".into());
@@ -474,8 +529,27 @@ impl App {
                             .unwrap_or(&section);
                         self.badge = Some(error.map_or_else(
                             || {
-                                followed.err().map_or("Saved".into(), |_| {
-                                    format!("Saved; {title} hasn't confirmed")
+                                followed.err().map_or("Saved".into(), |reason| {
+                                    let names = reason
+                                        .strip_suffix(" hasn't confirmed")
+                                        .unwrap_or(&reason)
+                                        .split(", ");
+                                    let titles = names
+                                        .map(|name| {
+                                            self.entries
+                                                .iter()
+                                                .find(|item| item.entry.name == name)
+                                                .and_then(|item| item.describe.as_ref().ok())
+                                                .map(|desc| desc.title.as_str())
+                                                .unwrap_or(name)
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
+                                    if section == "dock" {
+                                        format!("Saved; {titles} haven't confirmed")
+                                    } else {
+                                        format!("Saved; {title} hasn't confirmed")
+                                    }
                                 })
                             },
                             |e| format!("Not saved: {e}"),
@@ -532,6 +606,50 @@ impl App {
                     remote::reply(sender, source, id, &json!({"ok":success,"error":error}));
                 }
             }
+            WorkResult::Developer { details, raw } => {
+                self.developer_details = details;
+                if let Some(raw) = raw {
+                    self.developer_raw = raw;
+                    self.developer_raw_scroll = 0;
+                }
+            }
+            WorkResult::RegistryMutation {
+                operation,
+                requested,
+                result,
+            } => {
+                let succeeded = result.is_ok();
+                let name = result.as_ref().ok().cloned().unwrap_or_default();
+                self.badge = Some(result.map_or_else(
+                    |error| {
+                        if operation == "register" {
+                            format!("Not registered: {error}")
+                        } else {
+                            format!("Not removed: {error}")
+                        }
+                    },
+                    |name| {
+                        if operation == "register" {
+                            format!("Registered {name}")
+                        } else {
+                            format!("Removed {name}")
+                        }
+                    },
+                ));
+                self.badge_until = None;
+                if succeeded {
+                    work::load_registry(self.hwnd);
+                }
+                let key = format!("{operation}:{requested}");
+                if let Some((sender, source, id)) = self.pending_registry.remove(&key) {
+                    remote::reply(
+                        sender,
+                        source,
+                        id,
+                        &json!({"ok":succeeded,"name":name,"error":self.badge}),
+                    );
+                }
+            }
         }
         invalidate(self.hwnd);
     }
@@ -571,16 +689,18 @@ impl App {
         }
         let section = row.section.clone();
         let key = row.key.clone();
-        let destination = if key == "startup" {
+        let destination = if section == "dock" {
+            Ok((None, Some(control::Target::dock())))
+        } else if key == "startup" {
             self.row_entry(&section)
-                .map(|item| Ok((item.entry.clone(), None)))
+                .map(|item| Ok((Some(item.entry.clone()), None)))
                 .unwrap_or_else(|| Err("widget not registered".to_string()))
         } else {
             match self.row_entry(&section) {
                 None => Err("widget not registered".to_string()),
                 Some(item) => match &item.describe {
                     Ok(desc) => Ok((
-                        item.entry.clone(),
+                        Some(item.entry.clone()),
                         Some(control::Target::from_describe(desc)),
                     )),
                     Err(error) => Err(error.clone()),
@@ -607,6 +727,9 @@ impl App {
         self.rows[index].pending = Some(sequence);
         self.rows[index].error = None;
         if key == "startup" {
+            let Some(entry) = entry else {
+                return;
+            };
             let _ = self.writer.send(WriteJob::Startup {
                 sequence,
                 name: section,
@@ -619,7 +742,10 @@ impl App {
                 target,
                 key,
                 input,
-                follow: vec![entry],
+                follow: entry.map_or_else(
+                    || self.entries.iter().map(|item| item.entry.clone()).collect(),
+                    |entry| vec![entry],
+                ),
             });
         }
         invalidate(self.hwnd);
@@ -628,11 +754,18 @@ impl App {
     /// Returns one protocol state response with secret values masked.
     fn state(&self) -> Value {
         let rows: Vec<Value> = match self.page {
-            Page::Widget(_) => self
+            Page::Widget(_) | Page::Dock | Page::Developer => self
                 .rows
                 .iter()
                 .map(|row| {
-                    let kind = match row.control() {
+                    let (reported_control, auto) = match &row.setting.kind {
+                        Kind::Auto { inner, word, .. } => (
+                            model::control_for(inner),
+                            Some(row.value.as_str() == Some(word)),
+                        ),
+                        _ => (row.control(), None),
+                    };
+                    let kind = match reported_control {
                         model::Control::Switch | model::Control::Auto => "switch",
                         model::Control::Segments => "segments",
                         model::Control::Dropdown => "dropdown",
@@ -670,7 +803,8 @@ impl App {
                         "default": default,
                         "draft": draft,
                         "error": row.error,
-                        "enabled": row.enabled
+                        "enabled": row.enabled,
+                        "auto": auto
                     })
                 })
                 .collect(),
@@ -689,7 +823,27 @@ impl App {
                     })
                 })
                 .collect(),
-            _ => Vec::new(),
+        };
+        let cards = if matches!(self.page, Page::Developer) {
+            let registered = model::registered_widgets(&self.entries)
+                .into_iter()
+                .map(|widget| {
+                    json!({
+                        "name": widget.name,
+                        "exe": widget.exe,
+                        "error": widget.error
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "advanced": rows.clone(),
+                "details": self.developer_details,
+                "registered": registered,
+                "raw": self.developer_raw,
+                "commands": model::developer_commands()
+            })
+        } else {
+            Value::Null
         };
         let mut rect = RECT {
             left: 0,
@@ -726,7 +880,8 @@ impl App {
             "focus": focus,
             "banner": self.banner,
             "badge": self.badge,
-            "rows": rows
+            "rows": rows,
+            "cards": cards
         })
     }
 
@@ -742,6 +897,11 @@ impl App {
             .and_then(|value| value.split_once(':'))
             .filter(|(action, _)| ["start", "quit", "restart"].contains(action))
             .map(|(action, name)| (name.to_string(), action.to_string()));
+        let registry_key = request.args.get(1).and_then(|value| {
+            value
+                .strip_prefix("remove:")
+                .map(|name| (format!("remove:{name}"), name.to_string()))
+        });
         let reply = match taskbar_dock::ctl::parse_settings(&request.args) {
             Err(error) => json!({"ok":false,"error":error,"kind":"usage"}),
             Ok(command) => match command {
@@ -788,6 +948,10 @@ impl App {
         if reply.get("ok").and_then(Value::as_bool) == Some(true) {
             if let Some(key) = action_key {
                 self.pending_actions.insert(key, (sender, source, id));
+                return;
+            }
+            if let Some((key, _)) = registry_key {
+                self.pending_registry.insert(key, (sender, source, id));
                 return;
             }
         }
@@ -848,9 +1012,11 @@ impl App {
         }
         let section = self.rows[index].section.clone();
         let key = self.rows[index].key.clone();
-        let destination = if key == "startup" {
+        let destination = if section == "dock" {
+            Ok((None, Some(control::Target::dock())))
+        } else if key == "startup" {
             self.row_entry(&section)
-                .map(|item| (item.entry.clone(), None))
+                .map(|item| (Some(item.entry.clone()), None))
                 .ok_or_else(|| "widget not registered".to_string())
         } else {
             self.row_entry(&section)
@@ -860,7 +1026,7 @@ impl App {
                         .as_ref()
                         .map(|desc| {
                             (
-                                item.entry.clone(),
+                                Some(item.entry.clone()),
                                 Some(control::Target::from_describe(desc)),
                             )
                         })
@@ -876,6 +1042,9 @@ impl App {
             }
         };
         if key == "startup" {
+            let Some(entry) = entry else {
+                return Err("widget not registered".into());
+            };
             self.sequence = self.sequence.wrapping_add(1).max(1);
             let sequence = self.sequence;
             self.rows[index].pending = Some(sequence);
@@ -894,7 +1063,10 @@ impl App {
             sequence: self.sequence,
             target,
             key,
-            follow: vec![entry],
+            follow: entry.map_or_else(
+                || self.entries.iter().map(|item| item.entry.clone()).collect(),
+                |entry| vec![entry],
+            ),
         });
         Ok(())
     }
@@ -921,6 +1093,25 @@ impl App {
 
     /// Activates a protocol action name.
     fn click_remote(&mut self, name: &str) -> Value {
+        if let Some(index) = name
+            .strip_prefix("copy:")
+            .and_then(|value| value.parse::<usize>().ok())
+        {
+            let commands = model::developer_commands();
+            if let Some(command) = commands.get(index) {
+                taskbar_dock::text_edit::clipboard_write(self.hwnd, command);
+                self.badge = Some("Copied".into());
+                self.badge_until = Some(Instant::now() + Duration::from_secs(2));
+                return json!({"ok":true});
+            }
+            return json!({"ok":false,"error":"command not found"});
+        }
+        if let Some(widget) = name.strip_prefix("remove:") {
+            let _ = self.writer.send(WriteJob::Remove {
+                name: widget.into(),
+            });
+            return json!({"ok":true});
+        }
         if name == "notepad" {
             open_notepad();
             return json!({"ok":true});
@@ -940,6 +1131,34 @@ impl App {
             }
         }
         json!({"ok":false,"error":"unknown action"})
+    }
+
+    /// Opens the standard executable picker and queues registry work off the UI thread.
+    fn register_widget_dialog(&mut self) {
+        use windows_sys::Win32::UI::Controls::Dialogs::{
+            GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW,
+        };
+        let filter = wide("Programs (*.exe)\0*.exe\0\0");
+        let mut file = vec![0u16; 32768];
+        let mut dialog: OPENFILENAMEW = unsafe { std::mem::zeroed() };
+        dialog.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
+        dialog.hwndOwner = self.hwnd;
+        dialog.lpstrFilter = filter.as_ptr();
+        dialog.lpstrFile = file.as_mut_ptr();
+        dialog.nMaxFile = file.len() as u32;
+        dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+        if unsafe { GetOpenFileNameW(&mut dialog) } == 0 {
+            return;
+        }
+        let length = file
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(file.len());
+        let exe = std::path::PathBuf::from(String::from_utf16_lossy(&file[..length]));
+        let _ = self.writer.send(WriteJob::Register { exe });
+        self.badge = Some("Registering".into());
+        self.badge_until = None;
+        invalidate(self.hwnd);
     }
 
     /// Routes a named keyboard operation through current input precedence.
@@ -1137,37 +1356,30 @@ impl App {
             GetClientRect(self.hwnd, &mut rect);
             rect.right - nav_width - 2 * layout::px(theme::app::CONTENT_PADDING, self.scale)
         };
-        let mut top = layout::px(theme::app::HEADER_HEIGHT, self.scale)
+        let top = layout::px(theme::app::HEADER_HEIGHT, self.scale)
             + self.banner.as_ref().map_or(0, |_| {
                 layout::px(theme::space::XL * 2.0 + theme::space::S, self.scale)
-            });
-        for (row_index, row) in self.rows.iter().enumerate() {
-            if crate::settings_app::model::group_heading(&self.rows, row_index).is_some() {
-                top += layout::px(theme::app::GROUP_HEIGHT, self.scale);
+            })
+            + developer_warning_height(&self.page, self.scale);
+        let heights = self
+            .rows
+            .iter()
+            .map(|row| self.measured_card_height(row, width))
+            .collect::<Vec<_>>();
+        let positioned = layout::page_layout(&self.rows, &heights, width, self.scale, top, 0);
+        if let Some(card) = positioned.cards.get(index) {
+            let viewport_top = layout::px(theme::app::HEADER_HEIGHT, self.scale);
+            let viewport_bottom = unsafe {
+                let mut rect: RECT = std::mem::zeroed();
+                GetClientRect(self.hwnd, &mut rect);
+                rect.bottom
+            };
+            if card.top - self.scroll < viewport_top {
+                self.scroll = card.top - viewport_top;
             }
-            let height = self.measured_card_height(row, width)
-                + layout::px(theme::app::CARD_GAP, self.scale);
-            if row_index == index {
-                if top - self.scroll < layout::px(theme::app::HEADER_HEIGHT, self.scale) {
-                    self.scroll = top - layout::px(theme::app::HEADER_HEIGHT, self.scale);
-                }
-                if top + height - self.scroll
-                    > unsafe {
-                        let mut rect: RECT = std::mem::zeroed();
-                        GetClientRect(self.hwnd, &mut rect);
-                        rect.bottom
-                    }
-                {
-                    self.scroll = top + height
-                        - unsafe {
-                            let mut rect: RECT = std::mem::zeroed();
-                            GetClientRect(self.hwnd, &mut rect);
-                            rect.bottom
-                        };
-                }
-                break;
+            if card.bottom - self.scroll > viewport_bottom {
+                self.scroll = card.bottom - viewport_bottom;
             }
-            top += height;
         }
         self.scroll = self.scroll.max(0);
         self.clamp_page_scroll();
@@ -1183,14 +1395,14 @@ impl App {
         let header = layout::px(theme::app::HEADER_HEIGHT, self.scale);
         let banner = self.banner.as_ref().map_or(0, |_| {
             layout::px(theme::space::XL * 2.0 + theme::space::S, self.scale)
-        });
+        }) + developer_warning_height(&self.page, self.scale);
         let content = match &self.page {
             Page::Widgets => {
                 (self.widgets.len() as i32)
                     * (layout::px(theme::app::NAV_ROW_HEIGHT * 2.0, self.scale)
                         + layout::px(theme::app::CARD_GAP, self.scale))
             }
-            Page::Widget(_) => {
+            Page::Widget(_) | Page::Dock | Page::Developer => {
                 let width = unsafe {
                     let mut rect: RECT = std::mem::zeroed();
                     GetClientRect(self.hwnd, &mut rect);
@@ -1200,17 +1412,30 @@ impl App {
                             self.scale,
                         )
                 };
-                let mut height = 0;
-                for (index, row) in self.rows.iter().enumerate() {
-                    if model::group_heading(&self.rows, index).is_some() {
-                        height += layout::px(theme::app::GROUP_HEIGHT, self.scale);
-                    }
-                    height += self.measured_card_height(row, width)
-                        + layout::px(theme::app::CARD_GAP, self.scale);
+                let heights = self
+                    .rows
+                    .iter()
+                    .map(|row| self.measured_card_height(row, width))
+                    .collect::<Vec<_>>();
+                let advanced = layout::page_layout(&self.rows, &heights, width, self.scale, 0, 0);
+                if matches!(self.page, Page::Developer) {
+                    let custom = layout::developer_layout(
+                        advanced.content_height + layout::px(theme::app::CARD_GAP, self.scale),
+                        width,
+                        self.scale,
+                        0,
+                        self.developer_details.len(),
+                        self.entries.len(),
+                        model::developer_commands().len(),
+                    );
+                    // The warning line is already in `banner`; the cards start one gap down.
+                    advanced.content_height
+                        + layout::px(theme::app::CARD_GAP, self.scale)
+                        + custom.content_height
+                } else {
+                    advanced.content_height
                 }
-                height
             }
-            _ => 0,
         };
         self.scroll = layout::clamp_scroll(
             self.scroll,
@@ -1294,6 +1519,31 @@ impl App {
         invalidate(self.hwnd);
     }
 
+    /// Selects an option in an Auto row's inner choice control.
+    fn choose_auto_dropdown(&mut self, index: usize, option: usize) {
+        let Some(row) = self.rows.get(index) else {
+            self.dropdown = None;
+            return;
+        };
+        let Kind::Auto { inner, .. } = &row.setting.kind else {
+            self.dropdown = None;
+            return;
+        };
+        let Kind::Choice { options, other } = &**inner else {
+            self.dropdown = None;
+            return;
+        };
+        if *other && option == options.len() {
+            self.dropdown = None;
+            self.rows[index].choice_text_mode = true;
+            self.begin_edit_with(index, String::new());
+        } else if let Some((value, _)) = options.get(option) {
+            self.dropdown = None;
+            self.write_row(index, control::Input::Value(value.clone()));
+        }
+        invalidate(self.hwnd);
+    }
+
     /// Re-reads Look and updates scaled drawing after Windows settings change.
     fn look_changed(&mut self) {
         self.theme = Theme::new(&taskbar_dock::style::Look::current());
@@ -1364,21 +1614,26 @@ impl App {
             GetClientRect(self.hwnd, &mut rect);
             rect.right - content_left - layout::px(theme::app::CONTENT_PADDING, self.scale)
         };
-        let mut top = layout::px(theme::app::HEADER_HEIGHT, self.scale)
+        let top = layout::px(theme::app::HEADER_HEIGHT, self.scale)
             + self.banner.as_ref().map_or(0, |_| {
                 layout::px(theme::space::XL * 2.0 + theme::space::S, self.scale)
             })
-            - self.scroll;
+            + developer_warning_height(&self.page, self.scale);
+        let heights = self
+            .rows
+            .iter()
+            .map(|row| self.measured_card_height(row, width))
+            .collect::<Vec<_>>();
+        let positions =
+            layout::page_layout(&self.rows, &heights, width, self.scale, top, self.scroll);
         for (row_index, row) in self.rows.iter().enumerate() {
-            if crate::settings_app::model::group_heading(&self.rows, row_index).is_some() {
-                top += layout::px(theme::app::GROUP_HEIGHT, self.scale);
-            }
+            let card_top = positions.cards[row_index].top;
             let full_line = layout::full_line(row);
-            let card_height = self.measured_card_height(row, width);
+            let card_height = positions.cards[row_index].bottom - card_top;
             if row_index == index {
                 let local = layout::row_rects(
                     width,
-                    top,
+                    card_top,
                     card_height,
                     layout::px(theme::app::CONTROL_WIDTH, self.scale),
                     full_line,
@@ -1419,7 +1674,6 @@ impl App {
                 }
                 return true;
             }
-            top += card_height + layout::px(theme::app::CARD_GAP, self.scale);
         }
         false
     }
@@ -1589,7 +1843,11 @@ impl App {
         let Some(row) = self.rows.get(index) else {
             return;
         };
-        match &row.setting.kind {
+        let kind = match &row.setting.kind {
+            Kind::Auto { inner, word, .. } if row.value.as_str() != Some(word) => &**inner,
+            kind => kind,
+        };
+        match kind {
             Kind::Number { min, max, step, .. } => {
                 let current = row.value.as_f64().unwrap_or(*min);
                 let value = if forward {
@@ -1601,8 +1859,8 @@ impl App {
                 self.write_row(index, control::Input::Value(json!(value)));
             }
             Kind::Choice { options, .. }
-                if row.control() == model::Control::Segments
-                    || row.control() == model::Control::Dropdown =>
+                if model::control_for(kind) == model::Control::Segments
+                    || model::control_for(kind) == model::Control::Dropdown =>
             {
                 if options.is_empty() {
                     return;
@@ -1798,7 +2056,7 @@ impl App {
                     self.navigate(Page::Widget(widget.name.clone()));
                 }
             }
-        } else if !self.rows.is_empty() {
+        } else if !self.rows.is_empty() || matches!(self.page, Page::Developer) {
             let width = unsafe {
                 let mut rect: RECT = std::mem::zeroed();
                 GetClientRect(self.hwnd, &mut rect);
@@ -1808,15 +2066,27 @@ impl App {
             let banner_height = self.banner.as_ref().map_or(0, |_| {
                 layout::px(theme::space::XL * 2.0 + theme::space::S, self.scale)
             });
-            let mut top =
-                layout::px(theme::app::HEADER_HEIGHT, self.scale) + banner_height - self.scroll;
+            let content_top = layout::px(theme::app::HEADER_HEIGHT, self.scale)
+                + banner_height
+                + developer_warning_height(&self.page, self.scale);
+            let heights = self
+                .rows
+                .iter()
+                .map(|row| self.measured_card_height(row, width))
+                .collect::<Vec<_>>();
+            let positions = layout::page_layout(
+                &self.rows,
+                &heights,
+                width,
+                self.scale,
+                content_top,
+                self.scroll,
+            );
             for index in 0..self.rows.len() {
                 let row = self.rows[index].clone();
-                if crate::settings_app::model::group_heading(&self.rows, index).is_some() {
-                    top += layout::px(theme::app::GROUP_HEIGHT, self.scale);
-                }
+                let top = positions.cards[index].top;
                 let full_line = layout::full_line(&row);
-                let card_height = self.measured_card_height(&row, width);
+                let card_height = positions.cards[index].bottom - top;
                 if let Some((open_index, _)) = open_dropdown {
                     if open_index == index {
                         let local = layout::row_rects(
@@ -1853,13 +2123,19 @@ impl App {
                             true,
                         );
                         if let Some(option) = control.parts.iter().find_map(|(part, rect)| {
-                            if let layout::ControlPart::DropdownItem(index) = part {
+                            if let layout::ControlPart::DropdownItem(index)
+                            | layout::ControlPart::AutoInnerDropdownItem(index) = part
+                            {
                                 rect.contains(x, y).then_some(*index)
                             } else {
                                 None
                             }
                         }) {
-                            self.choose_dropdown(index, option);
+                            if matches!(row.setting.kind, Kind::Auto { .. }) {
+                                self.choose_auto_dropdown(index, option);
+                            } else {
+                                self.choose_dropdown(index, option);
+                            }
                             return;
                         }
                     }
@@ -1872,6 +2148,10 @@ impl App {
                     let row_id = format!("{}.{}", row.section, row.key);
                     let numeric = match &row.setting.kind {
                         Kind::Number { min, max, step, .. } => Some((*min, *max, *step)),
+                        Kind::Auto { inner, .. } => match &**inner {
+                            Kind::Number { min, max, step, .. } => Some((*min, *max, *step)),
+                            _ => None,
+                        },
                         _ => None,
                     };
                     self.focus = Some(index);
@@ -1937,19 +2217,87 @@ impl App {
                         });
                         self.ensure_focus_visible(index);
                         if let Kind::Auto { word, .. } = &row.setting.kind {
-                            let split = control_model
+                            let switch = control_model
                                 .parts
                                 .iter()
                                 .find_map(|(part, rect)| {
-                                    (*part == layout::ControlPart::AutoInner).then_some(rect.left)
+                                    (*part == layout::ControlPart::AutoSwitch).then_some(*rect)
                                 })
-                                .unwrap_or(control_rect.left);
-                            if x >= split && row.value.as_str() != Some(word) {
-                                self.begin_edit_with(index, row.value.to_string());
+                                .unwrap_or_default();
+                            if switch.contains(x, y) {
+                                self.toggle(index);
                                 break;
                             }
-                            self.toggle(index);
-                            break;
+                            if row.value.as_str() == Some(word) {
+                                break;
+                            }
+                            if let Kind::Auto { inner, .. } = &row.setting.kind {
+                                if let Kind::Choice { options, .. } = &**inner {
+                                    if model::control_for(inner) == model::Control::Segments {
+                                        let selected =
+                                            control_model.parts.iter().find_map(|(part, rect)| {
+                                                if let layout::ControlPart::AutoInnerSegment(
+                                                    option,
+                                                ) = part
+                                                {
+                                                    rect.contains(x, y).then_some(*option)
+                                                } else {
+                                                    None
+                                                }
+                                            });
+                                        if let Some((value, _)) =
+                                            selected.and_then(|option| options.get(option))
+                                        {
+                                            self.write_row(
+                                                index,
+                                                control::Input::Value(value.clone()),
+                                            );
+                                        }
+                                    } else if control_model.parts.iter().any(|(part, rect)| {
+                                        *part == layout::ControlPart::AutoInner
+                                            && rect.contains(x, y)
+                                    }) {
+                                        let selected = options
+                                            .iter()
+                                            .position(|(value, _)| value == &row.value)
+                                            .unwrap_or(0);
+                                        self.dropdown = Some((index, selected));
+                                    }
+                                    break;
+                                }
+                            }
+                            if let Some((min, max, step)) = numeric {
+                                let track = control_model
+                                    .parts
+                                    .iter()
+                                    .find_map(|(part, rect)| {
+                                        (*part == layout::ControlPart::AutoInnerSliderTrack)
+                                            .then_some(*rect)
+                                    })
+                                    .unwrap_or_default();
+                                if !track.contains(x, y) {
+                                    let value =
+                                        control_model.parts.iter().find_map(|(part, rect)| {
+                                            (*part == layout::ControlPart::AutoInnerValue)
+                                                .then_some(*rect)
+                                        });
+                                    if value.is_some_and(|rect| rect.contains(x, y)) {
+                                        self.begin_edit_with(index, row.value.to_string());
+                                    }
+                                    break;
+                                }
+                                let ratio = ((x - track.left) as f64
+                                    / (track.right - track.left).max(1) as f64)
+                                    .clamp(0.0, 1.0);
+                                let raw = min + ratio * (max - min);
+                                let value = (raw / step).round() * step;
+                                self.rows[index].draft = Some(value.to_string());
+                                self.slider_drag = Some((index, value.clamp(min, max), track));
+                                unsafe {
+                                    SetCapture(self.hwnd);
+                                }
+                                break;
+                            }
                         }
                         if row.control() == model::Control::Secret
                             && control_model.parts.iter().any(|(part, rect)| {
@@ -1982,22 +2330,20 @@ impl App {
                             }
                         }
                         if let Some((min, max, step)) = numeric {
-                            let ratio = ((x - left - local.control.left) as f64
-                                / (local.control.right - local.control.left).max(1) as f64)
+                            let track = control_model
+                                .parts
+                                .iter()
+                                .find_map(|(part, rect)| {
+                                    (*part == layout::ControlPart::SliderTrack).then_some(*rect)
+                                })
+                                .unwrap_or(control_rect);
+                            let ratio = ((x - track.left) as f64
+                                / (track.right - track.left).max(1) as f64)
                                 .clamp(0.0, 1.0);
                             let raw = min + ratio * (max - min);
                             let value = (raw / step).round() * step;
                             self.rows[index].draft = Some(value.to_string());
-                            self.slider_drag = Some((
-                                index,
-                                value.clamp(min, max),
-                                Rect {
-                                    left: left + local.control.left,
-                                    top: local.control.top,
-                                    right: left + local.control.right,
-                                    bottom: local.control.bottom,
-                                },
-                            ));
+                            self.slider_drag = Some((index, value.clamp(min, max), track));
                             unsafe {
                                 SetCapture(self.hwnd);
                             }
@@ -2009,9 +2355,99 @@ impl App {
                     }
                     break;
                 }
-                top += card_height + layout::px(theme::app::CARD_GAP, self.scale);
+            }
+            if matches!(self.page, Page::Developer) {
+                let advanced_top = content_top;
+                let advanced =
+                    layout::page_layout(&self.rows, &heights, width, self.scale, advanced_top, 0);
+                let cards = layout::developer_layout(
+                    advanced_top
+                        + advanced.content_height
+                        + layout::px(theme::app::CARD_GAP, self.scale),
+                    width,
+                    self.scale,
+                    self.scroll,
+                    self.developer_details.len(),
+                    self.entries.len(),
+                    model::developer_commands().len(),
+                );
+                if cards.register_button.contains(x - left, y) {
+                    self.register_widget_dialog();
+                } else if cards.raw_notepad.contains(x - left, y) {
+                    open_notepad();
+                } else if let Some(index) = cards
+                    .remove_buttons
+                    .iter()
+                    .position(|rect| rect.contains(x - left, y))
+                {
+                    if let Some(item) = self.entries.get(index) {
+                        let name = item.entry.name.clone();
+                        let _ = self.writer.send(WriteJob::Remove { name });
+                    }
+                } else if let Some(index) = cards
+                    .copy_buttons
+                    .iter()
+                    .position(|rect| rect.contains(x - left, y))
+                {
+                    let _ = self.click_remote(&format!("copy:{index}"));
+                }
             }
         }
+    }
+
+    /// Scrolls the raw settings text when the pointer is inside its viewport.
+    fn scroll_raw_at(&mut self, x: i32, y: i32, delta: i32) -> bool {
+        if !matches!(self.page, Page::Developer) {
+            return false;
+        }
+        let nav_width = layout::px(theme::app::NAV_WIDTH, self.scale);
+        let left = nav_width + layout::px(theme::app::CONTENT_PADDING, self.scale);
+        let width = unsafe {
+            let mut rect: RECT = std::mem::zeroed();
+            GetClientRect(self.hwnd, &mut rect);
+            rect.right - left - layout::px(theme::app::CONTENT_PADDING, self.scale)
+        };
+        let heights = self
+            .rows
+            .iter()
+            .map(|row| self.measured_card_height(row, width))
+            .collect::<Vec<_>>();
+        let advanced = layout::page_layout(
+            &self.rows,
+            &heights,
+            width,
+            self.scale,
+            layout::px(theme::app::HEADER_HEIGHT, self.scale)
+                + developer_warning_height(&self.page, self.scale),
+            0,
+        );
+        let cards = layout::developer_layout(
+            layout::px(theme::app::HEADER_HEIGHT, self.scale)
+                + developer_warning_height(&self.page, self.scale)
+                + advanced.content_height
+                + layout::px(theme::app::CARD_GAP, self.scale),
+            width,
+            self.scale,
+            self.scroll,
+            self.developer_details.len(),
+            self.entries.len(),
+            model::developer_commands().len(),
+        );
+        if !cards.raw_view.contains(x - left, y) {
+            return false;
+        }
+        // Same font, inset and wrapping as paint.rs draws the raw view with.
+        let inset = layout::px(theme::space::S, self.scale);
+        let content_height = self.fonts.measure_height(
+            &self.developer_raw,
+            cards.raw_view.right - cards.raw_view.left - 2 * inset,
+            true,
+        ) + 2 * inset;
+        let viewport_height = cards.raw_view.bottom - cards.raw_view.top;
+        self.developer_raw_scroll = (self.developer_raw_scroll + delta / 2)
+            .clamp(0, (content_height - viewport_height).max(0));
+        invalidate(self.hwnd);
+        true
     }
 
     /// Activates a row according to its described setting kind.
@@ -2047,11 +2483,19 @@ impl App {
             return;
         };
         if let Some(row) = self.rows.get(index) {
-            if let Kind::Number { min, max, step, .. } = &row.setting.kind {
+            let range = match &row.setting.kind {
+                Kind::Number { min, max, step, .. } => Some((*min, *max, *step)),
+                Kind::Auto { inner, .. } => match &**inner {
+                    Kind::Number { min, max, step, .. } => Some((*min, *max, *step)),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some((min, max, step)) = range {
                 let ratio = ((x - rect.left) as f64 / (rect.right - rect.left).max(1) as f64)
                     .clamp(0.0, 1.0);
                 let value = ((min + ratio * (max - min)) / step).round() * step;
-                self.slider_drag = Some((index, value.clamp(*min, *max), rect));
+                self.slider_drag = Some((index, value.clamp(min, max), rect));
                 self.rows[index].draft = Some(value.to_string());
                 invalidate(self.hwnd);
             }
@@ -2234,7 +2678,15 @@ unsafe extern "system" fn window_proc(
             0
         }
         WM_MOUSEWHEEL => {
-            state.scroll_by(-(((wparam >> 16) as u16 as i16) as i32) / 2);
+            let delta = -(((wparam >> 16) as u16 as i16) as i32);
+            let mut point = POINT {
+                x: (lparam as i16) as i32,
+                y: ((lparam >> 16) as i16) as i32,
+            };
+            ScreenToClient(hwnd, &mut point);
+            if !state.scroll_raw_at(point.x, point.y, delta) {
+                state.scroll_by(delta / 2);
+            }
             InvalidateRect(hwnd, std::ptr::null(), 0);
             0
         }
@@ -2344,6 +2796,10 @@ unsafe extern "system" fn window_proc(
                 scale: state.scale,
                 nav: &state.nav,
                 widgets: &state.widgets,
+                developer_details: &state.developer_details,
+                registered: &state.entries,
+                developer_raw: &state.developer_raw,
+                developer_raw_scroll: state.developer_raw_scroll,
                 busy_actions: &state.busy_actions,
                 rows: &state.rows,
                 edit: state.edit.as_ref().map(|(index, edit)| (*index, edit)),
@@ -2417,6 +2873,15 @@ fn state_name(state: control::State) -> &'static str {
         control::State::Stopped => "stopped",
         control::State::NotResponding => "not responding",
         control::State::KeepsCrashing => "keeps crashing",
+    }
+}
+
+/// Returns the warning-line height included before Developer advanced settings.
+fn developer_warning_height(page: &Page, scale: f32) -> i32 {
+    if matches!(page, Page::Developer) {
+        layout::px(theme::app::CONTROL_HEIGHT, scale)
+    } else {
+        0
     }
 }
 

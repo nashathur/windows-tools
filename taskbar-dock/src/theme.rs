@@ -236,6 +236,16 @@ pub mod app {
     pub const GROUP_HEIGHT: f32 = 30.0;
     /// Space around the main content area.
     pub const CONTENT_PADDING: f32 = 24.0;
+    /// Line pitch of the log tail in a widget-details block on the Developer page.
+    pub const DEVELOPER_LOG_LINE: f32 = 16.0;
+    /// Height of one registered-widget entry.
+    pub const DEVELOPER_REGISTER_HEIGHT: f32 = 72.0;
+    /// Fixed height of the raw settings text box.
+    pub const DEVELOPER_RAW_HEIGHT: f32 = 180.0;
+    /// Height of one copyable console command row.
+    pub const DEVELOPER_COMMAND_HEIGHT: f32 = 36.0;
+    /// Width of the Developer page's compact action buttons.
+    pub const DEVELOPER_ACTION_WIDTH: f32 = 120.0;
 }
 
 /// Windows' default accent text shades (blue), used when the registry has none.

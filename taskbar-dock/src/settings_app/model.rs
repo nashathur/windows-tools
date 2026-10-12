@@ -205,6 +205,124 @@ pub fn widget_rows(
     rows
 }
 
+/// Builds every shared dock setting row and disables tint levels in fixed-tint mode.
+pub fn dock_rows(current: &Value, defaults: &Value) -> Vec<Row> {
+    let fixed = taskbar_dock::style::dock_settings();
+    fixed
+        .into_iter()
+        .map(|setting| {
+            let value = taskbar_dock::describe::value_at(current, &setting.key)
+                .cloned()
+                .unwrap_or(Value::Null);
+            let default = taskbar_dock::describe::value_at(defaults, &setting.key)
+                .cloned()
+                .unwrap_or(Value::Null);
+            let disabled =
+                setting.key.starts_with("tint_dark.") || setting.key.starts_with("tint_light.");
+            let mut row = Row::new("dock", setting, value, default);
+            row.enabled = !disabled
+                || current
+                    .get("tint_fixed")
+                    .is_none_or(|value| !value.is_number());
+            row
+        })
+        .collect()
+}
+
+/// Builds Developer advanced rows in registry order, preserving each widget's section id.
+pub fn advanced_rows(
+    entries: &[crate::settings_app::work::LoadedEntry],
+    settings: &Value,
+) -> Vec<Row> {
+    entries
+        .iter()
+        .flat_map(|item| {
+            let Ok(desc) = &item.describe else {
+                return Vec::new();
+            };
+            desc.settings
+                .iter()
+                .filter(|setting| setting.advanced)
+                .map(|setting| {
+                    let mut setting = setting.clone();
+                    setting.group = desc.title.clone();
+                    let current = settings.get(&item.entry.name).cloned().unwrap_or_default();
+                    let value = taskbar_dock::describe::value_at(&current, &setting.key)
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    let default = taskbar_dock::describe::value_at(&desc.defaults, &setting.key)
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    Row::new(&item.entry.name, setting, value, default)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Returns the fixed dockctl command examples displayed on the Developer page.
+pub fn developer_commands() -> Vec<&'static str> {
+    vec![
+        "dockctl weather state",
+        "dockctl weather get city",
+        "dockctl weather set city Amsterdam",
+        "dockctl keys --dock",
+        "dockctl weather startup get",
+        "dockctl weather status",
+        "dockctl weather start",
+        "dockctl weather restart",
+        "dockctl widgets list",
+        "dockctl weather describe",
+        "dockctl settings state",
+    ]
+}
+
+/// A registry row prepared for the Developer page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegisteredWidget {
+    /// Registered section name.
+    pub name: String,
+    /// Executable path shown to the user.
+    pub exe: String,
+    /// Describe failure for a broken registry entry.
+    pub error: Option<String>,
+}
+
+/// Builds visible registry rows without dropping entries whose describe failed.
+pub fn registered_widgets(
+    entries: &[crate::settings_app::work::LoadedEntry],
+) -> Vec<RegisteredWidget> {
+    entries
+        .iter()
+        .map(|item| RegisteredWidget {
+            name: item.entry.name.clone(),
+            exe: item.entry.exe.to_string_lossy().into_owned(),
+            error: item.describe.as_ref().err().cloned(),
+        })
+        .collect()
+}
+
+/// Masks raw settings using all described Secret keys and formats the result as JSON text.
+pub fn masked_raw_settings(
+    settings: &Value,
+    entries: &[crate::settings_app::work::LoadedEntry],
+) -> String {
+    let secrets = entries
+        .iter()
+        .flat_map(|item| {
+            item.describe
+                .as_ref()
+                .ok()
+                .into_iter()
+                .flat_map(|desc| desc.settings.iter())
+                .filter(|setting| matches!(setting.kind, Kind::Secret))
+                .map(|setting| format!("{}.{}", item.entry.name, setting.key))
+        })
+        .collect::<Vec<_>>();
+    let masked = taskbar_dock::ctl::mask_with(settings, &secrets);
+    serde_json::to_string_pretty(&masked).unwrap_or_default()
+}
+
 /// Returns the non-empty group heading that begins at a row index.
 pub fn group_heading(rows: &[Row], index: usize) -> Option<&str> {
     let row = rows.get(index)?;
@@ -226,6 +344,8 @@ pub fn control_for(kind: &Kind) -> Control {
             other: false,
         } if (2..=3).contains(&options.len()) => Control::Segments,
         Kind::Choice { .. } => Control::Dropdown,
+        // A slider can't show "no value", so an optional number is typed (empty box = null).
+        Kind::Optional(inner) if matches!(**inner, Kind::Number { .. }) => Control::Text,
         Kind::Optional(inner) => control_for(inner),
         Kind::Auto { .. } => Control::Auto,
     }
@@ -384,5 +504,87 @@ mod tests {
         assert_eq!(group_heading(&rows, 1), None);
         assert_eq!(group_heading(&rows, 2), None);
         assert_eq!(group_heading(&rows, 3), Some("Data"));
+    }
+
+    /// Dock rows cover all descriptions, preserve grouped nested ids, and disable tint levels.
+    #[test]
+    fn dock_rows_include_every_key_and_follow_fixed_tint() {
+        let defaults = taskbar_dock::style::dock_defaults();
+        let mut current = defaults.clone();
+        current["tint_fixed"] = json!(0.4);
+        let rows = dock_rows(&current, &defaults);
+        let described = taskbar_dock::style::dock_settings();
+        assert_eq!(rows.len(), described.len());
+        assert_eq!(rows[0].setting.group, "Text");
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.key == "tint_dark.quiet")
+                .unwrap()
+                .section,
+            "dock"
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| {
+                    row.key.starts_with("tint_dark.") || row.key.starts_with("tint_light.")
+                })
+                .filter(|row| !row.enabled)
+                .count(),
+            6
+        );
+        current["tint_fixed"] = json!("auto");
+        let enabled = dock_rows(&current, &defaults);
+        assert!(enabled
+            .iter()
+            .filter(|row| {
+                row.key.starts_with("tint_dark.") || row.key.starts_with("tint_light.")
+            })
+            .all(|row| row.enabled));
+    }
+
+    /// Developer models retain broken registry entries and mask every described secret.
+    #[test]
+    fn developer_rows_keep_advanced_broken_and_secret_data_safe() {
+        let good = crate::settings_app::work::LoadedEntry {
+            entry: taskbar_dock::registry::Entry {
+                name: "good".into(),
+                exe: "good.exe".into(),
+                class: "Good".into(),
+            },
+            describe: Ok(taskbar_dock::block::Describe {
+                section: "good".into(),
+                class: "Good".into(),
+                title: "Good Widget".into(),
+                description: "Description".into(),
+                settings: vec![Setting::new("api_key", "API key", Kind::Secret).advanced()],
+                defaults: json!({"api_key":""}),
+                log_file: None,
+            }),
+        };
+        let broken = crate::settings_app::work::LoadedEntry {
+            entry: taskbar_dock::registry::Entry {
+                name: "broken".into(),
+                exe: "broken.exe".into(),
+                class: "Broken".into(),
+            },
+            describe: Err("missing describe output".into()),
+        };
+        let entries = [good, broken];
+        let settings = json!({"good":{"api_key":"top-secret"}});
+        let advanced = advanced_rows(&entries, &settings);
+        assert_eq!(advanced.len(), 1);
+        assert_eq!(
+            format!("{}.{}", advanced[0].section, advanced[0].key),
+            "good.api_key"
+        );
+        let registered = registered_widgets(&entries);
+        assert_eq!(registered.len(), 2);
+        assert_eq!(
+            registered[1].error.as_deref(),
+            Some("missing describe output")
+        );
+        let raw = masked_raw_settings(&settings, &entries);
+        assert!(raw.contains("***"));
+        assert!(!raw.contains("top-secret"));
     }
 }

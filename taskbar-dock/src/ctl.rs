@@ -470,6 +470,7 @@ mod tests {
                 vec!["click", "start:weather"],
                 S::Click("start:weather".into()),
             ),
+            (vec!["click", "copy:3"], S::Click("copy:3".into())),
             (vec!["key", "shift+tab"], S::Key("shift+tab".into())),
             (
                 vec!["type", "hello", "world"],

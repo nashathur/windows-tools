@@ -54,6 +54,236 @@ pub struct RowRects {
     pub reset: Option<Rect>,
 }
 
+/// How many lines of a widget's log the Developer page's Widget details show.
+pub const LOG_LINES: usize = 20;
+
+/// A group heading and the cards positioned beneath it for one page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageLayout {
+    /// One optional heading rectangle for each row.
+    pub headings: Vec<Option<Rect>>,
+    /// One card rectangle for each row.
+    pub cards: Vec<Rect>,
+    /// Total content height before applying the scroll offset.
+    pub content_height: i32,
+}
+
+/// Rectangles for the non-row cards on the Developer page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeveloperLayout {
+    /// Widget details card.
+    pub details: Rect,
+    /// One detail block per widget.
+    pub detail_items: Vec<Rect>,
+    /// Registered widgets card.
+    pub registered: Rect,
+    /// One registry row per widget.
+    pub registered_items: Vec<Rect>,
+    /// Remove buttons aligned with registered rows.
+    pub remove_buttons: Vec<Rect>,
+    /// Register widget action.
+    pub register_button: Rect,
+    /// Raw settings card.
+    pub raw: Rect,
+    /// Fixed-height raw text viewport.
+    pub raw_view: Rect,
+    /// Raw settings Notepad action.
+    pub raw_notepad: Rect,
+    /// Console commands card.
+    pub commands: Rect,
+    /// One row per copyable command.
+    pub command_rows: Vec<Rect>,
+    /// Copy buttons aligned with command rows.
+    pub copy_buttons: Vec<Rect>,
+    /// Content height below the Developer advanced rows.
+    pub content_height: i32,
+}
+
+/// A control-high button at the right end of a row, centred vertically, `inset` from the right.
+fn action_button(row: Rect, width: i32, height: i32, inset: i32) -> Rect {
+    let top = row.top + (row.bottom - row.top - height) / 2;
+    Rect {
+        left: row.right - inset - width,
+        top,
+        right: row.right - inset,
+        bottom: top + height,
+    }
+}
+
+/// Positions every Developer card and action after its advanced setting rows.
+pub fn developer_layout(
+    top: i32,
+    width: i32,
+    scale: f32,
+    scroll: i32,
+    details_count: usize,
+    registered_count: usize,
+    command_count: usize,
+) -> DeveloperLayout {
+    let pad = px(theme::app::CARD_PADDING, scale);
+    let gap = px(theme::app::CARD_GAP, scale);
+    let control = px(theme::app::CONTROL_HEIGHT, scale);
+    let action_width = px(theme::app::DEVELOPER_ACTION_WIDTH, scale);
+    let mut y = top;
+    // A block: title line, exe/build/pid line, then the log tail one line each.
+    let item_height =
+        2 * control + LOG_LINES as i32 * px(theme::app::DEVELOPER_LOG_LINE, scale) + pad;
+    let details_height = pad * 2 + control + details_count as i32 * (item_height + gap);
+    let details = Rect {
+        left: 0,
+        top: y - scroll,
+        right: width,
+        bottom: y - scroll + details_height,
+    };
+    y += details_height + gap;
+    let mut detail_items = Vec::new();
+    for index in 0..details_count {
+        let item_top = details.top + pad + control + index as i32 * (item_height + gap);
+        detail_items.push(Rect {
+            left: pad,
+            top: item_top,
+            right: width - pad,
+            bottom: item_top + item_height,
+        });
+    }
+    let row_height = px(theme::app::DEVELOPER_REGISTER_HEIGHT, scale);
+    let register_height = pad * 2 + control + registered_count as i32 * row_height + control + gap;
+    let registered = Rect {
+        left: 0,
+        top: y - scroll,
+        right: width,
+        bottom: y - scroll + register_height,
+    };
+    let mut registered_items = Vec::new();
+    let mut remove_buttons = Vec::new();
+    for index in 0..registered_count {
+        let item_top = y - scroll + pad + control + index as i32 * row_height;
+        let item = Rect {
+            left: pad,
+            top: item_top,
+            right: width - pad,
+            bottom: item_top + row_height,
+        };
+        registered_items.push(item);
+        // Inside the row's filled box, so kept off its right edge.
+        remove_buttons.push(action_button(
+            item,
+            action_width,
+            control,
+            px(theme::space::S, scale),
+        ));
+    }
+    let register_top = registered.bottom - control - pad;
+    let register_button = Rect {
+        left: width - pad - action_width,
+        top: register_top,
+        right: width - pad,
+        bottom: register_top + control,
+    };
+    y += register_height + gap;
+    let raw_height = pad * 2 + control + px(theme::app::DEVELOPER_RAW_HEIGHT, scale);
+    let raw = Rect {
+        left: 0,
+        top: y - scroll,
+        right: width,
+        bottom: y - scroll + raw_height,
+    };
+    let raw_notepad = Rect {
+        left: raw.right - pad - action_width,
+        top: raw.top + pad,
+        right: raw.right - pad,
+        bottom: raw.top + pad + control,
+    };
+    let raw_view = Rect {
+        left: pad,
+        top: raw.top + pad + control,
+        right: width - pad,
+        bottom: raw.bottom - pad,
+    };
+    y += raw_height + gap;
+    let row_height = px(theme::app::DEVELOPER_COMMAND_HEIGHT, scale);
+    let command_height = pad * 2 + control + command_count as i32 * row_height;
+    let commands = Rect {
+        left: 0,
+        top: y - scroll,
+        right: width,
+        bottom: y - scroll + command_height,
+    };
+    let mut command_rows = Vec::new();
+    let mut copy_buttons = Vec::new();
+    for index in 0..command_count {
+        let item_top = commands.top + pad + control + index as i32 * row_height;
+        let item = Rect {
+            left: pad,
+            top: item_top,
+            right: width - pad,
+            bottom: item_top + row_height,
+        };
+        command_rows.push(item);
+        copy_buttons.push(action_button(item, action_width, control, 0));
+    }
+    DeveloperLayout {
+        details,
+        detail_items,
+        registered,
+        registered_items,
+        remove_buttons,
+        register_button,
+        raw,
+        raw_view,
+        raw_notepad,
+        commands,
+        command_rows,
+        copy_buttons,
+        content_height: y + command_height - top,
+    }
+}
+
+/// Positions every group heading and card using the page's measured card heights.
+pub fn page_layout(
+    rows: &[Row],
+    card_heights: &[i32],
+    width: i32,
+    scale: f32,
+    top: i32,
+    scroll: i32,
+) -> PageLayout {
+    let mut y = top;
+    let group_height = px(theme::app::GROUP_HEIGHT, scale);
+    let card_gap = px(theme::app::CARD_GAP, scale);
+    let mut headings = Vec::with_capacity(rows.len());
+    let mut cards = Vec::with_capacity(rows.len());
+    for (index, row) in rows.iter().enumerate() {
+        if crate::settings_app::model::group_heading(rows, index).is_some() {
+            headings.push(Some(Rect {
+                left: 0,
+                top: y - scroll,
+                right: width,
+                bottom: y - scroll + group_height,
+            }));
+            y += group_height;
+        } else {
+            headings.push(None);
+        }
+        let height = card_heights
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| card_height(row, width, scale));
+        cards.push(Rect {
+            left: 0,
+            top: y - scroll,
+            right: width,
+            bottom: y - scroll + height,
+        });
+        y += height + card_gap;
+    }
+    PageLayout {
+        headings,
+        cards,
+        content_height: y - top,
+    }
+}
+
 /// A named sub-rectangle inside a row control.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControlPart {
@@ -77,6 +307,20 @@ pub enum ControlPart {
     AutoSwitch,
     /// Automatic mode's inner control.
     AutoInner,
+    /// Automatic mode's inner segment.
+    AutoInnerSegment(usize),
+    /// Automatic mode's inner dropdown item.
+    AutoInnerDropdownItem(usize),
+    /// Automatic mode's inner slider track.
+    AutoInnerSliderTrack,
+    /// Automatic mode's inner value field.
+    AutoInnerValue,
+    /// Automatic mode's inner text field.
+    AutoInnerText,
+    /// Automatic mode's inner colour swatch.
+    AutoInnerSwatch,
+    /// Automatic mode's inner secret reveal button.
+    AutoInnerEye,
 }
 
 /// The complete per-row control choice and its hit-test rectangles.
@@ -200,7 +444,18 @@ pub fn control_model(
             ));
         }
         Control::Auto => {
-            let split = rect.left + (rect.right - rect.left) / 2;
+            // The switch and its label take a fixed width on the left; the inner control the rest.
+            let switch_width = px(
+                taskbar_dock::theme::app::CONTROL_WIDTH
+                    + taskbar_dock::theme::app::SWITCH_WIDTH
+                    + taskbar_dock::theme::app::CONTROL_GAP,
+                scale,
+            );
+            let split = rect.left + switch_width.min((rect.right - rect.left) / 2);
+            let inner_rect = Rect {
+                left: split + px(taskbar_dock::theme::app::LABEL_GAP, scale),
+                ..rect
+            };
             parts.push((
                 ControlPart::AutoSwitch,
                 Rect {
@@ -208,17 +463,56 @@ pub fn control_model(
                     ..rect
                 },
             ));
-            parts.push((
-                ControlPart::AutoInner,
-                Rect {
-                    left: split,
-                    ..rect
-                },
-            ));
+            parts.push((ControlPart::AutoInner, inner_rect));
+            if let Some(inner) = auto_inner_model(row, inner_rect, scale, viewport, dropdown_open) {
+                for (part, rect) in inner.parts {
+                    let part = match part {
+                        ControlPart::Segment(index) => ControlPart::AutoInnerSegment(index),
+                        ControlPart::DropdownItem(index) => {
+                            ControlPart::AutoInnerDropdownItem(index)
+                        }
+                        ControlPart::SliderTrack => ControlPart::AutoInnerSliderTrack,
+                        ControlPart::Value => ControlPart::AutoInnerValue,
+                        ControlPart::Text => ControlPart::AutoInnerText,
+                        ControlPart::Swatch => ControlPart::AutoInnerSwatch,
+                        ControlPart::Eye => ControlPart::AutoInnerEye,
+                        _ => continue,
+                    };
+                    parts.push((part, rect));
+                }
+            }
         }
         Control::Switch | Control::Text => parts.push((ControlPart::Main, rect)),
     }
     ControlModel { control, parts }
+}
+
+/// Builds the regular control model used inside an Auto row.
+pub fn auto_inner_model(
+    row: &Row,
+    rect: Rect,
+    scale: f32,
+    viewport: Rect,
+    dropdown_open: bool,
+) -> Option<ControlModel> {
+    let taskbar_dock::describe::Kind::Auto { inner, .. } = &row.setting.kind else {
+        return None;
+    };
+    let mut setting = row.setting.clone();
+    setting.kind = (**inner).clone();
+    let inner_row = Row::new(
+        &row.section,
+        setting,
+        row.value.clone(),
+        row.default.clone(),
+    );
+    Some(control_model(
+        &inner_row,
+        rect,
+        scale,
+        viewport,
+        dropdown_open,
+    ))
 }
 
 /// Rectangles for one dropdown list, placed below or above its trigger.
@@ -249,7 +543,7 @@ pub fn px(size: f32, scale: f32) -> i32 {
 pub fn full_line(row: &Row) -> bool {
     matches!(
         row.control(),
-        Control::Slider | Control::Text | Control::Color | Control::Secret
+        Control::Slider | Control::Text | Control::Color | Control::Secret | Control::Auto
     )
 }
 
@@ -781,5 +1075,97 @@ mod tests {
             assert_eq!(swatch.right, bounds.right);
             assert!(text.right <= swatch.left);
         }
+    }
+
+    /// The Auto control uses the inner slider model at base and high-DPI scales.
+    #[test]
+    fn auto_control_subrects_hit_at_supported_scales() {
+        let viewport = Rect {
+            left: 0,
+            top: 0,
+            right: 700,
+            bottom: 700,
+        };
+        for scale in [1.0, 1.5] {
+            let bounds = Rect {
+                left: 20,
+                top: 40,
+                right: 320,
+                bottom: 80,
+            };
+            let row = Row::new(
+                "dock",
+                Setting::new(
+                    "text_size",
+                    "Text size",
+                    Kind::Auto {
+                        word: "system".into(),
+                        label: "Follow Windows' text size".into(),
+                        inner: Box::new(Kind::Number {
+                            min: 0.5,
+                            max: 3.0,
+                            step: 0.05,
+                            integer: false,
+                            unit: String::new(),
+                        }),
+                    },
+                ),
+                json!(1.0),
+                json!("system"),
+            );
+            let model = control_model(&row, bounds, scale, viewport, false);
+            for part in [
+                ControlPart::AutoSwitch,
+                ControlPart::AutoInner,
+                ControlPart::AutoInnerSliderTrack,
+                ControlPart::AutoInnerValue,
+            ] {
+                let rect = model
+                    .parts
+                    .iter()
+                    .find(|(candidate, _)| *candidate == part)
+                    .unwrap()
+                    .1;
+                assert!(rect.right > rect.left);
+                assert!(rect.contains(rect.left, rect.top));
+            }
+        }
+    }
+
+    /// Group headings, card gaps, and scroll offsets share one page layout.
+    #[test]
+    fn page_layout_positions_groups_cards_and_scroll() {
+        let rows = [
+            Row::new(
+                "w",
+                Setting::new("a", "A", Kind::Switch).group("One"),
+                json!(false),
+                json!(false),
+            ),
+            Row::new(
+                "w",
+                Setting::new("b", "B", Kind::Switch).group("One"),
+                json!(false),
+                json!(false),
+            ),
+            Row::new(
+                "w",
+                Setting::new("c", "C", Kind::Switch).group("Two"),
+                json!(false),
+                json!(false),
+            ),
+        ];
+        let layout = page_layout(&rows, &[40, 50, 60], 300, 1.0, 100, 20);
+        assert_eq!(layout.headings[0].unwrap().top, 80);
+        assert_eq!(layout.cards[0].top, 110);
+        assert_eq!(
+            layout.cards[1].top,
+            110 + 40 + px(theme::app::CARD_GAP, 1.0)
+        );
+        assert_eq!(
+            layout.headings[2].unwrap().top,
+            layout.cards[1].bottom + px(theme::app::CARD_GAP, 1.0)
+        );
+        assert!(layout.content_height > layout.cards[2].bottom - 80);
     }
 }

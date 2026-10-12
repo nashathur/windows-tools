@@ -858,8 +858,8 @@ fn right_click(on_panel: bool) {
         st(|s| s.core.panel.menu_closed());
         match cmd.map(core::route) {
             Some(Route::Settings) => {
-                let (op, app, path) = (wide("open"), wide("notepad.exe"), wide(&settings::path().display().to_string()));
-                ShellExecuteW(0, op.as_ptr(), app.as_ptr(), path.as_ptr(), std::ptr::null(), SW_SHOWNORMAL);
+                let section = section.to_string();
+                std::thread::spawn(move || launch_settings_app(&section));
             }
             Some(Route::Quit) => quit(),
             Some(Route::Content(id)) => {
@@ -867,6 +867,120 @@ fn right_click(on_panel: bool) {
             }
             _ => {}
         }
+    }
+}
+
+/// Starts the settings app on its widget page, falling back to Notepad if it cannot open.
+fn launch_settings_app(section: &str) {
+    use windows_sys::Win32::System::Threading::{
+        CreateProcessW, GetExitCodeProcess, WaitForSingleObject, PROCESS_INFORMATION, STARTUPINFOW,
+    };
+
+    const STILL_ACTIVE: u32 = 259;
+    let exe = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "\\taskbar-dock-settings.exe"
+    ));
+    if !exe.is_file() {
+        open_settings_notepad();
+        return;
+    }
+    let folder = exe.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let application = wide(&exe.to_string_lossy());
+    let directory = wide(&folder.to_string_lossy());
+    let command_line = format!("\"{}\" --widget {}", exe.to_string_lossy(), section);
+    let mut command_line = wide(&command_line);
+    unsafe {
+        let mut startup: STARTUPINFOW = std::mem::zeroed();
+        startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        let mut process: PROCESS_INFORMATION = std::mem::zeroed();
+        if CreateProcessW(
+            application.as_ptr(),
+            command_line.as_mut_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            0,
+            std::ptr::null(),
+            directory.as_ptr(),
+            &startup,
+            &mut process,
+        ) == 0
+        {
+            open_settings_notepad();
+            return;
+        }
+        CloseHandle(process.hThread);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let decision = loop {
+            let window_seen = settings_window_exists(process.dwProcessId);
+            let mut code = STILL_ACTIVE;
+            let exit_code = (GetExitCodeProcess(process.hProcess, &mut code) != 0
+                && code != STILL_ACTIVE)
+                .then_some(code);
+            let timed_out = Instant::now() >= deadline;
+            let decision = core::settings_launch_decision(exit_code, window_seen, timed_out);
+            if decision != core::SettingsLaunchDecision::Wait {
+                break decision;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let wait_ms = remaining.as_millis().min(100) as u32;
+            WaitForSingleObject(process.hProcess, wait_ms);
+        };
+        CloseHandle(process.hProcess);
+        if decision == core::SettingsLaunchDecision::OpenNotepad {
+            open_settings_notepad();
+        }
+    }
+}
+
+/// Checks whether the settings process owns a top-level window of the app's class.
+fn settings_window_exists(pid: u32) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, GetWindowThreadProcessId,
+    };
+    struct Search {
+        pid: u32,
+        found: bool,
+    }
+    /// Stops enumerating after finding the settings window owned by this process.
+    unsafe extern "system" fn visit(window: HWND, parameter: LPARAM) -> BOOL {
+        let search = &mut *(parameter as *mut Search);
+        let mut owner = 0;
+        GetWindowThreadProcessId(window, &mut owner);
+        if owner != search.pid {
+            return 1;
+        }
+        let mut name = [0u16; 128];
+        let length = GetClassNameW(window, name.as_mut_ptr(), name.len() as i32);
+        let expected: Vec<u16> = "TaskbarDockSettings".encode_utf16().collect();
+        if length > 0 && name[..length as usize] == expected {
+            search.found = true;
+            return 0;
+        }
+        1
+    }
+    let mut search = Search { pid, found: false };
+    unsafe { EnumWindows(Some(visit), &mut search as *mut _ as LPARAM) };
+    search.found
+}
+
+/// Opens settings.json in Notepad using the existing shell fallback.
+fn open_settings_notepad() {
+    let (operation, app, path) = (
+        wide("open"),
+        wide("notepad.exe"),
+        wide(&settings::path().display().to_string()),
+    );
+    unsafe {
+        ShellExecuteW(
+            0,
+            operation.as_ptr(),
+            app.as_ptr(),
+            path.as_ptr(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        );
     }
 }
 

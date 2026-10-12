@@ -15,6 +15,8 @@ this file. Reference, read by section when the task reaches it:
 A widget's own code uses settings, style, system, theme (every colour, font and size; checked by
 `tests\theme_lint.rs`), draw, text_edit, emoji, badge, anim, marquee, window; the other modules
 are Block's internals. One line per module: README.md "What's in it".
+The settings app (`taskbar-dock-settings.exe`): `src\bin\taskbar-dock-settings.rs` +
+`src\settings_app\`; build, install and `dockctl settings` in README.md "Settings app".
 
 ## Where a rule lives (rule)
 A behaviour every widget shares is written once, in Block or in `theme`, never copied into a

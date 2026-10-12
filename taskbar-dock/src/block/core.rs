@@ -159,6 +159,39 @@ pub(crate) enum Route {
     Content(usize),
 }
 
+/// What the settings-app launch worker should do after observing process and window state.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum SettingsLaunchDecision {
+    /// The launch worker has not seen a result yet.
+    Wait,
+    /// The app accepted the request or created its window.
+    Done,
+    /// The app failed to open before the deadline.
+    OpenNotepad,
+}
+
+/// Decides whether launching the settings app succeeded, failed, or is still in progress.
+pub(crate) fn settings_launch_decision(
+    exit_code: Option<u32>,
+    window_seen: bool,
+    timed_out: bool,
+) -> SettingsLaunchDecision {
+    if let Some(code) = exit_code {
+        return if code == 0 {
+            SettingsLaunchDecision::Done
+        } else {
+            SettingsLaunchDecision::OpenNotepad
+        };
+    }
+    if window_seen {
+        return SettingsLaunchDecision::Done;
+    }
+    if timed_out {
+        return SettingsLaunchDecision::OpenNotepad;
+    }
+    SettingsLaunchDecision::Wait
+}
+
 pub(crate) fn route(id: usize) -> Route {
     match id {
         std_ids::SHOW => Route::Show,
@@ -297,6 +330,31 @@ mod tests {
     use super::*;
     use crate::style::Style;
     use crate::system;
+
+    /// Checks the launch worker's process, window, and timeout decisions.
+    #[test]
+    fn settings_launch_decision_handles_success_failure_window_timeout_and_waiting() {
+        assert_eq!(
+            settings_launch_decision(Some(0), false, false),
+            SettingsLaunchDecision::Done
+        );
+        assert_eq!(
+            settings_launch_decision(Some(7), true, false),
+            SettingsLaunchDecision::OpenNotepad
+        );
+        assert_eq!(
+            settings_launch_decision(None, true, false),
+            SettingsLaunchDecision::Done
+        );
+        assert_eq!(
+            settings_launch_decision(None, false, true),
+            SettingsLaunchDecision::OpenNotepad
+        );
+        assert_eq!(
+            settings_launch_decision(None, false, false),
+            SettingsLaunchDecision::Wait
+        );
+    }
 
     #[derive(Default)]
     struct Fake {

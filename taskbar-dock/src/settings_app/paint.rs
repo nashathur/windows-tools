@@ -112,6 +112,7 @@ impl Drop for Fonts {
 }
 
 /// Data required to paint one settings window frame.
+#[derive(Clone)]
 pub struct Frame<'a> {
     /// Current page.
     pub page: &'a Page,
@@ -125,6 +126,14 @@ pub struct Frame<'a> {
     pub nav: &'a [(String, Page)],
     /// Widget overview rows.
     pub widgets: &'a [WidgetRow],
+    /// Background-refreshed widget diagnostics.
+    pub developer_details: &'a [serde_json::Value],
+    /// Registered entries and their optional description errors.
+    pub registered: &'a [crate::settings_app::work::LoadedEntry],
+    /// Masked pretty-printed settings text.
+    pub developer_raw: &'a str,
+    /// Scroll offset inside the raw settings box.
+    pub developer_raw_scroll: i32,
     /// In-flight process actions by widget name.
     pub busy_actions: &'a HashMap<String, String>,
     /// Current settings rows.
@@ -318,6 +327,11 @@ pub fn draw(dc: HDC, width: i32, height: i32, frame: &Frame<'_>) {
         );
         cy += h + layout::px(theme::space::S, frame.scale);
     }
+    // Scrolled content passes under the header and banner, never over them.
+    let saved = unsafe { SaveDC(dc) };
+    unsafe {
+        IntersectClipRect(dc, nav_width, cy, width, height);
+    }
     match frame.page {
         Page::Widgets => draw_widgets(
             dc,
@@ -327,19 +341,21 @@ pub fn draw(dc: HDC, width: i32, height: i32, frame: &Frame<'_>) {
             height,
             frame,
         ),
-        Page::Dock | Page::Developer => text(
+        Page::Dock => draw_rows(
             dc,
-            "This page comes in the next build.",
-            RECT {
-                left: content_left,
-                top: cy,
-                right: content_left + content_width,
-                bottom: cy + layout::px(theme::space::XL, frame.scale),
-            },
-            theme.color.dim,
-            theme,
-            theme::BODY.px_at(frame.scale),
-            false,
+            content_left,
+            cy - frame.scroll,
+            content_width,
+            height,
+            frame,
+        ),
+        Page::Developer => draw_developer(
+            dc,
+            content_left,
+            cy - frame.scroll,
+            content_width,
+            height,
+            frame,
         ),
         Page::Widget(_) => draw_rows(
             dc,
@@ -350,6 +366,328 @@ pub fn draw(dc: HDC, width: i32, height: i32, frame: &Frame<'_>) {
             frame,
         ),
     }
+    unsafe {
+        RestoreDC(dc, saved);
+    }
+}
+
+/// Draws the Developer warning, advanced rows, and its four diagnostic cards.
+fn draw_developer(dc: HDC, left: i32, y: i32, width: i32, height: i32, frame: &Frame<'_>) {
+    let line = layout::px(theme::app::CONTROL_HEIGHT, frame.scale);
+    let gap = layout::px(theme::app::CARD_GAP, frame.scale);
+    text(
+        dc,
+        "These change how the widget connects and what it shows; wrong values can stop it working",
+        RECT {
+            left,
+            top: y,
+            right: left + width,
+            bottom: y + line,
+        },
+        frame.theme.status.warn,
+        frame.theme,
+        theme::BODY.px_at(frame.scale),
+        false,
+    );
+    let advanced_top = y + line;
+    draw_rows(dc, left, advanced_top, width, height, frame);
+    let advanced = layout::page_layout(
+        frame.rows,
+        frame.card_heights,
+        width,
+        frame.scale,
+        advanced_top + frame.scroll,
+        0,
+    );
+    let cards = layout::developer_layout(
+        advanced_top + advanced.content_height + gap + frame.scroll,
+        width,
+        frame.scale,
+        frame.scroll,
+        frame.developer_details.len(),
+        frame.registered.len(),
+        crate::settings_app::model::developer_commands().len(),
+    );
+    draw_panel(dc, left, cards.details, "Widget details", frame);
+    for (index, item) in frame.developer_details.iter().enumerate() {
+        let rect = offset_rect(cards.detail_items[index], left);
+        fill(dc, rect, frame.theme.color.input);
+        let section = item
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let name = frame
+            .registered
+            .iter()
+            .find(|entry| entry.entry.name == section)
+            .and_then(|entry| entry.describe.as_ref().ok())
+            .map_or(section, |desc| desc.title.as_str());
+        let exe = item
+            .get("exe")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let build = item
+            .get("build")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        let pid = item
+            .get("pid")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("not running");
+        let pad = layout::px(theme::app::CARD_PADDING, frame.scale);
+        text(
+            dc,
+            name,
+            RECT {
+                left: rect.left + pad,
+                top: rect.top + pad / 2,
+                right: rect.right - pad,
+                bottom: rect.top + line,
+            },
+            frame.theme.color.fg,
+            frame.theme,
+            theme::TITLE_SMALL.px_at(frame.scale),
+            true,
+        );
+        text(
+            dc,
+            &format!("{exe}    Build {build}    PID {pid}"),
+            RECT {
+                left: rect.left + pad,
+                top: rect.top + line,
+                right: rect.right - pad,
+                bottom: rect.top + line * 2,
+            },
+            frame.theme.color.dim,
+            frame.theme,
+            theme::FOOTNOTE.px_at(frame.scale),
+            false,
+        );
+        let log_line = layout::px(theme::app::DEVELOPER_LOG_LINE, frame.scale);
+        let lines = item
+            .get("log_lines")
+            .and_then(serde_json::Value::as_array)
+            .map(|lines| {
+                lines
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| vec!["no log"]);
+        // One line each, cut with an ellipsis: the block's height is fixed for the tail.
+        for (number, log) in lines.iter().take(layout::LOG_LINES).enumerate() {
+            let top = rect.top + line * 2 + number as i32 * log_line;
+            text(
+                dc,
+                log,
+                RECT {
+                    left: rect.left + pad,
+                    top,
+                    right: rect.right - pad,
+                    bottom: top + log_line,
+                },
+                frame.theme.color.dim,
+                frame.theme,
+                theme::FOOTNOTE.px_at(frame.scale),
+                false,
+            );
+        }
+    }
+    draw_panel(dc, left, cards.registered, "Registered widgets", frame);
+    for (index, item) in frame.registered.iter().enumerate() {
+        let rect = offset_rect(cards.registered_items[index], left);
+        fill(dc, rect, frame.theme.color.input);
+        let error = item.describe.as_ref().err();
+        let name = if let Ok(desc) = &item.describe {
+            desc.title.as_str()
+        } else {
+            item.entry.name.as_str()
+        };
+        let text_left = rect.left + layout::px(theme::app::CARD_PADDING, frame.scale);
+        let text_right = cards.remove_buttons[index].left + left;
+        text(
+            dc,
+            name,
+            RECT {
+                left: text_left,
+                top: rect.top,
+                right: text_right,
+                bottom: rect.top + layout::px(theme::app::CONTROL_HEIGHT, frame.scale),
+            },
+            error.map_or(frame.theme.color.fg, |_| frame.theme.status.danger),
+            frame.theme,
+            theme::ROW.px_at(frame.scale),
+            true,
+        );
+        text(
+            dc,
+            &item.entry.exe.to_string_lossy(),
+            RECT {
+                left: text_left,
+                top: rect.top + layout::px(theme::app::CONTROL_HEIGHT, frame.scale),
+                right: text_right,
+                bottom: rect.top + layout::px(theme::app::CONTROL_HEIGHT * 2.0, frame.scale),
+            },
+            frame.theme.color.dim,
+            frame.theme,
+            theme::FOOTNOTE.px_at(frame.scale),
+            false,
+        );
+        draw_button(
+            dc,
+            offset_rect(cards.remove_buttons[index], left),
+            "Remove",
+            frame,
+        );
+        if let Some(error) = error {
+            text(
+                dc,
+                error,
+                RECT {
+                    left: text_left,
+                    top: rect.top + layout::px(theme::app::CONTROL_HEIGHT * 2.0, frame.scale),
+                    right: text_right,
+                    bottom: rect.bottom,
+                },
+                frame.theme.status.danger,
+                frame.theme,
+                theme::FOOTNOTE.px_at(frame.scale),
+                false,
+            );
+        }
+    }
+    draw_button(
+        dc,
+        offset_rect(cards.register_button, left),
+        "Register widget…",
+        frame,
+    );
+    draw_panel(dc, left, cards.raw, "Raw settings", frame);
+    let raw_view = offset_rect(cards.raw_view, left);
+    fill(dc, raw_view, frame.theme.color.input);
+    let inset = layout::px(theme::space::S, frame.scale);
+    unsafe {
+        let saved = SaveDC(dc);
+        IntersectClipRect(
+            dc,
+            raw_view.left,
+            raw_view.top,
+            raw_view.right,
+            raw_view.bottom,
+        );
+        wrapped_text(
+            dc,
+            frame.developer_raw,
+            RECT {
+                left: raw_view.left + inset,
+                top: raw_view.top + inset - frame.developer_raw_scroll,
+                right: raw_view.right - inset,
+                bottom: raw_view.bottom,
+            },
+            frame.theme.color.fg,
+            4,
+        );
+        RestoreDC(dc, saved);
+    }
+    draw_button(
+        dc,
+        offset_rect(cards.raw_notepad, left),
+        "Open in Notepad",
+        frame,
+    );
+    draw_panel(dc, left, cards.commands, "Console commands", frame);
+    for (index, command) in crate::settings_app::model::developer_commands()
+        .iter()
+        .enumerate()
+    {
+        let row = offset_rect(cards.command_rows[index], left);
+        text(
+            dc,
+            command,
+            RECT {
+                left: row.left,
+                top: row.top,
+                right: cards.copy_buttons[index].left + left,
+                bottom: row.bottom,
+            },
+            frame.theme.color.fg,
+            frame.theme,
+            theme::FOOTNOTE.px_at(frame.scale),
+            false,
+        );
+        draw_button(
+            dc,
+            offset_rect(cards.copy_buttons[index], left),
+            "Copy",
+            frame,
+        );
+    }
+}
+
+/// Draws one Developer card surface and its heading.
+fn draw_panel(dc: HDC, left: i32, rect: layout::Rect, title: &str, frame: &Frame<'_>) {
+    let rect = offset_rect(rect, left);
+    fill(dc, rect, frame.theme.color.button);
+    text(
+        dc,
+        title,
+        RECT {
+            left: rect.left + layout::px(theme::app::CARD_PADDING, frame.scale),
+            top: rect.top + layout::px(theme::app::CARD_PADDING / 2.0, frame.scale),
+            right: rect.right - layout::px(theme::app::CARD_PADDING, frame.scale),
+            bottom: rect.top + layout::px(theme::app::CONTROL_HEIGHT, frame.scale),
+        },
+        frame.theme.color.fg,
+        frame.theme,
+        theme::TITLE_SMALL.px_at(frame.scale),
+        true,
+    );
+}
+
+/// Draws a themed action button.
+fn draw_button(dc: HDC, rect: RECT, label: &str, frame: &Frame<'_>) {
+    // The same button as the Widgets page's Quit / Restart.
+    round_fill(
+        dc,
+        rect,
+        layout::px(theme::app::BUTTON_RADIUS, frame.scale),
+        if frame.hover.is_some_and(|(x, y)| contains(rect, x, y)) {
+            frame.theme.color.button_hover
+        } else {
+            frame.theme.color.button
+        },
+    );
+    border(dc, rect, frame.theme.color.input_border, frame.scale);
+    centred_text(
+        dc,
+        label,
+        rect,
+        frame.theme.color.fg,
+        theme::FOOTNOTE.px_at(frame.scale),
+    );
+}
+
+/// Adds the content origin to a page-relative rectangle.
+fn offset_rect(rect: layout::Rect, left: i32) -> RECT {
+    RECT {
+        left: rect.left + left,
+        top: rect.top,
+        right: rect.right + left,
+        bottom: rect.bottom,
+    }
+}
+
+/// The theme a disabled or inert control is drawn in: its colours faded towards the background.
+fn greyed(theme: &Theme) -> Theme {
+    let fade = |colour: Rgb| colour.mix(theme.color.bg, 0.55);
+    let mut greyed = theme.clone();
+    greyed.color.fg = fade(theme.color.fg);
+    greyed.color.dim = fade(theme.color.dim);
+    greyed.color.button = fade(theme.color.button);
+    greyed.color.input = fade(theme.color.input);
+    greyed.color.track = fade(theme.color.track);
+    greyed.status.accent = fade(theme.status.accent);
+    greyed
 }
 
 /// Draws the widgets overview cards.
@@ -586,7 +924,7 @@ fn draw_widgets(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: 
 }
 
 /// Draws widget setting cards with status, current value, and reset visibility.
-fn draw_rows(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: &Frame<'_>) {
+fn draw_rows(dc: HDC, left: i32, y: i32, width: i32, height: i32, frame: &Frame<'_>) {
     let start_y = y;
     if frame.rows.is_empty() {
         if let Some(error) = frame.page_error {
@@ -608,24 +946,33 @@ fn draw_rows(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: &Fr
         return;
     }
     let pad = layout::px(theme::app::CARD_PADDING, frame.scale);
+    let positions = layout::page_layout(
+        frame.rows,
+        frame.card_heights,
+        width,
+        frame.scale,
+        start_y + frame.scroll,
+        frame.scroll,
+    );
     for (index, row) in frame.rows.iter().enumerate() {
-        if let Some(group) = crate::settings_app::model::group_heading(frame.rows, index) {
-            let group_height = layout::px(theme::app::GROUP_HEIGHT, frame.scale);
+        if let (Some(group), Some(heading)) = (
+            crate::settings_app::model::group_heading(frame.rows, index),
+            positions.headings[index],
+        ) {
             text(
                 dc,
                 group,
                 RECT {
-                    left,
-                    top: y,
-                    right: left + width,
-                    bottom: y + group_height,
+                    left: left + heading.left,
+                    top: heading.top,
+                    right: left + heading.right,
+                    bottom: heading.bottom,
                 },
                 frame.theme.color.dim,
                 frame.theme,
                 theme::CAPTION.px_at(frame.scale),
                 true,
             );
-            y += group_height;
         }
         let full_line = layout::full_line(row);
         let card_h = frame
@@ -638,19 +985,23 @@ fn draw_rows(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: &Fr
             .get(index)
             .copied()
             .unwrap_or_else(|| layout::error_height(row, width, frame.scale));
-        if y + card_h < layout::px(theme::app::HEADER_HEIGHT, frame.scale) || y > height {
-            y += card_h + layout::px(theme::app::CARD_GAP, frame.scale);
+        let card = positions.cards[index];
+        if card.bottom < layout::px(theme::app::HEADER_HEIGHT, frame.scale) || card.top > height {
             continue;
         }
         fill(
             dc,
             RECT {
                 left,
-                top: y,
+                top: card.top,
                 right: left + width,
-                bottom: y + card_h,
+                bottom: card.bottom,
             },
-            frame.theme.color.button,
+            if row.enabled {
+                frame.theme.color.button
+            } else {
+                frame.theme.color.button.mix(frame.theme.color.bg, 0.45)
+            },
         );
         let editing_text = frame
             .edit
@@ -659,7 +1010,7 @@ fn draw_rows(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: &Fr
         let val = value_text(row, frame.reveal_secret, editing_text);
         let local = layout::row_rects(
             width,
-            y,
+            card.top,
             card_h,
             layout::px(theme::app::CONTROL_WIDTH, frame.scale),
             full_line,
@@ -670,18 +1021,22 @@ fn draw_rows(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: &Fr
         let help_bottom = if full_line {
             local.control.top - pad / 2
         } else {
-            y + card_h - pad - error_h
+            card.top + card_h - pad - error_h
         };
         text(
             dc,
             &row.setting.label,
             RECT {
                 left: left + pad,
-                top: y + pad / 2,
+                top: card.top + pad / 2,
                 right: left + local.label.right,
-                bottom: y + pad + layout::px(theme::app::CONTROL_HEIGHT, frame.scale),
+                bottom: card.top + pad + layout::px(theme::app::CONTROL_HEIGHT, frame.scale),
             },
-            frame.theme.color.fg,
+            if row.enabled {
+                frame.theme.color.fg
+            } else {
+                frame.theme.color.dim
+            },
             frame.theme,
             theme::TITLE_SMALL.px_at(frame.scale),
             true,
@@ -691,7 +1046,7 @@ fn draw_rows(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: &Fr
             &row.setting.help,
             RECT {
                 left: left + pad,
-                top: y + pad + layout::px(theme::app::CONTROL_HEIGHT, frame.scale),
+                top: card.top + pad + layout::px(theme::app::CONTROL_HEIGHT, frame.scale),
                 right: left + local.label.right,
                 bottom: help_bottom,
             },
@@ -704,7 +1059,16 @@ fn draw_rows(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: &Fr
             right: left + local.control.right,
             bottom: local.control.bottom,
         };
-        draw_control(dc, rect, row, &val, index, frame);
+        let disabled_theme = greyed(frame.theme);
+        let row_frame = Frame {
+            theme: if row.enabled {
+                frame.theme
+            } else {
+                &disabled_theme
+            },
+            ..frame.clone()
+        };
+        draw_control(dc, rect, row, &val, index, &row_frame);
         if row.reset_visible() {
             let reset_rect = RECT {
                 left: left + local.reset.unwrap().left,
@@ -731,9 +1095,9 @@ fn draw_rows(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: &Fr
                 error,
                 RECT {
                     left: left + pad,
-                    top: y + card_h - pad - error_h,
+                    top: card.top + card_h - pad - error_h,
                     right: left + width - pad,
-                    bottom: y + card_h - pad,
+                    bottom: card.top + card_h - pad,
                 },
                 frame.theme.status.danger,
                 4,
@@ -742,31 +1106,32 @@ fn draw_rows(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: &Fr
         if frame.focus == Some(index) {
             outline(dc, rect, frame.theme.status.accent, frame.scale);
         }
-        y += card_h + layout::px(theme::app::CARD_GAP, frame.scale);
     }
     if let Some((index, selected)) = frame.dropdown {
-        let mut top = start_y;
         for (row_index, row) in frame.rows.iter().enumerate() {
-            if crate::settings_app::model::group_heading(frame.rows, row_index).is_some() {
-                top += layout::px(theme::app::GROUP_HEIGHT, frame.scale);
-            }
-            let full_line = matches!(
-                row.control(),
-                crate::settings_app::model::Control::Slider
-                    | crate::settings_app::model::Control::Text
-                    | crate::settings_app::model::Control::Color
-                    | crate::settings_app::model::Control::Secret
-            );
+            let full_line = layout::full_line(row);
             let card_h = frame
                 .card_heights
                 .get(row_index)
                 .copied()
                 .unwrap_or_else(|| layout::card_height(row, width, frame.scale));
             if row_index == index {
-                if let taskbar_dock::describe::Kind::Choice { options, other } = &row.setting.kind {
+                let choice = match &row.setting.kind {
+                    taskbar_dock::describe::Kind::Choice { options, other } => {
+                        Some((options, other))
+                    }
+                    taskbar_dock::describe::Kind::Auto { inner, .. } => match &**inner {
+                        taskbar_dock::describe::Kind::Choice { options, other } => {
+                            Some((options, other))
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some((options, other)) = choice {
                     let local = layout::row_rects(
                         width,
-                        top,
+                        positions.cards[row_index].top,
                         card_h,
                         layout::px(theme::app::CONTROL_WIDTH, frame.scale),
                         full_line,
@@ -807,7 +1172,12 @@ fn draw_rows(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: &Fr
                         .parts
                         .iter()
                         .filter_map(|(part, rect)| {
-                            matches!(part, layout::ControlPart::DropdownItem(_)).then_some(*rect)
+                            matches!(
+                                part,
+                                layout::ControlPart::DropdownItem(_)
+                                    | layout::ControlPart::AutoInnerDropdownItem(_)
+                            )
+                            .then_some(*rect)
                         })
                         .collect::<Vec<_>>();
                     for (item_index, (item, label)) in items.iter().zip(labels).enumerate() {
@@ -845,7 +1215,6 @@ fn draw_rows(dc: HDC, left: i32, mut y: i32, width: i32, height: i32, frame: &Fr
                 }
                 break;
             }
-            top += card_h + layout::px(theme::app::CARD_GAP, frame.scale);
         }
     }
 }
@@ -1072,15 +1441,15 @@ fn draw_control(dc: HDC, rect: RECT, row: &Row, value: &str, index: usize, frame
                     bottom: eye_rect.bottom,
                 };
                 fill(dc, eye, theme.color.button);
-                text(
+                centred_text(
                     dc,
-                    "Eye",
+                    "Show",
                     eye,
                     theme.color.fg,
-                    theme,
                     theme::FOOTNOTE.px_at(frame.scale),
-                    false,
                 );
+                // The button sits inside the box: its fill covered the right edge of the border.
+                border(dc, rect, theme.color.input_border, frame.scale);
                 RECT {
                     right: eye.left,
                     ..rect
@@ -1156,39 +1525,65 @@ fn draw_control(dc: HDC, rect: RECT, row: &Row, value: &str, index: usize, frame
                     bottom: inner_part.bottom,
                 };
                 fill(dc, switch, theme.color.button);
-                text(
+                let switch_width = layout::px(theme::app::SWITCH_WIDTH, frame.scale);
+                let switch_height = layout::px(theme::app::SWITCH_HEIGHT, frame.scale);
+                let switch_top = switch.top + (switch.bottom - switch.top - switch_height) / 2;
+                draw_switch(
                     dc,
-                    if automatic { label } else { "Manual" },
-                    switch,
-                    theme.color.fg,
-                    theme,
-                    theme::FOOTNOTE.px_at(frame.scale),
-                    false,
-                );
-                fill(
-                    dc,
-                    inner_rect,
-                    if automatic {
-                        theme.color.input
-                    } else {
-                        theme.color.button
+                    RECT {
+                        left: switch.left,
+                        top: switch_top,
+                        right: switch.left + switch_width,
+                        bottom: switch_top + switch_height,
                     },
+                    automatic,
+                    frame,
                 );
-                let inner_value = if automatic {
-                    "Automatic".to_string()
-                } else {
-                    row.value.to_string()
-                };
-                let _ = inner;
                 text(
                     dc,
-                    &inner_value,
-                    inner_rect,
-                    theme.color.fg,
+                    label,
+                    RECT {
+                        left: switch.left
+                            + switch_width
+                            + layout::px(theme::app::CONTROL_GAP, frame.scale),
+                        ..switch
+                    },
+                    if automatic {
+                        theme.color.fg
+                    } else {
+                        theme.color.dim
+                    },
                     theme,
                     theme::FOOTNOTE.px_at(frame.scale),
                     false,
                 );
+                // While on, the greyed inner control shows the value turning it off would write.
+                let inner_value = if automatic {
+                    crate::settings_app::model::auto_off_value(
+                        &row.setting.kind,
+                        word,
+                        &row.default,
+                    )
+                    .unwrap_or(serde_json::Value::Null)
+                } else {
+                    row.value.clone()
+                };
+                let mut setting = row.setting.clone();
+                setting.kind = (**inner).clone();
+                let mut inner_row =
+                    Row::new(&row.section, setting, inner_value, row.default.clone());
+                inner_row.draft = row.draft.clone();
+                let inner_text = if automatic {
+                    value_text(&inner_row, frame.reveal_secret, None)
+                } else {
+                    value.to_string()
+                };
+                let disabled_theme = greyed(theme);
+                let inner_frame = Frame {
+                    theme: if automatic { &disabled_theme } else { theme },
+                    ..frame.clone()
+                };
+                draw_control(dc, inner_rect, &inner_row, &inner_text, index, &inner_frame);
             }
         }
     }
@@ -1284,7 +1679,9 @@ fn status_label(status: &str) -> &'static str {
 fn text_placeholder(kind: &taskbar_dock::describe::Kind) -> Option<&str> {
     match kind {
         taskbar_dock::describe::Kind::Text { placeholder, .. } => Some(placeholder),
-        taskbar_dock::describe::Kind::Optional(inner) => text_placeholder(inner),
+        taskbar_dock::describe::Kind::Optional(inner) => {
+            text_placeholder(inner).or(Some("Not set"))
+        }
         _ => None,
     }
 }

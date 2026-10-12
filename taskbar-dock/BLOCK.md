@@ -24,6 +24,9 @@ includes `compact` and `show_on_taskbar` in both. `reload` re-reads widget and d
 A left click on the strip always toggles the panel (Block's, no widget decides); a tray icon's clicks
 are Block's too (no strip needed: the panel opens above the pointer).
 
+The standard **Edit settings…** row opens `taskbar-dock-settings.exe` on this widget's page.
+If the app is missing or does not start successfully, Block opens `settings.json` in Notepad.
+
 ## Main panel (`shell.rs`)
 Block's window (class `<class>Panel`): create, place, paint, Esc / lost focus / right click. The
 Content gives `panel_size(kind, scale)` (px; None: no panel), `panel_draw(kind, cv, &PanelFrame)`

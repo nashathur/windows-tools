@@ -405,6 +405,15 @@ the end.
   "Started" and start nothing (seen live). `dockctl settings click quit:<w>` waits 20 s.
 - `dockctl settings row <id> set` needs non-empty text (an empty value: `row <id> reset`, or
   type into the box with `key`/`type`).
+- An Optional number (weather `latitude` / `longitude`) is a text box, "Not set" when empty (a
+  slider can't show "no value"); empty = null.
+- An Auto row takes the full-width line: the switch with its label on the left, the inner control
+  on the right (greyed and inert while on, showing the value turning it off would write).
+- The secret's reveal button reads "Show" (the app loads no icon font).
+- Widget details show one line per log line (cut with "…"), a fixed block height for 20 lines;
+  the block is headed by the widget's title. Developer buttons look like the Widgets page's.
+- `settings_smoke.ps1` waits up to 5 s for the Widgets page to list the registry (it loads on a
+  worker) and fails when it lists none.
 
 ## Acceptance checks (live, after job 4)
 
