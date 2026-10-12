@@ -23,10 +23,13 @@ Where we are:
 
 First, the test (step12.md "The test"): one Codex Luna build brief for the throwaway WinUI 3
 window (the app untouched), then run the seven checks yourself and give me the results in plain
-words with your recommendation; I choose (a) real Windows controls or (b) our own controls
+words with your recommendation and the blind second opinions of Codex Sol and Gemini Flash
+(step12.md says how); I choose (a) real Windows controls or (b) our own controls
 redrawn with Direct2D. Then the order of work in step12.md, with Luna briefs where the pieces are
 independent, screenshots in dark and light (you switch Windows' mode and put it back to dark),
-and one Sol review of the whole change before telling me it's done.
+one Sol review of the whole change and one Gemini Flash rating of the new look's screenshots
+before telling me it's done. Gemini: `tools\gemini\ask.ps1` (global CLAUDE.md "Gemini"; Flash
+has about 15 requests a day, so attach the files as `@path` and ask once).
 
 Then: ask me to commit; mark steps 12 and 12a done in `plan\PLAN.md` (one line, current facts),
 remove the step12 session prompt files; ask me to commit. Step 13 (one tray icon) starts with a

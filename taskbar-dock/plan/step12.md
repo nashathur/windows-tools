@@ -495,7 +495,10 @@ Checks; a failure is looked into and fixed where possible before falling back to
 6. Tab and arrows move as in Windows Settings.
 7. It runs on the Windows App Runtime copy that ships with Windows alone (no separate install);
    the folder size a bundled runtime would add is measured.
-The results go to the user, who chooses (a) or (b).
+Before the results go to the user, two blind second opinions on (a) vs (b), given the seven
+results, the test's screenshots and the two references: Codex Sol and Gemini Flash (one request:
+results file and screenshots attached as `@path`). Claude reports the results, both opinions and
+its own recommendation; the user chooses (a) or (b).
 
 ### Order of work (after the test)
 1. Focus ring and slider caret (skipped under (a): WinUI replaces that code).
@@ -504,7 +507,9 @@ The results go to the user, who chooses (a) or (b).
    fold-outs.
 4. The Widgets-page row layout.
 5. Screenshots of every page in dark and light (Claude switches Windows' mode and puts it back to
-   dark), then one Codex Sol review of the whole change.
+   dark), then one Codex Sol review of the whole change (code), and one Gemini Flash rating of the
+   look (the screenshots of both modes attached, against Windows 11 Settings, score out of 10
+   with fixes; Sol rated the old look 5/10). Claude weighs both and fixes what holds up.
 
 Done: all of the above, `cargo test` green in the five crates, `settings_smoke.ps1` passes, the
 acceptance checks still pass (dockctl paths updated for the new nav), screenshots of every page
