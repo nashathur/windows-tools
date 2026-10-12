@@ -6,6 +6,7 @@ pub struct TextEdit {
     text: String,
     caret: usize,
     selected_all: bool,
+    anchor: Option<usize>,
 }
 
 impl TextEdit {
@@ -17,6 +18,7 @@ impl TextEdit {
             text,
             caret,
             selected_all: false,
+            anchor: None,
         }
     }
     /// Returns the current search text.
@@ -27,6 +29,12 @@ impl TextEdit {
     pub fn caret(&self) -> usize {
         self.caret
     }
+    /// Returns the selected character range, if any.
+    pub fn selection_range(&self) -> Option<(usize, usize)> {
+        self.anchor
+            .filter(|anchor| *anchor != self.caret)
+            .map(|anchor| (anchor.min(self.caret), anchor.max(self.caret)))
+    }
     /// Reports whether the whole value is selected.
     pub fn all_selected(&self) -> bool {
         self.selected_all
@@ -34,7 +42,30 @@ impl TextEdit {
     /// Selects the whole value for replacement or copying.
     pub fn select_all(&mut self) {
         self.selected_all = true;
+        self.anchor = Some(0);
         self.caret = self.text.chars().count();
+    }
+    /// Sets the caret from a measured Unicode character index, clearing any selection.
+    pub fn set_caret(&mut self, caret: usize) {
+        self.caret = caret.min(self.text.chars().count());
+        self.anchor = None;
+        self.selected_all = false;
+    }
+    /// Extends the current selection one character to the left.
+    pub fn shift_left(&mut self) {
+        self.extend_selection(self.caret.saturating_sub(1));
+    }
+    /// Extends the current selection one character to the right.
+    pub fn shift_right(&mut self) {
+        self.extend_selection((self.caret + 1).min(self.text.chars().count()));
+    }
+    /// Extends the current selection to the start of the text.
+    pub fn shift_home(&mut self) {
+        self.extend_selection(0);
+    }
+    /// Extends the current selection to the end of the text.
+    pub fn shift_end(&mut self) {
+        self.extend_selection(self.text.chars().count());
     }
     /// Inserts text at the caret, replacing the whole value when selected.
     pub fn insert(&mut self, text: &str) {
@@ -69,18 +100,20 @@ impl TextEdit {
     }
     /// Moves the caret one character left and collapses selection to the start.
     pub fn left(&mut self) {
-        if self.selected_all {
+        if let Some(anchor) = self.anchor {
+            self.caret = anchor.min(self.caret);
+            self.anchor = None;
             self.selected_all = false;
-            self.caret = 0;
         } else {
             self.caret = self.caret.saturating_sub(1);
         }
     }
     /// Moves the caret one character right and collapses selection to the end.
     pub fn right(&mut self) {
-        if self.selected_all {
+        if let Some(anchor) = self.anchor {
+            self.caret = anchor.max(self.caret);
+            self.anchor = None;
             self.selected_all = false;
-            self.caret = self.text.chars().count();
         } else {
             self.caret = (self.caret + 1).min(self.text.chars().count());
         }
@@ -88,11 +121,13 @@ impl TextEdit {
     /// Moves the caret to the beginning of the value.
     pub fn home(&mut self) {
         self.selected_all = false;
+        self.anchor = None;
         self.caret = 0;
     }
     /// Moves the caret to the end of the value.
     pub fn end(&mut self) {
         self.selected_all = false;
+        self.anchor = None;
         self.caret = self.text.chars().count();
     }
     /// Deletes the previous word and its preceding whitespace.
@@ -115,11 +150,14 @@ impl TextEdit {
     }
     /// Returns the selected text for copying.
     pub fn copy(&self) -> String {
-        if self.selected_all {
-            self.text.clone()
-        } else {
-            String::new()
-        }
+        let Some(anchor) = self.anchor else {
+            return String::new();
+        };
+        self.text
+            .chars()
+            .skip(anchor.min(self.caret))
+            .take(anchor.abs_diff(self.caret))
+            .collect()
     }
     /// Removes the selected text and returns it for copying.
     pub fn cut(&mut self) -> String {
@@ -133,13 +171,27 @@ impl TextEdit {
     }
     /// Removes a select-all range and reports whether a selection was replaced.
     fn replace_selection(&mut self) -> bool {
-        if !self.selected_all {
+        let Some(anchor) = self.anchor else {
             return false;
-        }
-        self.text.clear();
-        self.caret = 0;
+        };
+        let start = anchor.min(self.caret);
+        let end = anchor.max(self.caret);
+        let a = byte_at(&self.text, start);
+        let b = byte_at(&self.text, end);
+        self.text.replace_range(a..b, "");
+        self.caret = start;
         self.selected_all = false;
+        self.anchor = None;
         true
+    }
+
+    /// Moves the caret while preserving its initial anchor.
+    fn extend_selection(&mut self, caret: usize) {
+        if self.anchor.is_none() {
+            self.anchor = Some(self.caret);
+        }
+        self.caret = caret;
+        self.selected_all = self.anchor == Some(0) && self.caret == self.text.chars().count();
     }
 }
 
@@ -244,5 +296,38 @@ mod tests {
         e.select_all();
         e.right();
         assert_eq!(e.caret(), 5);
+    }
+    /// Checks shift arrows extend and copy an exact selection.
+    #[test]
+    fn shift_arrows_select_unicode_characters() {
+        let mut e = TextEdit::new("aébc");
+        e.set_caret(2);
+        e.shift_right();
+        e.shift_right();
+        assert_eq!(e.copy(), "bc");
+        assert_eq!(e.cut(), "bc");
+        assert_eq!(e.text(), "aé");
+    }
+    /// Checks shift Home and End selection and caret placement.
+    #[test]
+    fn shift_home_end_select_from_anchor() {
+        let mut e = TextEdit::new("one two");
+        e.set_caret(4);
+        e.shift_home();
+        assert_eq!(e.copy(), "one ");
+        e.set_caret(3);
+        e.shift_end();
+        assert_eq!(e.copy(), " two");
+    }
+    /// Checks a click-selected caret is clamped and clears the old selection.
+    #[test]
+    fn click_sets_character_caret() {
+        let mut e = TextEdit::new("éx");
+        e.select_all();
+        e.set_caret(1);
+        assert_eq!(e.caret(), 1);
+        assert_eq!(e.copy(), "");
+        e.insert("!");
+        assert_eq!(e.text(), "é!x");
     }
 }

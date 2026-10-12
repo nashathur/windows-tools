@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-const WIDGETS: &[&str] = &["taskbar-weather/src", "taskbar-discord/src", "taskbar-media/src", "buswidget/rust/src"];
+const WIDGETS: &[&str] = &["taskbar-weather/src", "taskbar-discord/src", "taskbar-media/src", "buswidget/rust/src", "taskbar-dock/src/settings_app", "taskbar-dock/src/bin/taskbar-dock-settings.rs"];
 const FONT_NAMES: &[&str] = &["Segoe", "Arial", "Calibri", "Consolas", "Tahoma", "Verdana", "Courier", "Times New Roman"];
 
 /// The code part of a line (without a `//` comment) and its string literals.
@@ -111,14 +111,18 @@ fn widget_sources_follow_the_theme() {
         Ok(d) => vec![PathBuf::from(d)],
         Err(_) => {
             let tools = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-            WIDGETS.iter().map(|w| tools.join(w)).filter(|d| d.is_dir()).collect()
+            WIDGETS.iter().map(|w| tools.join(w)).filter(|d| d.exists()).collect()
         }
     };
     assert!(!dirs.is_empty(), "no widget source folders found");
     let mut problems = Vec::new();
     for dir in dirs {
         let mut files = Vec::new();
-        rust_files(&dir, &mut files);
+        if dir.is_file() {
+            files.push(dir.clone());
+        } else {
+            rust_files(&dir, &mut files);
+        }
         for f in files {
             let text = std::fs::read_to_string(&f).unwrap_or_default();
             for (n, line) in text.lines().enumerate() {

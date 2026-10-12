@@ -358,8 +358,24 @@ pub fn start(entry: &Entry) -> Result<u32, String> {
     Err("started, not answering".into())
 }
 
-/// Asks a running widget to quit and succeeds only when it acknowledges the request.
+/// Asks a running widget to quit and waits up to five seconds for its process to end, so a
+/// Start right after it doesn't find the closing process and report it as running.
 pub fn quit(entry: &Entry) -> Result<(), String> {
+    let pid = process_snapshot()
+        .into_iter()
+        .find(|(_, path)| same_exe(path, &entry.exe))
+        .map(|(pid, _)| pid)
+        .ok_or_else(|| "not running".to_string())?;
+    ask_quit(entry)?;
+    if wait_for_exit(pid) {
+        Ok(())
+    } else {
+        Err("didn't quit".into())
+    }
+}
+
+/// Sends ctl `quit` and succeeds only when the widget acknowledges the request.
+fn ask_quit(entry: &Entry) -> Result<(), String> {
     let value = crate::client::send(
         &entry.class,
         crate::client::ExeMatch::Path(entry.exe.clone()),
@@ -385,7 +401,7 @@ pub fn restart(entry: &Entry) -> Result<u32, String> {
         .find(|(_, path)| same_exe(path, &entry.exe))
         .map(|(pid, _)| pid)
         .ok_or_else(|| "not running".to_string())?;
-    quit(entry)?;
+    ask_quit(entry)?;
     if !wait_for_exit(pid) {
         return Err("didn't quit".into());
     }

@@ -55,6 +55,10 @@ fn main() {
     let Some((who, cmd)) = args.split_first() else {
         usage("")
     };
+    if who == "settings" {
+        settings_command(cmd, timeout);
+        return;
+    }
     if who == "widgets" {
         if private_copy() {
             println!("{}", json!({"ok":false,"error":PRIVATE_ERROR}));
@@ -180,6 +184,39 @@ fn main() {
         serde_json::to_string_pretty(&value).unwrap_or_default()
     );
     std::process::exit(exit_code(failed, usage_failed));
+}
+
+/// Sends a settings-app command and prints its JSON reply.
+fn settings_command(args: &[String], timeout: Option<Duration>) {
+    if let Err(error) = ctl::parse_settings(args) {
+        usage(&error);
+    }
+    let default = if matches!(args.first().map(String::as_str), Some("click"))
+        && args.get(1).is_some_and(|id| {
+            id.starts_with("start:") || id.starts_with("quit:") || id.starts_with("restart:")
+        }) {
+        Duration::from_secs(20)
+    } else {
+        DEFAULT_TIMEOUT
+    };
+    let result = client::send(
+        "TaskbarDockSettings",
+        ExeMatch::FileName("taskbar-dock-settings.exe".into()),
+        args,
+        timeout.unwrap_or(default),
+    );
+    let reply = match result {
+        Ok(value) => value,
+        Err(SendError::NotRunning) => json!({"ok":false,"error":"the settings app isn't running"}),
+        Err(error) => json!({"ok":false,"error":error.to_string()}),
+    };
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&reply).unwrap_or_default()
+    );
+    if reply.get("ok").and_then(Value::as_bool) != Some(true) {
+        std::process::exit(1);
+    }
 }
 /// Resolves a named widget through the registry, then the built-in table.
 fn resolve(who: &str) -> Vec<TargetExe> {

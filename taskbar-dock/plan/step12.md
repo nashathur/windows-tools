@@ -398,6 +398,13 @@ the end.
   built-in table's file name (`control::running_exe`), else dockctl's folder.
 - Status colours: Running `Status.ok`, Stopped `Colors.dim` (theme has no grey status colour),
   Not responding `Status.warn`, Keeps crashing `Status.danger`.
+- The Auto control (switch + greyed inner control) is finished in job 4: only the Dock page has
+  Auto rows; job 3 left the inner control as a plain value box.
+- `control::quit` waits (≤ 5 s) for the process to end, else "didn't quit": a quit reported
+  before the process is gone made a Start right after it find the closing process, report
+  "Started" and start nothing (seen live). `dockctl settings click quit:<w>` waits 20 s.
+- `dockctl settings row <id> set` needs non-empty text (an empty value: `row <id> reset`, or
+  type into the box with `key`/`type`).
 
 ## Acceptance checks (live, after job 4)
 

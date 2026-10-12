@@ -90,6 +90,69 @@ pub enum ProcessCommand {
     Restart,
 }
 
+/// A command sent to the settings application.
+#[derive(Clone, PartialEq, Debug)]
+pub enum SettingsCommand {
+    /// Read the current page and controls.
+    State,
+    /// Navigate to one page.
+    Page(String),
+    /// Set a row through the normal typing and validation path.
+    RowSet(String, String),
+    /// Reset a row to its described default.
+    RowReset(String),
+    /// Toggle a switch row.
+    RowToggle(String),
+    /// Activate a named action or control.
+    Click(String),
+    /// Send a keyboard key.
+    Key(String),
+    /// Type text into the active text editor.
+    Type(String),
+    /// Close the settings app.
+    Quit,
+}
+
+/// Parses a dockctl settings command.
+pub fn parse_settings<S: AsRef<str>>(args: &[S]) -> Result<SettingsCommand, String> {
+    let a: Vec<&str> = args.iter().map(|arg| arg.as_ref()).collect();
+    let bad = || Err(format!("unknown settings command: {}", a.join(" ")));
+    Ok(match a.as_slice() {
+        ["state"] => SettingsCommand::State,
+        ["page", page] if ["widgets", "dock", "developer"].contains(page) || !page.is_empty() => {
+            SettingsCommand::Page((*page).into())
+        }
+        ["row", id, "set", text @ ..] if !text.is_empty() => {
+            SettingsCommand::RowSet((*id).into(), text.join(" "))
+        }
+        ["row", id, "reset"] => SettingsCommand::RowReset((*id).into()),
+        ["row", id, "toggle"] => SettingsCommand::RowToggle((*id).into()),
+        ["click", id] => SettingsCommand::Click((*id).into()),
+        ["key", name]
+            if [
+                "tab",
+                "shift+tab",
+                "enter",
+                "esc",
+                "space",
+                "up",
+                "down",
+                "left",
+                "right",
+                "home",
+                "end",
+                "f2",
+            ]
+            .contains(name) =>
+        {
+            SettingsCommand::Key((*name).into())
+        }
+        ["type", text @ ..] if !text.is_empty() => SettingsCommand::Type(text.join(" ")),
+        ["quit"] => SettingsCommand::Quit,
+        _ => return bad(),
+    })
+}
+
 /// Parses process-control commands reserved for dockctl rather than Block.
 pub fn parse_process_command<S: AsRef<str>>(args: &[S]) -> Option<ProcessCommand> {
     let args: Vec<_> = args.iter().map(|arg| arg.as_ref()).collect();
@@ -130,6 +193,7 @@ usage: dockctl <widget|all> <command> [args] | dockctl widgets list|register <ex
   log [n]                        last n lines of the widget's log (default 20)
   redraw                         measure and draw again
   quit                           as the Quit row
+  settings state|page|row|click|key|type|quit  drive the settings app
   simulate taskbar-restarted     as if Explorer restarted
   simulate look-changed          re-read Windows' theme";
 
@@ -380,6 +444,60 @@ mod tests {
 
     fn p(s: &str) -> Result<Command, String> {
         parse(&s.split(' ').collect::<Vec<_>>())
+    }
+
+    /// Checks every supported settings-app command form.
+    #[test]
+    fn parses_settings_commands() {
+        use SettingsCommand as S;
+        let cases = [
+            (vec!["state"], S::State),
+            (vec!["page", "widgets"], S::Page("widgets".into())),
+            (vec!["page", "weather"], S::Page("weather".into())),
+            (
+                vec!["row", "weather.city", "set", "New", "York"],
+                S::RowSet("weather.city".into(), "New York".into()),
+            ),
+            (
+                vec!["row", "weather.city", "reset"],
+                S::RowReset("weather.city".into()),
+            ),
+            (
+                vec!["row", "weather.compact", "toggle"],
+                S::RowToggle("weather.compact".into()),
+            ),
+            (
+                vec!["click", "start:weather"],
+                S::Click("start:weather".into()),
+            ),
+            (vec!["key", "shift+tab"], S::Key("shift+tab".into())),
+            (
+                vec!["type", "hello", "world"],
+                S::Type("hello world".into()),
+            ),
+            (vec!["quit"], S::Quit),
+        ];
+        for (args, want) in cases {
+            assert_eq!(parse_settings(&args), Ok(want));
+        }
+        for key in [
+            "tab",
+            "shift+tab",
+            "enter",
+            "esc",
+            "space",
+            "up",
+            "down",
+            "left",
+            "right",
+            "home",
+            "end",
+            "f2",
+        ] {
+            assert_eq!(parse_settings(&["key", key]), Ok(S::Key(key.into())));
+        }
+        assert!(parse_settings(&["wat"]).is_err());
+        assert!(parse_settings(&["key", "wat"]).is_err());
     }
 
     #[test]

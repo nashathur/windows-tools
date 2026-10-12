@@ -178,6 +178,66 @@ pub mod size {
     pub const COVER_SMALL: f32 = 44.0;
 }
 
+/// Sizes for the settings application, in px at 100%; multiply by the display scale.
+pub mod app {
+    /// Width of the left navigation rail.
+    pub const NAV_WIDTH: f32 = 208.0;
+    /// Padding inside a settings card.
+    pub const CARD_PADDING: f32 = 16.0;
+    /// Gap between cards.
+    pub const CARD_GAP: f32 = 12.0;
+    /// Standard height of a navigation entry.
+    pub const NAV_ROW_HEIGHT: f32 = 40.0;
+    /// Height of a standard control.
+    pub const CONTROL_HEIGHT: f32 = 32.0;
+    /// Minimum width for controls placed beside a label.
+    pub const CONTROL_WIDTH: f32 = 180.0;
+    /// Width of a compact row action button.
+    pub const RESET_WIDTH: f32 = 56.0;
+    /// Width reserved for slider value text beside its track.
+    pub const SLIDER_VALUE_WIDTH: f32 = 76.0;
+    /// Height of the slider track.
+    pub const SLIDER_TRACK_HEIGHT: f32 = 4.0;
+    /// Diameter of the slider knob.
+    pub const SLIDER_KNOB: f32 = 12.0;
+    /// Gap between a control and its row action.
+    pub const CONTROL_GAP: f32 = 8.0;
+    /// Gap between labels and row controls.
+    pub const LABEL_GAP: f32 = 12.0;
+    /// Width of the overview taskbar visibility switch.
+    pub const HOME_SWITCH_WIDTH: f32 = 156.0;
+    /// Width of an overview process action.
+    pub const HOME_ACTION_WIDTH: f32 = 72.0;
+    /// Width of the settings switch.
+    pub const SWITCH_WIDTH: f32 = 40.0;
+    /// Width of the banner's Notepad action.
+    pub const NOTEPAD_BUTTON_WIDTH: f32 = 140.0;
+    /// Height of the settings switch.
+    pub const SWITCH_HEIGHT: f32 = 22.0;
+    /// Outline inset of an off switch.
+    pub const SWITCH_BORDER: f32 = 1.0;
+    /// Radius of a settings action button.
+    pub const BUTTON_RADIUS: f32 = 4.0;
+    /// Inset around a color swatch and text field value.
+    pub const FIELD_PADDING: f32 = 8.0;
+    /// Inset around a color swatch.
+    pub const SWATCH_INSET: f32 = 2.0;
+    /// Border thickness of a text field.
+    pub const FIELD_BORDER: f32 = 1.0;
+    /// Size of the status dot.
+    pub const STATUS_DOT: f32 = 9.0;
+    /// Padding inside the status badge.
+    pub const BADGE_PADDING: f32 = 8.0;
+    /// Width of the keyboard focus ring.
+    pub const FOCUS_RING: f32 = 2.0;
+    /// Height of the page header.
+    pub const HEADER_HEIGHT: f32 = 64.0;
+    /// Height reserved for a setting group heading.
+    pub const GROUP_HEIGHT: f32 = 30.0;
+    /// Space around the main content area.
+    pub const CONTENT_PADDING: f32 = 24.0;
+}
+
 /// Windows' default accent text shades (blue), used when the registry has none.
 const ACCENT_FALLBACK: (Rgb, Rgb) = (Rgb::hex(0x0067C0), Rgb::hex(0x60CDFF));
 
