@@ -57,6 +57,8 @@ fetches it runs outside content timers.
   ~1 s vs ~14 s); build the small full-LTO `release` exe once at the end. Tests always run in
   `fast`. `rust-lld` and splitting crates were measured to gain nothing (the time is LTO).
 - Library tests: `dev.ps1 -Lib` from any widget, or `cargo test --profile fast` here.
+- After a library or app change: `scripts\build_all.ps1` rebuilds and installs everything;
+  `scripts\status.ps1` then must report nothing OUT OF DATE (README.md "Building").
 - Big files: a widget's `main.rs` holds its `App` (the `Content`), the `Spec` and `main`; features
   live in modules. `scripts\split.sh` moves a line range into a module.
 - Version control: `C:\Users\thurs\tools` is one git repo. Before changing the library, make

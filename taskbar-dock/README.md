@@ -145,6 +145,14 @@ not against Apple's real curve).
 
 ## Building a new widget
 
+**Start from the template:** `scripts\new_widget.ps1 -Name taskbar-x -Title "X"
+[-Description "…"] [-Register]` copies `template\` (a counter widget with all five parts, a tray icon, a `do
+now` command, one setting, the shared log, its live-check extra) to `..\taskbar-x`, builds and
+tests it, builds the release executable, registers it, syncs the session settings copy, and prints
+how to start it. `-Section` defaults to the name without `taskbar-` and must equal that value.
+Use `-NoRegister` to skip registration and follow the printed manual steps in order. Then replace
+the counter with the content.
+
 **A new widget = a `Spec` + a `Content`.** The widget supplies the parameters and what to draw;
 `block::run(spec, content)` does everything else (BLOCK.md has the API). The closest examples:
 `taskbar-weather` (smallest), `buswidget\rust` (a picker panel, a worker), `taskbar-media` (buttons, a
@@ -217,6 +225,18 @@ Supply `Content::tint`'s automatic colour for the Highlight box, or None when th
 - Keep paths short, because MSVC `link.exe` fails on paths over 260 characters.
 - Don't `cargo clean`: keeping `target\` makes rebuilds take seconds.
 - A running widget locks its exe; dev.ps1 stops it before building or copying.
+- `scripts\build_all.ps1` rebuilds and installs everything after a library change, stopping at the
+  first failure: library tests, dockctl and the launcher, the settings app, every widget's
+  `dev.ps1`, then `settings_smoke.ps1`. `-Only lib|tools|app|<widget folder>…`, `-Fast`, `-Live`
+  (then runs `scripts\live\run.ps1`). An installed tool still running is renamed to `.old.exe`.
+- `scripts\status.ps1` shows each registered widget (running / idle, strip, Show on taskbar, Start
+  with Windows), the app, dockctl and the launcher, marks any exe OUT OF DATE (older than its
+  sources or the library's), and lists log errors from the last `-Since` minutes (default 60).
+  Exit 1 when a registered widget is not running or anything is OUT OF DATE; app, dockctl and
+  launcher process states are informational.
+- `scripts\sync_session_settings.ps1` copies the real widget registry into a Claude session's
+  private settings copy. Run it before using dockctl from a session when a widget was registered
+  since that private copy was made.
 
 ## Testing
 
@@ -325,6 +345,11 @@ screenshots beside it). Each check puts back every setting it changes; no mouse 
 | `colour_rows` | every colour row expanded and captured |
 | `pages` | every app page answers, with a screenshot |
 | `scale` | strip heights and scale at the current display scale; taskbar, panels, menu, app shots |
+| `soak` | `run.ps1 soak -Minutes 10`, not in the default list: half the time as the widgets are, half idle; every 15 s each process's memory, CPU, handles, GDI and USER objects (`soak.csv`); FAIL on GDI / USER growth over 2 per minute or memory over 1 MB per minute; CPU shown vs idle |
+
+Pictures: `run.ps1 -Baseline` keeps this run's screenshots in `_tmp\live\baseline\`;
+`run.ps1 -Compare` compares each screenshot with it and lists the changed ones (with a
+`<name>.diff.png`, changes in magenta) as NOTEs, since panels show live data.
 
 Every check covers each running widget (`dockctl all ping`) through Block's shared parts, so a new
 widget needs nothing here. A widget's own content checks go in `scripts\live\extra\<widget>.ps1`,

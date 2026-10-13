@@ -65,7 +65,16 @@ if (-not $NoTest) {
     if ($Lib -and -not (Run-Cargo (Join-Path $PSScriptRoot '..') @('test', '--profile', 'fast', '--quiet'))) { Write-Output 'LIBRARY TESTS FAILED'; exit 1 }
 }
 if ($NoRestart) { Write-Output 'built'; exit 0 }
-if (-not $running -and -not $Start) { Write-Output "built; $Name was not running, left stopped (-Start to start it)"; exit 0 }
+if (-not $running -and -not $Start) {
+    if ((Resolve-Path $built).Path -ne [IO.Path]::GetFullPath($Deploy)) {
+        for ($i = 0; ; $i++) {
+            try { Copy-Item $built $Deploy -Force -ErrorAction Stop; break }
+            catch { if ($i -ge 30) { Write-Output "COPY FAILED: $($_.Exception.Message)"; exit 1 }; Start-Sleep -Milliseconds 100 }
+        }
+    }
+    Write-Output "built and installed; $Name was not running, left stopped (-Start to start it)"
+    exit 0
+}
 
 $lines = if ($Log -and (Test-Path $Log)) { (Get-Content $Log).Count } else { 0 }
 Stop-Widget
