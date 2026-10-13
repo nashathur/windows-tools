@@ -10,15 +10,15 @@ Runs from a copy: `taskbar-media.exe` here (dev.ps1 stops, copies, restarts). Lo
 Everything about the strip window, dock, panels, tray icon and the standard menu rows is Block's
 (`..\taskbar-dock\BLOCK.md`); media supplies the `Content`. Floating: `--float` or
 `TASKBAR_MEDIA_FLOAT=1`.
-- main.rs: `App` (the `block::Content`: strip `measure`/`draw` (cached `Geo`), `hit` (buttons,
-  cover), `cover`, `tint` (brand colour, fading with playback), `visible` (a session shown),
+- main.rs: `App` (the `block::Content`: `idle` pauses app-side fetches, strip `measure`/`draw` (cached `Geo`), `hit` (buttons,
+  cover), `cover`, `tint` (automatic brand colour, fading with playback; Highlight box mode and strength are Block's), `visible` (a session shown),
   worker posts in `on_message` (`WM_MEDIA` → `on_media` → `reselect`; `WM_LOGO`), content timers
   (`watch` every second: live confirm, brand file reload, hide after pause; ring pulse; tint fade;
   panel frames), right-click rows (Open app, Copy), tray logo + tooltip), the `Spec`, `main`.
   README.md: user docs.
-- track.rs: what the strip shows: `identity` (source, picture, badge, tint colour),
+- track.rs: what the strip shows: `identity` (source, picture, badge, automatic tint colour),
   `strip_content`, `strip_tint`, `ring`, live rule (`is_live`, `LIVE_SITES`), `buttons`, `button_cmd`.
-- media.rs: worker thread (MTA) over GSMTC: sessions, `one_per_app`, snapshots, per-object
+- media.rs: idle-aware worker thread (MTA) over GSMTC: sessions, `one_per_app`, snapshots, per-object
   event hooks, cover cache with rechecks, commands (play/pause with Firefox retry, ±skip).
 - timeline.rs (`Progress`, skip maths) · learned.rs (real-time yes/no per app) · select.rs
   (which session shows; hide after pause).

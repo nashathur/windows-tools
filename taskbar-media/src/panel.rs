@@ -45,7 +45,7 @@ impl Default for State {
 }
 
 /// What the panel shows, from the session on the strip.
-fn content(a: &App) -> Option<Content> {
+fn content(a: &App, highlight: block::Highlight) -> Option<Content> {
     let s = current(a)?;
     let level = ring_level(a, s);
     let bar = match s.progress() {
@@ -56,6 +56,8 @@ fn content(a: &App) -> Option<Content> {
     let app = crate::apps::display_name(&s.id);
     // the brand: "YouTube · Firefox", the logo or badge without a cover, the colour
     let id = crate::identity(a, s);
+    let automatic = id.color.map(|(r, g, b)| block::Tint::new(r << 16 | g << 8 | b, true));
+    let accent = if crate::high_contrast() { None } else { highlight.apply(automatic, automatic.map(|t| t.rgb)) };
     Some(Content {
         title: if s.title.is_empty() { app } else { s.title.clone() },
         artist: s.artist.clone(),
@@ -63,8 +65,8 @@ fn content(a: &App) -> Option<Content> {
         source: id.source,
         cover: id.picture,
         badge: id.badge,
-        accent: id.color,
-        wash: 0.10 * a.cfg.tint_strength.clamp(0.0, 3.0),
+        accent: accent.map(|t| ((t.rgb >> 16) & 255, (t.rgb >> 8) & 255, t.rgb & 255)),
+        wash: 0.10 * accent.map_or(0.0, |t| t.strength),
         bar,
         buttons: buttons(a, s),
         volume: a.panel.volume,
@@ -89,7 +91,7 @@ pub(crate) fn size(a: &mut App, scale: f32) -> (i32, i32) {
 pub(crate) fn draw(a: &mut App, cv: &mut block::Canvas, f: &PanelFrame) {
     a.panel.scale = f.scale;
     let Some(mut mine) = Canvas::new(f.w, f.h) else { return };
-    match content(a) {
+    match content(a, f.highlight) {
         Some(c) => {
             let p = &a.panel;
             let l = layout(a);
@@ -194,7 +196,7 @@ fn act_on(a: &App, part: Part, at_fraction: Option<f32>) {
 
 /// Can the bar be dragged now?
 fn seekable(a: &App) -> bool {
-    content(a).is_some_and(|c| matches!(c.bar, Bar::At { seek: true, .. }))
+    content(a, block::Highlight::default()).is_some_and(|c| matches!(c.bar, Bar::At { seek: true, .. }))
 }
 
 pub(crate) fn mouse(a: &mut App, ev: PanelMouse, ctx: &mut Ctx) {

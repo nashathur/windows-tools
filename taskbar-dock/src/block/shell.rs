@@ -172,6 +172,7 @@ unsafe fn paint(h: HWND) {
         let drawn = st(|s| {
             let f = PanelFrame {
                 look: &s.look,
+                highlight: s.highlight,
                 scale,
                 w,
                 h: hh,

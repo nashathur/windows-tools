@@ -66,6 +66,11 @@ fn hex_color(s: &str) -> Option<u32> {
     Some(rgb((v >> 16) as u8, (v >> 8) as u8, v as u8))
 }
 
+/// A Windows COLORREF (0x00BBGGRR, what `hex_color` and the badge use) as 0xRRGGBB (Block's `Tint`).
+fn rgb24(c: u32) -> u32 {
+    (c & 0xFF) << 16 | (c & 0xFF00) | (c >> 16 & 0xFF)
+}
+
 /// Line badge (background, text): badge_color/badge_text from the "bus" section of the shared
 /// settings.json, else data\line_colors.txt, else the operator's line colour from GTFS, else
 /// turquoise. Edits to line_colors.txt apply live (checked each time, reloaded when it changed).
@@ -99,6 +104,13 @@ fn line_badge_colors_for(table: &[data::LineColor], agency: &str, line: &str, ro
         .map_or((hex_color(route_bg), hex_color(route_fg)), |c| (hex_color(&c.bg), hex_color(&c.fg)));
     let bg = bg.unwrap_or_else(badge_fallback);
     (bg, fg.unwrap_or_else(|| badge::contrast_text(bg)))
+}
+
+fn real_line_badge_color_for(table: &[data::LineColor], agency: &str, line: &str, route_bg: &str) -> Option<u32> {
+    data::find_line_color(table, agency, line)
+        .filter(|c| hex_color(&c.bg).is_some())
+        .and_then(|c| hex_color(&c.bg))
+        .or_else(|| hex_color(route_bg))
 }
 
 pub(crate) fn line_badge_color(agency: &str, line: &str, route_bg: &str, route_fg: &str) -> (theme::Rgb, theme::Rgb) {
@@ -151,6 +163,23 @@ impl App {
 }
 
 impl Content for App {
+    fn tint(&self, area: block::Hit, _look: &Look) -> Option<block::Tint> {
+        if area != block::Hit::Strip { return None; }
+        thread_local!(static TABLE: RefCell<(Option<std::time::SystemTime>, Vec<data::LineColor>)> = RefCell::new((None, Vec::new())));
+        let path = data_dir().join("line_colors.txt");
+        let mtime = fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let table = TABLE.with(|t| {
+            let mut t = t.borrow_mut();
+            if t.0 != mtime || (mtime.is_some() && t.1.is_empty()) { *t = (mtime, data::load_line_colors(data_dir())); }
+            t.1.clone()
+        });
+        let (cfg, sched, ..) = current();
+        let route = sched.as_ref().map_or("", |s| s.color.as_str());
+        let rgb = hex_color(&cfg.badge_color)
+            .or_else(|| real_line_badge_color_for(&table, &cfg.agency, &cfg.line, route))?;
+        Some(block::Tint::new(rgb24(rgb), true))
+    }
+
     fn measure(&mut self, f: &Frame, compact: bool) -> i32 {
         bar::measure(f, compact)
     }
@@ -164,6 +193,14 @@ impl Content for App {
         MAIN.store(ctx.main_window(), Relaxed);
         thread::spawn(worker);
         ctx.every(TIMER_TICK, 1000);
+    }
+
+    fn idle(&mut self, idle: bool, ctx: &mut Ctx) {
+        IDLE.store(idle, Relaxed);
+        if !idle {
+            FORCE_RT.store(true, Relaxed);
+            self.refresh(ctx);
+        }
     }
 
     fn timer(&mut self, id: usize, ctx: &mut Ctx) {
@@ -258,7 +295,7 @@ impl Content for App {
 
 const WIDGET_CLASS: &str = "BusWidgetBar";
 const WIDGET_SECTION: &str = "bus";
-const WIDGET_TITLE: &str = "Bus widget";
+const WIDGET_TITLE: &str = "Bus stop";
 const WIDGET_DESCRIPTION: &str = "Next bus departures from your stop";
 /// Returns the bus widget's stored defaults.
 fn defaults() -> serde_json::Value {
@@ -293,6 +330,12 @@ fn main() {
 #[cfg(test)]
 mod describe_tests {
     use super::*;
+
+    #[test]
+    /// The highlight box gets the badge's colour in Block's red-green-blue order.
+    fn tint_colour_is_the_badge_colour_in_rgb_order() {
+        assert_eq!(rgb24(rgb(1, 2, 3)), (1 << 16) | (2 << 8) | 3);
+    }
 
     #[test]
     /// Checks the description against its spec constants and defaults.

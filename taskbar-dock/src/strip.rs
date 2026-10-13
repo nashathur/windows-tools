@@ -6,11 +6,11 @@
 //! own state, and every rule is tested below. [`move_strip`] does the move itself.
 //!
 //! The rules:
-//! - Moving to a new slot slides when moving right (a gap opened up); moving left it jumps
-//!   (making room: sliding would briefly overlap the neighbour), unless `always_slide` (after a
-//!   drop, or while another widget is dragged, so the live preview flows). While a neighbour
+//! - Moving to a new slot always slides, either way, whatever moved it (a strip appeared, hid or
+//!   changed width, a drop, a live drag preview): a strip never jumps to a new place. Making room
+//!   for a newcomer may briefly overlap it while it is still fading in. While a neighbour
 //!   changes width (its compact switch), it follows that neighbour frame by frame instead
-//!   ([`Motion::follow`]: jumps either way).
+//!   ([`Motion::follow`]: no lag behind it). Without Windows' animations every move is a jump.
 //! - Slides and the compact switch take `glide_ms` and ease like the taskbar's own buttons
 //!   ([`anim::ease_dock`]).
 //! - A press becomes a drag once the mouse has moved more than [`DRAG_THRESHOLD`] px; a release
@@ -328,7 +328,6 @@ impl Motion {
         &mut self,
         current: i32,
         x: i32,
-        always_slide: bool,
         look: &Look,
         now: Instant,
     ) -> Glide {
@@ -338,7 +337,7 @@ impl Motion {
         if self.glide.map(|g| g.to) == Some(x) {
             return Glide::Stay; // already heading there
         }
-        if x == current || (x < current && !always_slide) || !look.animations {
+        if x == current || !look.animations {
             self.glide = None;
             return if x == current {
                 Glide::Stay
@@ -542,16 +541,16 @@ mod tests {
     }
 
     #[test]
-    fn slides_right_jumps_left_unless_always_slide() {
+    fn slides_either_way() {
         let (lk, t0) = (look(true), Instant::now());
         let mut m = Motion::default();
-        assert_eq!(m.glide_to(100, 100, false, &lk, t0), Glide::Stay);
-        assert_eq!(m.glide_to(100, 50, false, &lk, t0), Glide::Jump(50));
-        assert_eq!(m.glide_to(100, 50, true, &lk, t0), Glide::Slide);
+        assert_eq!(m.glide_to(100, 100, &lk, t0), Glide::Stay);
+        assert_eq!(m.glide_to(100, 50, &lk, t0), Glide::Slide, "moving left slides too");
+        assert_eq!(m.glide_to(100, 50, &lk, t0), Glide::Stay, "already heading there");
         let mut m = Motion::default();
-        assert_eq!(m.glide_to(100, 160, false, &lk, t0), Glide::Slide);
+        assert_eq!(m.glide_to(100, 160, &lk, t0), Glide::Slide);
         assert_eq!(
-            m.glide_to(100, 160, false, &lk, t0),
+            m.glide_to(100, 160, &lk, t0),
             Glide::Stay,
             "already heading there"
         );
@@ -572,7 +571,7 @@ mod tests {
     fn no_slides_without_animations() {
         let (lk, t0) = (look(false), Instant::now());
         let mut m = Motion::default();
-        assert_eq!(m.glide_to(100, 160, true, &lk, t0), Glide::Jump(160));
+        assert_eq!(m.glide_to(100, 160, &lk, t0), Glide::Jump(160));
     }
 
     #[test]
@@ -694,7 +693,7 @@ mod tests {
         let (lk, t0) = (look(true), Instant::now());
         // a 44 px glide and a 44 px switch move together, along the measured curve
         let mut g = Motion::default();
-        assert_eq!(g.glide_to(100, 144, false, &lk, t0), Glide::Slide);
+        assert_eq!(g.glide_to(100, 144, &lk, t0), Glide::Slide);
         let mut r = Motion::default();
         assert!(r.resize(144, 100, &lk, t0));
         for t in [20, 80, 150, 250] {
@@ -709,7 +708,7 @@ mod tests {
     fn following_a_resizing_neighbour_jumps_both_ways() {
         let (lk, t0) = (look(true), Instant::now());
         let mut m = Motion::default();
-        assert_eq!(m.glide_to(100, 160, false, &lk, t0), Glide::Slide);
+        assert_eq!(m.glide_to(100, 160, &lk, t0), Glide::Slide);
         assert_eq!(
             m.follow(100, 104),
             Glide::Jump(104),
@@ -727,11 +726,11 @@ mod tests {
     fn dragging_cancels_a_slide_and_blocks_new_ones() {
         let (lk, t0) = (look(true), Instant::now());
         let mut m = Motion::default();
-        assert_eq!(m.glide_to(100, 160, false, &lk, t0), Glide::Slide);
+        assert_eq!(m.glide_to(100, 160, &lk, t0), Glide::Slide);
         m.press(500, 120);
         m.mouse_move(520, 80, Limits::NONE, &lk, t0);
         assert!(!m.gliding());
-        assert_eq!(m.glide_to(120, 300, true, &lk, t0), Glide::Stay);
+        assert_eq!(m.glide_to(120, 300, &lk, t0), Glide::Stay);
         assert!(m.glide_step(&lk, t0).is_none());
     }
 }

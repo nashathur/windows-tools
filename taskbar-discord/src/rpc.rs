@@ -30,6 +30,7 @@ pub enum Cmd {
     SignIn,
     /// The settings changed (client id, secret, redirect), or the menu's Reconnect.
     Reconnect(Key),
+    Idle(bool),
 }
 
 /// A voice action requested by dockctl.
@@ -158,6 +159,7 @@ fn run(mut key: Key, rx: &Receiver<Cmd>, post: &Post) {
     // the Authorize popup shows by itself only the first time (no token yet); after a decline
     // only from the menu, so it never nags
     let mut prompt = true;
+    let mut idle = false;
     let mut logged = String::new();
     loop {
         let configured = !key.0.is_empty() && !key.1.is_empty();
@@ -169,9 +171,10 @@ fn run(mut key: Key, rx: &Receiver<Cmd>, post: &Post) {
                     logged = "connected".into();
                 }
                 let mut s = Session { pipe, key: key.clone(), nonce: 0, voice: Voice { status: Status::Connecting, ..Default::default() },
-                    channel_subs: None, tried_refresh: false, token: None, pending: HashMap::new() };
+                    channel_subs: None, tried_refresh: false, token: None, pending: HashMap::new(), idle };
                 send(&s.voice);
                 let end = s.run(rx, &mut prompt, &mut send);
+                idle = s.idle;
                 match end {
                     End::Reconnect(k) => {
                         key = k;
@@ -186,7 +189,7 @@ fn run(mut key: Key, rx: &Receiver<Cmd>, post: &Post) {
                             // e.g. an invalid client id: show it rather than "not running"
                             let status = Status::Error(why);
                             send(&Voice { status: status.clone(), ..Default::default() });
-                            if let Some(k) = wait(rx, Duration::from_secs(15), &mut prompt, &status) {
+                            if let Some(k) = wait(rx, Duration::from_secs(15), &mut prompt, &status, &mut idle) {
                                 key = k;
                             }
                             continue;
@@ -201,19 +204,20 @@ fn run(mut key: Key, rx: &Receiver<Cmd>, post: &Post) {
         send(&Voice { status: status.clone(), ..Default::default() });
         // not configured: nothing to do until the settings change
         let pause = if configured { Duration::from_secs(3) } else { Duration::from_secs(3600) };
-        if let Some(k) = wait(rx, pause, &mut prompt, &status) {
+        if let Some(k) = wait(rx, pause, &mut prompt, &status, &mut idle) {
             key = k;
         }
     }
 }
 
 /// Waits up to `d` for the next try, handling commands meanwhile; Some(new key) to reconnect now.
-fn wait(rx: &Receiver<Cmd>, d: Duration, prompt: &mut bool, status: &Status) -> Option<Key> {
+fn wait(rx: &Receiver<Cmd>, d: Duration, prompt: &mut bool, status: &Status, idle: &mut bool) -> Option<Key> {
     let until = Instant::now() + d;
     loop {
         match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
             Ok(Cmd::Reconnect(k)) => return Some(k),
             Ok(Cmd::SignIn) => *prompt = true,
+            Ok(Cmd::Idle(on)) => *idle = on,
             Ok(Cmd::Request(_, token)) => finish_error(token, format!("not connected to Discord: {}", status.text())),
             Ok(_) => {}
             Err(RecvTimeoutError::Timeout) => return None,
@@ -238,6 +242,7 @@ struct Session {
     tried_refresh: bool,
     token: Option<Token>,
     pending: Pending,
+    idle: bool,
 }
 
 impl Session {
@@ -306,6 +311,13 @@ impl Session {
                 *prompt = true;
                 if self.voice.status != Status::Connecting {
                     self.sign_in(prompt);
+                }
+            }
+            Cmd::Idle(idle) => {
+                self.idle = idle;
+                self.follow_channel();
+                if !idle && self.voice.status == Status::Ready {
+                    let _ = self.cmd("GET_SELECTED_VOICE_CHANNEL", json!({}), None);
                 }
             }
             _ => {}
@@ -475,7 +487,7 @@ impl Session {
 
     /// Subscribes to the events of the channel we're in (and unsubscribes from the last one).
     fn follow_channel(&mut self) {
-        let now = self.voice.channel.as_ref().map(|c| c.id.clone());
+        let now = (!self.idle).then(|| self.voice.channel.as_ref().map(|c| c.id.clone())).flatten();
         if now == self.channel_subs {
             return;
         }

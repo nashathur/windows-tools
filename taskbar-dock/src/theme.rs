@@ -357,9 +357,23 @@ pub const BRANDS: &[(&str, u32, u32)] = &[
     ("bus.badge_fallback", 0x00A8A8, 0x00A8A8),
     ("media.live", 0xFF4E45, 0xFF4E45),
     ("weather.temp_bar", 0xE8892B, 0xFFB454),
+    ("weather.clear_day", 0xF5A623, 0xF5A623),
+    ("weather.clear_night", 0x5C6BC0, 0x5C6BC0),
+    ("weather.mostly_clear_day", 0xF2C94C, 0xF2C94C),
+    ("weather.mostly_clear_night", 0x7986CB, 0x7986CB),
+    ("weather.partly_cloudy", 0x4FA3E0, 0x4FA3E0),
+    ("weather.cloudy", 0x8C9BAB, 0x8C9BAB),
+    ("weather.fog", 0xA99CC0, 0xA99CC0),
+    ("weather.drizzle", 0x3FB8C9, 0x3FB8C9),
+    ("weather.rain", 0x2F80ED, 0x2F80ED),
+    ("weather.heavy_rain", 0x1E4FC2, 0x1E4FC2),
+    ("weather.freezing", 0x6CD4EC, 0x6CD4EC),
+    ("weather.snow", 0xC9E3F5, 0xC9E3F5),
+    ("weather.thunderstorm", 0x8E44D9, 0x8E44D9),
+    ("weather.hail", 0xC2389E, 0xC2389E),
     // overrides
     // rain chance in Windows' default accent blue (the live accent would change it)
-    ("weather.rain", 0x0067C0, 0x60CDFF),
+    ("weather.rain_bar", 0x0067C0, 0x60CDFF),
     // the attention dot on the strip (`warn` is a different yellow)
     ("discord.attention", 0xF0A030, 0xF0A030),
 ];
@@ -528,8 +542,8 @@ mod tests {
             ),
             (Rgb::hex(0xE8892B), Rgb::hex(0xFFB454))
         );
-        assert_eq!(light().brand("weather.rain"), Rgb::hex(0x0067C0));
-        assert_eq!(dark().brand("weather.rain"), Rgb::hex(0x60CDFF));
+        assert_eq!(light().brand("weather.rain_bar"), Rgb::hex(0x0067C0));
+        assert_eq!(dark().brand("weather.rain_bar"), Rgb::hex(0x60CDFF));
         let mut names: Vec<_> = BRANDS.iter().map(|b| b.0).collect();
         names.sort();
         names.dedup();

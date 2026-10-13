@@ -39,8 +39,13 @@ rule in UI-RULES.md is made in Block / `theme`, then checked on every widget (do
    widget's actions, then Show on taskbar, Compact mode and Start with Windows as on/off
    switches, Edit settings…, Quit (Block's `menu_panel` with its standard rows).
    Right click while the left-click panel is open switches to it, and back.
+Every widget has the Highlight box settings (Block's); a new widget supplies its automatic colour
+through `Content::tint`, or None for the neutral box.
 A new widget isn't done until it has all five. The parts themselves are Block's: a widget
 supplies the content of each (the strip's two modes, the panels' drawing, its menu rows).
+Every widget also supports Idle (BLOCK.md "Idle"): Start with Windows is on by default; switched
+off, a widget with a tray icon idles. A new widget implements `Content::idle` for worker threads or
+fetches it runs outside content timers.
 
 ## Working on any widget
 - Build/test/restart with the widget's `dev.ps1` (wraps `scripts\dev.ps1`): prints only errors,

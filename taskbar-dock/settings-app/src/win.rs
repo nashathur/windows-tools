@@ -22,12 +22,25 @@ use windows_sys::Win32::{
         LibraryLoader::GetModuleHandleW,
         Threading::{CreateMutexW, ReleaseMutex},
     },
-    UI::{Input::KeyboardAndMouse::*, Shell::ShellExecuteW, WindowsAndMessaging::*},
+    UI::{
+        Input::KeyboardAndMouse::*,
+        Shell::{DefSubclassProc, SetWindowSubclass, ShellExecuteW},
+        WindowsAndMessaging::*,
+    },
 };
 
 pub const WM_WORK: u32 = WM_APP + 11;
 pub const WM_REMOTE: u32 = WM_APP + 12;
 const WM_COPYDATA_TAG: usize = 0x444B_5350;
+// Windows Settings' page entrance: content rises this far while fading in.
+const PAGE_ENTRANCE_OFFSET: f64 = 40.0;
+// Opening a widget's page from the Widgets list slides it in this far from the right (back:
+// from the left), as Windows Settings drills into a page.
+const PAGE_DRILL_OFFSET: f64 = 80.0;
+// Windows Settings' widest page content (cards, heading), px.
+const PAGE_MAX_WIDTH: f64 = 1000.0;
+// The navigation pane's width (WinUI's OpenPaneLength), DIPs.
+const NAV_PANE: f64 = 320.0;
 thread_local! {
     static SENDER: RefCell<Option<LocalSender<Message>>> = const { RefCell::new(None) };
     static EARLY: RefCell<VecDeque<Message>> = const { RefCell::new(VecDeque::new()) };
@@ -38,6 +51,8 @@ thread_local! {
 
 enum Message {
     Navigate(Page),
+    /// The window's client width changed (DIPs): the page re-centres on the window.
+    Width(f64),
     Open(String),
     Work(WorkResult),
     Remote(remote::Request),
@@ -362,7 +377,11 @@ struct Model {
     developer_details: Vec<Value>,
     developer_raw: Option<String>,
     developer_badge: String,
+    /// The window's client width in DIPs (0: not known yet), for [`page_shift`].
+    width: f64,
     runtime: Value,
+    /// How the page last opened comes in ([`entrance_for`]).
+    entrance: EntranceTransition,
 }
 impl Component for Model {
     type Input = Page;
@@ -378,6 +397,8 @@ impl Component for Model {
         }
         Self {
             page: input.clone(),
+            entrance: EntranceTransition::from_below(PAGE_ENTRANCE_OFFSET),
+            width: 0.0,
             entries: vec![],
             settings: json!({}),
             rows: vec![],
@@ -405,7 +426,9 @@ impl Component for Model {
         }
     }
     fn update(&mut self, m: Message, ctx: &ComponentContext<Self>) {
+        hook_resize();
         match m {
+            Message::Width(w) => self.width = w,
             Message::Navigate(p) => self.go_to(p, ctx),
             Message::Open(n) => self.go_to(Page::Widget(n), ctx),
             Message::Noop => {}
@@ -838,6 +861,16 @@ impl Component for Model {
             .columns([GridLength::STAR, GridLength::Auto])
             .children((page_heading, badge.grid_column(1)));
         let body = StackPanel::new().spacing(20.0).children((header, content));
+        let page_key = match &self.page {
+            Page::Widget(name) => format!("{}:{name}", page_name(&self.page)),
+            _ => page_name(&self.page),
+        };
+        let body = StackPanel::new().keyed_children([KeyedView::new(
+            page_key,
+            Border::new()
+                .entrance_transition(Some(self.entrance))
+                .content(body),
+        )]);
         let page: View = if let Some(b) = &self.banner {
             StackPanel::new()
                 .spacing(12.0)
@@ -871,10 +904,19 @@ impl Component for Model {
         let page = ScrollViewer::new().content(
             Border::new()
                 .padding(Thickness::new(24.0, 8.0, 24.0, 24.0))
-                .content(page),
+                .content(
+                    // as Windows Settings: the page stops growing at this width and sits in the
+                    // middle, room left on both sides of a wide window
+                    Border::new()
+                        .max_width(PAGE_MAX_WIDTH)
+                        .horizontal_alignment(HorizontalAlignment::Stretch)
+                        .margin(Thickness::new(0.0, 0.0, page_shift(self.width), 0.0))
+                        .content(page),
+                ),
         );
         let nav = NavigationView::new()
             .pane_display_mode(NavigationViewPaneDisplayMode::Left)
+            .open_pane_length(NAV_PANE)
             .is_pane_toggle_button_visible(false)
             .is_settings_visible(false)
             .on_selected_tag_changed(ctx.callback(|tag: Option<String>| {
@@ -1054,6 +1096,7 @@ impl Model {
                         .map(|s| status_label(&s.state).to_string())
                         .unwrap_or_else(|| "stopped".into()),
                     pid: s.and_then(|s| s.pid),
+                    openable: loaded.is_some_and(|e| e.describe.is_ok()),
                     reason: s.and_then(|s| s.reason.clone()).or(w.error),
                     show_on_taskbar: self
                         .settings
@@ -1227,6 +1270,7 @@ impl Model {
     }
     fn go_to(&mut self, page: Page, ctx: &ComponentContext<Self>) {
         self.commit_drafts(ctx);
+        self.entrance = entrance_for(&self.page, &page);
         self.page = page;
         self.refresh_rows();
         self.refresh_developer(true);
@@ -1509,20 +1553,51 @@ impl Model {
             .iter()
             .map(|w| {
                 let name = w.name.clone();
-                // The card's text: icon, title, status and description. On a working widget it is
-                // the content of one flat button that fills the whole card (see below), so the
-                // whole card highlights and opens the page, except where the buttons and the
-                // switch sit on top of it.
-                let reserve = if process_present(&w.status) { 236.0 } else { 172.0 };
-                let second_line = if w.reason.is_none() {
-                    format!("{} · {}", w.status, w.description)
-                } else {
+                // Reserve the Off label, switch, chevron and the two 12 px column gaps.
+                const CARD_RIGHT_WIDTH: f64 = 28.0 + 12.0 + 40.0 + 12.0 + 52.0;
+                let problem = matches!(w.status.as_str(), "Not responding" | "Keeps crashing");
+                let second_line = if problem {
+                    match &w.reason {
+                        Some(reason) => format!("{} · {reason}", w.status),
+                        None => w.status.clone(),
+                    }
+                } else if !w.openable {
                     w.reason.clone().unwrap_or_default()
+                } else if !w.show_on_taskbar {
+                    "Off".into()
+                } else {
+                    w.description.clone()
+                };
+                let status_line: View = if problem {
+                    StackPanel::new()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(6.0)
+                        .children((
+                            Border::new()
+                                .width(8.0)
+                                .height(8.0)
+                                .corner_radius(CornerRadius::uniform(4.0))
+                                .vertical_alignment(VerticalAlignment::Center)
+                                .background(status_brush(&w.status)),
+                            TextBlock::new()
+                                .text(second_line)
+                                .font_size(12.0)
+                                .opacity(0.78)
+                                .text_trimming(TextTrimming::CharacterEllipsis),
+                        ))
+                        .into()
+                } else {
+                    TextBlock::new()
+                        .text(second_line)
+                        .font_size(12.0)
+                        .opacity(0.78)
+                        .text_trimming(TextTrimming::CharacterEllipsis)
+                        .into()
                 };
                 let text = StackPanel::new()
                     .orientation(Orientation::Horizontal)
                     .spacing(14.0)
-                    .margin(Thickness::new(0.0, 0.0, reserve, 0.0))
+                    .margin(Thickness::new(0.0, 0.0, CARD_RIGHT_WIDTH, 0.0))
                     .vertical_alignment(VerticalAlignment::Center)
                     .children((
                         FontIcon::new()
@@ -1533,25 +1608,10 @@ impl Model {
                                 .text(w.title.clone())
                                 .font_size(14.0)
                                 .text_trimming(TextTrimming::CharacterEllipsis),
-                            StackPanel::new()
-                                .orientation(Orientation::Horizontal)
-                                .spacing(6.0)
-                                .children((
-                                    Border::new()
-                                        .width(8.0)
-                                        .height(8.0)
-                                        .corner_radius(CornerRadius::uniform(4.0))
-                                        .vertical_alignment(VerticalAlignment::Center)
-                                        .background(status_brush(&w.status)),
-                                    TextBlock::new()
-                                        .text(second_line)
-                                        .font_size(12.0)
-                                        .opacity(0.78)
-                                        .text_trimming(TextTrimming::CharacterEllipsis),
-                                )),
+                            status_line,
                         )),
                     ));
-                let text_area: View = if w.reason.is_none() {
+                let text_area: View = if w.openable {
                     Button::new()
                         .style(ButtonStyle::Subtle)
                         .horizontal_alignment(HorizontalAlignment::Stretch)
@@ -1586,7 +1646,6 @@ impl Model {
                 };
                 let show = ToggleSwitch::new()
                     .min_width(0.0)
-                    .min_width(0.0)
                     .is_on(w.show_on_taskbar)
                     .is_enabled(self.banner.is_none())
                     .on_toggled(ctx.callback({
@@ -1600,40 +1659,18 @@ impl Model {
                         SlotView::new(ToggleSwitchSlot::OnContent, TextBlock::new().text("")),
                         SlotView::new(ToggleSwitchSlot::OffContent, TextBlock::new().text("")),
                     ]);
-                let actions = if process_present(&w.status) {
-                    StackPanel::new()
-                        .orientation(Orientation::Horizontal)
-                        .spacing(4.0)
-                        .children((
-                            Button::new()
-                                .is_enabled(self.banner.is_none())
-                                .on_click(ctx.callback({
-                                    let n = name.clone();
-                                    move |_| Message::Action(n.clone(), "quit".into())
-                                }))
-                                .automation_id(format!("quit:{}", w.name))
-                                .content("Stop"),
-                            Button::new()
-                                .is_enabled(self.banner.is_none())
-                                .on_click(ctx.callback({
-                                    let n = name.clone();
-                                    move |_| Message::Action(n.clone(), "restart".into())
-                                }))
-                                .automation_id(format!("restart:{}", w.name))
-                                .content("Restart"),
-                        ))
-                } else {
-                    StackPanel::new().children((Button::new()
-                        .is_enabled(self.banner.is_none())
-                        .on_click(ctx.callback({
-                            let n = name.clone();
-                            move |_| Message::Action(n.clone(), "start".into())
-                        }))
-                        .automation_id(format!("start:{}", w.name))
-                        .content("Start"),))
-                };
-                // Layers in one cell set: the flat button (text, chevron) spans the whole card;
-                // the buttons and the switch sit on top of it, left of the chevron's column.
+                let off_label = Border::new()
+                    .width(28.0)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .content(
+                        TextBlock::new()
+                            .text(if w.show_on_taskbar { "" } else { "Off" })
+                            .font_size(14.0)
+                            .horizontal_alignment(HorizontalAlignment::Right)
+                            .vertical_alignment(VerticalAlignment::Center),
+                    );
+                // The flat button spans the card; the fixed Off label, switch and chevron layer
+                // over its right side.
                 Border::new()
                     .min_height(68.0)
                     .corner_radius(CornerRadius::uniform(4.0))
@@ -1658,7 +1695,7 @@ impl Model {
                                 Border::new()
                                     .grid_column(1)
                                     .vertical_alignment(VerticalAlignment::Center)
-                                    .content(actions),
+                                    .content(off_label),
                                 Border::new()
                                     .grid_column(2)
                                     .vertical_alignment(VerticalAlignment::Center)
@@ -2512,6 +2549,56 @@ impl Model {
             .children((status, self.settings_view(Some(name), ctx)))
     }
 }
+/// Right margin that puts the page's middle on the window's middle (as Windows Settings when wide):
+/// up to the navigation pane's width, and only from room the page doesn't need (`width`: the
+/// window's client width in DIPs; 24 px padding each side).
+fn page_shift(width: f64) -> f64 {
+    (width - NAV_PANE - 48.0 - PAGE_MAX_WIDTH).clamp(0.0, NAV_PANE)
+}
+
+static RESIZE_HOOKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Once the window exists: listen for its resizes (the reactor has no size event) and report
+/// its width now.
+fn hook_resize() {
+    use std::sync::atomic::Ordering::Relaxed;
+    if RESIZE_HOOKED.load(Relaxed) {
+        return;
+    }
+    let hwnd = unsafe { FindWindowW(std::ptr::null(), wide("Taskbar Dock").as_ptr()) };
+    if hwnd != 0 && unsafe { SetWindowSubclass(hwnd, Some(on_resize), 1, 0) } != 0 {
+        RESIZE_HOOKED.store(true, Relaxed);
+        report_width(hwnd);
+    }
+}
+
+unsafe extern "system" fn on_resize(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
+    if msg == WM_SIZE {
+        report_width(h);
+    }
+    DefSubclassProc(h, msg, wp, lp)
+}
+
+fn report_width(hwnd: HWND) {
+    let mut r: RECT = unsafe { std::mem::zeroed() };
+    if unsafe { GetClientRect(hwnd, &mut r) } == 0 {
+        return;
+    }
+    let scale = (unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForWindow(hwnd) } as f64 / 96.0).max(1.0);
+    send(Message::Width((r.right - r.left) as f64 / scale));
+}
+
+/// How a page comes in when going from `from` to `to`: into a widget's page from the Widgets
+/// list from the right, back to the list from the left, any other change rising from below.
+fn entrance_for(from: &Page, to: &Page) -> EntranceTransition {
+    let mut e = EntranceTransition::from_below(0.0);
+    match (from, to) {
+        (Page::Widgets, Page::Widget(_)) => e.from_horizontal_offset = PAGE_DRILL_OFFSET,
+        (Page::Widget(_), Page::Widgets) => e.from_horizontal_offset = -PAGE_DRILL_OFFSET,
+        _ => e = EntranceTransition::from_below(PAGE_ENTRANCE_OFFSET),
+    }
+    e
+}
 fn nav_item(tag: &str, label: &str, glyph: &str, selected: bool) -> View {
     NavigationViewItem::new()
         .tag(tag)
@@ -2536,11 +2623,12 @@ fn row_id(row: &Row) -> String {
 /// Whether a status means a process exists (Stop / Restart), not Start: a hung widget still
 /// runs and needs Stop or Restart to recover.
 fn process_present(status: &str) -> bool {
-    matches!(status, "Running" | "Not responding")
+    matches!(status, "Running" | "Idle" | "Not responding")
 }
 fn status_label(state: &control::State) -> &'static str {
     match state {
         control::State::Running => "Running",
+        control::State::Idle => "Idle",
         control::State::NotResponding => "Not responding",
         control::State::Stopped => "Stopped",
         control::State::KeepsCrashing => "Keeps crashing",
@@ -2550,6 +2638,7 @@ fn status_label(state: &control::State) -> &'static str {
 fn status_brush(status: &str) -> ThemeBrush {
     match status {
         "Running" => ThemeBrush::SystemSuccess,
+        "Idle" => ThemeBrush::SystemNeutral,
         "Stopped" => ThemeBrush::SystemNeutral,
         "Not responding" => ThemeBrush::SystemCaution,
         "Keeps crashing" => ThemeBrush::SystemCritical,
@@ -2834,6 +2923,24 @@ fn parse_swatch(text: &str) -> Option<Color> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_pages_centre_on_the_window_not_the_pane() {
+        assert_eq!(page_shift(880.0), 0.0, "normal window: no room to spare");
+        assert_eq!(page_shift(1500.0), 132.0, "some room: part of the shift");
+        assert_eq!(page_shift(1920.0), NAV_PANE, "full screen: middle of the window");
+    }
+
+    #[test]
+    fn widget_pages_slide_in_sideways_other_pages_rise() {
+        let w = Page::Widget("weather".into());
+        let into = entrance_for(&Page::Widgets, &w);
+        assert_eq!((into.from_horizontal_offset, into.from_vertical_offset), (PAGE_DRILL_OFFSET, 0.0));
+        let back = entrance_for(&w, &Page::Widgets);
+        assert_eq!((back.from_horizontal_offset, back.from_vertical_offset), (-PAGE_DRILL_OFFSET, 0.0));
+        let dock = entrance_for(&w, &Page::Dock);
+        assert_eq!((dock.from_horizontal_offset, dock.from_vertical_offset), (0.0, PAGE_ENTRANCE_OFFSET));
+    }
 
     #[test]
     fn handover_page_names_parse_for_root_and_widget_pages() {

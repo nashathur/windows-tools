@@ -705,6 +705,7 @@ pub mod public {
         background: Property<Brush>,
         border_brush: Property<Brush>,
         opacity_transition: Property<std::time::Duration>,
+        entrance_transition: Property<EntranceTransition>,
         scale: Property<f64>,
         scale_transition: Property<std::time::Duration>,
         capture_pointer_on_press: Property<bool>,
@@ -811,6 +812,17 @@ pub mod public {
         pub fn opacity_transition(mut self, value: impl Into<Option<std::time::Duration>>) -> Self {
             let value = value.into();
             self.opacity_transition = Property::from(value);
+            self
+        }
+        pub fn entrance_transition(mut self, value: Option<EntranceTransition>) -> Self {
+            assert!(
+                value.as_ref().is_none_or(|value| {
+                    value.from_horizontal_offset.is_finite()
+                        && value.from_vertical_offset.is_finite()
+                }),
+                "Border EntranceTransition offsets must be finite",
+            );
+            self.entrance_transition = Property::from(value);
             self
         }
         pub fn scale(mut self, value: impl Into<Option<f64>>) -> Self {
@@ -6527,6 +6539,7 @@ pub mod public {
                         background,
                         border_brush,
                         opacity_transition,
+                        entrance_transition,
                         scale,
                         scale_transition,
                         capture_pointer_on_press,
@@ -6544,6 +6557,7 @@ pub mod public {
                             background,
                             border_brush,
                             opacity_transition,
+                            entrance_transition,
                             scale,
                             scale_transition,
                             capture_pointer_on_press,
@@ -8275,6 +8289,7 @@ pub mod public {
                         && value.background == mounted.background
                         && value.border_brush == mounted.border_brush
                         && value.opacity_transition == mounted.opacity_transition
+                        && value.entrance_transition == mounted.entrance_transition
                         && f64_property_eq(&value.scale, &mounted.scale)
                         && value.scale_transition == mounted.scale_transition
                         && value.capture_pointer_on_press == mounted.capture_pointer_on_press
@@ -9588,6 +9603,13 @@ impl MountedPropsExt for MountedProps {
                     match &values.opacity_transition {
                         Property::Inherited => None,
                         Property::Set(value) => Some(PropertyValueRef::Duration(*value)),
+                    },
+                );
+                visit(
+                    PropertyId::BorderEntranceTransition,
+                    match &values.entrance_transition {
+                        Property::Inherited => None,
+                        Property::Set(value) => Some(PropertyValueRef::EntranceTransition(*value)),
                     },
                 );
                 visit(
@@ -12711,6 +12733,7 @@ pub(crate) struct BorderMountedProps {
     background: Property<Brush>,
     border_brush: Property<Brush>,
     opacity_transition: Property<std::time::Duration>,
+    entrance_transition: Property<EntranceTransition>,
     scale: Property<f64>,
     scale_transition: Property<std::time::Duration>,
     capture_pointer_on_press: Property<bool>,
@@ -12725,6 +12748,7 @@ impl PartialEq for BorderMountedProps {
             && self.background == other.background
             && self.border_brush == other.border_brush
             && self.opacity_transition == other.opacity_transition
+            && self.entrance_transition == other.entrance_transition
             && f64_property_eq(&self.scale, &other.scale)
             && self.scale_transition == other.scale_transition
             && self.capture_pointer_on_press == other.capture_pointer_on_press
@@ -13890,6 +13914,7 @@ pub enum PropertyId {
     BorderBackground,
     BorderBorderBrush,
     BorderOpacityTransition,
+    BorderEntranceTransition,
     BorderScale,
     BorderScaleTransition,
     BorderCapturePointerOnPress,
@@ -14175,6 +14200,7 @@ pub enum PropertyValue {
     CornerRadius(CornerRadius),
     DragDropPolicy(DragDropPolicy),
     Duration(std::time::Duration),
+    EntranceTransition(EntranceTransition),
     EncodedImage(EncodedImage),
     F64(f64),
     FontWeight(FontWeight),
@@ -14216,6 +14242,7 @@ impl PartialEq for PropertyValue {
             (Self::CornerRadius(left), Self::CornerRadius(right)) => left == right,
             (Self::DragDropPolicy(left), Self::DragDropPolicy(right)) => left == right,
             (Self::Duration(left), Self::Duration(right)) => left == right,
+            (Self::EntranceTransition(left), Self::EntranceTransition(right)) => left == right,
             (Self::EncodedImage(left), Self::EncodedImage(right)) => left == right,
             (Self::F64(left), Self::F64(right)) => f64_eq(*left, *right),
             (Self::FontWeight(left), Self::FontWeight(right)) => left == right,
@@ -14278,6 +14305,7 @@ pub enum PropertyValueRef<'a> {
     CornerRadius(&'a CornerRadius),
     DragDropPolicy(&'a DragDropPolicy),
     Duration(std::time::Duration),
+    EntranceTransition(EntranceTransition),
     EncodedImage(&'a EncodedImage),
     F64(f64),
     FontWeight(FontWeight),
@@ -14319,6 +14347,9 @@ impl PropertyValueRef<'_> {
             (Self::CornerRadius(left), PropertyValue::CornerRadius(right)) => left == right,
             (Self::DragDropPolicy(left), PropertyValue::DragDropPolicy(right)) => left == right,
             (Self::Duration(left), PropertyValue::Duration(right)) => left == *right,
+            (Self::EntranceTransition(left), PropertyValue::EntranceTransition(right)) => {
+                left == *right
+            }
             (Self::EncodedImage(left), PropertyValue::EncodedImage(right)) => left == right,
             (Self::F64(left), PropertyValue::F64(right)) => f64_eq(left, *right),
             (Self::FontWeight(left), PropertyValue::FontWeight(right)) => left == *right,
@@ -14393,6 +14424,7 @@ impl PropertyValueRef<'_> {
             Self::CornerRadius(value) => PropertyValue::CornerRadius(value.clone()),
             Self::DragDropPolicy(value) => PropertyValue::DragDropPolicy(value.clone()),
             Self::Duration(value) => PropertyValue::Duration(value),
+            Self::EntranceTransition(value) => PropertyValue::EntranceTransition(value),
             Self::EncodedImage(value) => PropertyValue::EncodedImage(value.clone()),
             Self::F64(value) => PropertyValue::F64(value),
             Self::FontWeight(value) => PropertyValue::FontWeight(value),
@@ -15053,6 +15085,17 @@ const BORDER_PROPERTIES: &[PropertyDescriptor] = &[
         name: "OpacityTransition",
         field: "opacity_transition",
         value: "Duration",
+        interface: "Microsoft.UI.Xaml.IUIElement",
+        clearable: true,
+        feedback: None,
+        feedback_contract: None,
+        observes_feedback: false,
+    },
+    PropertyDescriptor {
+        id: PropertyId::BorderEntranceTransition,
+        name: "EntranceTransition",
+        field: "entrance_transition",
+        value: "EntranceTransition",
         interface: "Microsoft.UI.Xaml.IUIElement",
         clearable: true,
         feedback: None,

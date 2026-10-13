@@ -13,8 +13,10 @@ pub(crate) struct Fetched {
     result: Result<Weather, String>,
 }
 
+/// Fetches now unless one is running or the widget is idle (waking fetches with the latest
+/// settings).
 pub(crate) fn start_fetch(a: &mut App) {
-    if a.fetching {
+    if a.fetching || a.idle {
         return;
     }
     a.fetching = true;
@@ -118,6 +120,7 @@ pub(crate) fn on_data(a: &mut App, f: Box<Fetched>, ctx: &mut Ctx) {
     // retry sooner after an error
     let ms = if a.error.is_some() { 2 * 60_000 } else { a.cfg.refresh_minutes.max(5) * 60_000 };
     ctx.every(TIMER_REFRESH, ms);
+    if a.idle { return; }
     ctx.redraw_panel();
     ctx.redraw();
 }

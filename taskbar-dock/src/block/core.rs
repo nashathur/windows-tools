@@ -9,6 +9,47 @@ use crate::panel::{Action, PanelBehaviour};
 use crate::strip::{Motion, Release};
 use std::time::Instant;
 
+/// Tracks content timer requests while Block may pause their OS timers.
+#[derive(Default, Debug)]
+pub(crate) struct ContentTimers {
+    idle: bool,
+    intervals: std::collections::BTreeMap<usize, u32>,
+}
+
+impl ContentTimers {
+    /// Records a timer and returns its interval when it should be armed now.
+    pub(crate) fn every(&mut self, id: usize, ms: u32) -> Option<u32> {
+        self.intervals.insert(id, ms);
+        (!self.idle).then_some(ms)
+    }
+
+    /// Removes a timer and returns whether its OS timer should be killed now.
+    pub(crate) fn stop(&mut self, id: usize) -> bool {
+        let existed = self.intervals.remove(&id).is_some();
+        existed && !self.idle
+    }
+
+    /// Changes pause state and returns OS timer operations: Some(ms) arms; None kills.
+    pub(crate) fn set_idle(&mut self, idle: bool) -> Vec<(usize, Option<u32>)> {
+        if self.idle == idle {
+            return Vec::new();
+        }
+        self.idle = idle;
+        self.intervals
+            .iter()
+            .map(|(&id, &ms)| (id, (!idle).then_some(ms)))
+            .collect()
+    }
+}
+
+pub(crate) fn idle(switch: bool, has_tray: bool, panel_open: bool) -> bool {
+    has_tray && !switch && !panel_open
+}
+
+pub(crate) fn first_run_startup(section_existed: bool) -> bool {
+    !section_existed
+}
+
 #[derive(Default, Debug)]
 pub(crate) struct Core {
     pub motion: Motion,
@@ -986,6 +1027,30 @@ mod tests {
     }
 
     #[test]
+    fn highlight_resolves_every_mode_and_preserves_button_warnings() {
+        let auto = Tint::new(0x123456, false);
+        let mut h = Highlight::default();
+        h.strength = 2.0;
+        assert_eq!(h.apply(Some(auto), Some(auto.rgb)).unwrap().strength, 2.0);
+        assert_eq!(h.apply(None, None), None);
+
+        h.mode = HighlightMode::Off;
+        assert_eq!(h.apply(Some(auto), Some(auto.rgb)), None);
+        assert_eq!(h.apply(None, None), None);
+
+        h.mode = HighlightMode::Custom;
+        h.rgb = 0xABCDEF;
+        h.strength = 2.25;
+        let same = h.apply(Some(auto), Some(auto.rgb)).unwrap();
+        assert_eq!((same.rgb, same.active, same.strength), (0xABCDEF, 0.0, 2.25));
+        let warning = Tint::new(0xED4245, true);
+        let warning = h.apply(Some(warning), Some(auto.rgb)).unwrap();
+        assert_eq!((warning.rgb, warning.active, warning.strength), (0xED4245, 1.0, 2.25));
+        let custom_without_auto = h.apply(None, None).unwrap();
+        assert_eq!((custom_without_auto.rgb, custom_without_auto.active, custom_without_auto.strength), (0xABCDEF, 1.0, 2.25));
+    }
+
+    #[test]
     fn cut_keeps_the_left_part_and_fades_the_end() {
         let (w, h) = (10, 2);
         let px = vec![0xFF_FF_FF_FFu32; (w * h) as usize];
@@ -1093,6 +1158,35 @@ mod tests {
                 "Quit"
             ]
         );
+    }
+
+    #[test]
+    fn idle_requires_a_tray_icon_switch_off_and_no_content_panel() {
+        assert!(idle(false, true, false));
+        assert!(!idle(false, false, false));
+        assert!(!idle(true, true, false));
+        assert!(!idle(false, true, true));
+    }
+
+    #[test]
+    fn first_run_startup_only_for_a_missing_settings_section() {
+        assert!(first_run_startup(false));
+        assert!(!first_run_startup(true));
+    }
+
+    #[test]
+    fn content_timers_pause_and_resume_the_recorded_set() {
+        let mut timers = ContentTimers::default();
+        assert_eq!(timers.every(2, 100), Some(100));
+        assert_eq!(timers.every(1, 50), Some(50));
+        assert!(timers.stop(2));
+        assert_eq!(timers.set_idle(true), vec![(1, None)]);
+        assert_eq!(timers.every(3, 75), None);
+        assert!(!timers.stop(1));
+        assert_eq!(timers.set_idle(false), vec![(3, Some(75))]);
+        assert_eq!(timers.every(3, 125), Some(125));
+        assert_eq!(timers.set_idle(true), vec![(3, None)]);
+        assert_eq!(timers.set_idle(false), vec![(3, Some(125))]);
     }
 
     #[test]

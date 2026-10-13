@@ -43,6 +43,7 @@ pub(crate) struct App {
     weather_for: String,
     error: Option<String>,
     fetching: bool,
+    idle: bool,
     generation: u64,
     refetch: bool,
     fetched_at: Option<SystemTime>,
@@ -121,6 +122,31 @@ impl App {
 }
 
 impl Content for App {
+    fn tint(&self, area: block::Hit, look: &Look) -> Option<block::Tint> {
+        if area != block::Hit::Strip { return None; }
+        let wx = self.weather.as_ref()?;
+        let (_, desc) = weather_desc(wx.code, wx.is_day);
+        let key = match desc {
+            "Clear" if wx.is_day => "weather.clear_day",
+            "Clear" => "weather.clear_night",
+            "Mostly clear" if wx.is_day => "weather.mostly_clear_day",
+            "Mostly clear" => "weather.mostly_clear_night",
+            "Partly cloudy" => "weather.partly_cloudy",
+            "Cloudy" => "weather.cloudy",
+            "Fog" => "weather.fog",
+            "Drizzle" | "Light showers" => "weather.drizzle",
+            "Light rain" | "Rain" | "Showers" => "weather.rain",
+            "Heavy rain" | "Heavy showers" => "weather.heavy_rain",
+            "Freezing drizzle" | "Freezing rain" => "weather.freezing",
+            "Snow" | "Snow showers" => "weather.snow",
+            "Thunderstorm" => "weather.thunderstorm",
+            "Thunderstorm, hail" => "weather.hail",
+            _ => return None,
+        };
+        let rgb = taskbar_dock::theme::brand(key, look.light).rgb24();
+        Some(block::Tint::new(rgb, true))
+    }
+
     fn commands(&self) -> Vec<(&'static str, &'static str)> {
         commands::commands()
     }
@@ -144,6 +170,11 @@ impl Content for App {
     fn start(&mut self, ctx: &mut Ctx) {
         self.main = ctx.main_window();
         fetch::start_fetch(self);
+    }
+
+    fn idle(&mut self, idle: bool, _ctx: &mut Ctx) {
+        self.idle = idle;
+        if !idle { fetch::start_fetch(self); }
     }
 
     fn timer(&mut self, id: usize, _ctx: &mut Ctx) {
@@ -234,6 +265,7 @@ fn main() {
         weather_for: String::new(),
         error: None,
         fetching: false,
+        idle: false,
         generation: 0,
         refetch: false,
         fetched_at: None,

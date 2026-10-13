@@ -173,6 +173,8 @@ fn apply_inner(target: &Target, key: &str, input: Input, follow: &[Entry]) -> Ap
 pub enum State {
     /// A live widget answered its ping.
     Running,
+    /// Running with Show on taskbar off: loaded, no live updates.
+    Idle,
     /// A matching process exists but has no main window or did not answer.
     NotResponding,
     /// No matching process or give-up record exists.
@@ -244,7 +246,11 @@ fn decide(
 ) -> State {
     if running.is_some() {
         if window && reply.is_some() {
-            State::Running
+            if reply.is_some_and(|ping| ping.idle) {
+                State::Idle
+            } else {
+                State::Running
+            }
         } else {
             State::NotResponding
         }
@@ -320,7 +326,7 @@ pub fn status_all_with_records(
                 record.clone(),
             );
             let reason = match state {
-                State::Running | State::Stopped => None,
+                State::Running | State::Idle | State::Stopped => None,
                 State::NotResponding if windows[index].is_none() => Some("no window".into()),
                 State::NotResponding => Some("no answer in 1.5 s".into()),
                 State::KeepsCrashing => {
@@ -596,12 +602,29 @@ mod tests {
 
     #[test]
     fn status_decision_precedence_covers_every_row() {
-        let ping = Some(crate::client::Ping { pid: 7, build: 11 });
+        let ping = Some(crate::client::Ping {
+            pid: 7,
+            build: 11,
+            idle: false,
+        });
         let record = Some(crate::watchdog::GaveUp {
             gave_up: 1,
             exit_code: 9,
         });
         assert_eq!(decide(Some(7), true, ping, record.clone()), State::Running);
+        assert_eq!(
+            decide(
+                Some(7),
+                true,
+                Some(crate::client::Ping {
+                    pid: 7,
+                    build: 11,
+                    idle: true
+                }),
+                None
+            ),
+            State::Idle
+        );
         assert_eq!(
             decide(Some(7), false, None, record.clone()),
             State::NotResponding

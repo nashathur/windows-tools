@@ -84,6 +84,38 @@ The user asked for these after trying the 12a app. 12a is committed and pushed (
   in from the bottom upwards, as in Windows Settings, and clicks have the pressed effect. No
   card-by-card fading.
 
+## Gaps filled while building (2026-10-13)
+
+- **1, cards:** the Start button goes too (no buttons on a card at all); Start / Stop / Restart
+  live on the widget's page. A widget in trouble ("Not responding", "Keeps crashing") still shows
+  that, with its coloured dot, under its name on the card, whatever the switch, so a problem
+  isn't hidden.
+- **2, Idle:** the app shows "Idle" with a grey dot. "Start with Windows on by default" means a
+  widget's first run ever (no settings section yet) puts it on the startup list; once the user
+  turns it off it stays off. Block pauses a widget's content timers while idle (no widget code
+  for those); a widget implements `Content::idle` only for its worker threads.
+- **7, glide:** the jump came from one rule in `strip.rs`: a strip moving left (making room for a
+  newcomer) jumped, to avoid briefly overlapping it. Now every move slides; the newcomer is still
+  faint while it fades in, so the overlap doesn't show. Neighbours still follow a neighbour whose
+  width is animating frame by frame. Done directly (small change), not through a Codex brief.
+- **4, highlight box:** three Block keys in every widget's section, group "Highlight box":
+  `highlight` (auto / custom / off), `highlight_color`, `highlight_strength` (0-3). A chosen colour
+  replaces the strip's own colour but not a warning colour (discord's red Leave stays red). Media's
+  old `tint` / `tint_strength` move over once (brand and cover → auto); the "cover" choice is gone.
+  Media's site colour from the tab icon works only when the tab title shows the site's address;
+  otherwise the brand file's colour, else the browser's. Weather's colours are the ones the user
+  approved (theme.rs `weather.*`).
+- **3, motion:** a page's heading and content rise 40 px while fading in (WinUI's
+  EntranceThemeTransition, about 0.6 s); opening a widget's page from the Widgets list slides it
+  in 80 px from the right instead, and going back slides the list in from the left (user,
+  2026-10-13; `entrance_for` in win.rs). WinUI's own buttons already show the pressed effect.
+- **Page width (user, 2026-10-13):** as Windows Settings, a page's cards and heading stop growing at
+  1000 px; on a wide window they sit in the middle of the whole window (the screen when
+  maximised), not of the area right of the menu (user, 2026-10-13): a right margin of up to the
+  menu's width from spare room (`PAGE_MAX_WIDTH`, `page_shift`, a WM_SIZE subclass in win.rs).
+- **5, bus name:** the title is "Bus stop" in the bus widget's Spec; the app, tray and menu read it
+  from there.
+
 ## Order of work
 
 1. (Done: the answers are under "Decided".)

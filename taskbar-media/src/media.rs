@@ -7,7 +7,7 @@ use crate::cover::{self, Cover};
 use crate::timeline::{self, Reported, Skip};
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use std::time::{Duration, Instant, SystemTime};
 use taskbar_dock::block::{CommandError, ReplyToken};
 use serde_json::{json, Value};
@@ -70,6 +70,8 @@ pub enum Cmd {
 
 pub enum Msg {
     Changed,
+    /// Idle ended: read every picture again (changes seen while idle weren't read).
+    Wake,
     /// This session's title, artist or picture changed: look at its picture again.
     Props(String),
     Cmd(Cmd),
@@ -129,10 +131,10 @@ pub fn unix_now() -> f64 {
 
 /// Starts the worker. `post` gets every new snapshot (on the worker thread). Send it
 /// `Msg::Cmd`s through the returned sender.
-pub fn start(post: impl Fn(Snapshot) + Send + 'static) -> Sender<Msg> {
+pub fn start(idle: Arc<AtomicBool>, post: impl Fn(Snapshot) + Send + 'static) -> Sender<Msg> {
     let (tx, rx) = mpsc::channel();
     let events = tx.clone();
-    std::thread::spawn(move || run(rx, events, post));
+    std::thread::spawn(move || run(rx, events, idle, post));
     tx
 }
 
@@ -145,7 +147,7 @@ struct Hooked {
     tokens: (EventRegistrationToken, EventRegistrationToken, EventRegistrationToken),
 }
 
-fn run(rx: Receiver<Msg>, events: Sender<Msg>, post: impl Fn(Snapshot)) {
+fn run(rx: Receiver<Msg>, events: Sender<Msg>, idle: Arc<AtomicBool>, post: impl Fn(Snapshot)) {
     unsafe {
         let _ = RoInitialize(RO_INIT_MULTITHREADED);
     }
@@ -181,6 +183,7 @@ fn run(rx: Receiver<Msg>, events: Sender<Msg>, post: impl Fn(Snapshot)) {
             Ok(Msg::Props(id)) => {
                 props.insert(id);
             }
+            Ok(Msg::Wake) => covers.clear(),
             Ok(Msg::Changed) | Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
@@ -197,9 +200,10 @@ fn run(rx: Receiver<Msg>, events: Sender<Msg>, post: impl Fn(Snapshot)) {
                     props.insert(id);
                 }
                 Msg::Changed => {}
+                Msg::Wake => covers.clear(),
             }
         }
-        let snap = snapshot(&mgr, &mut hooked, &mut covers, &events, &std::mem::take(&mut props));
+        let snap = snapshot(&mgr, &mut hooked, &mut covers, &events, &std::mem::take(&mut props), !idle.load(Ordering::Relaxed));
         if last.as_ref() != Some(&snap) {
             post(snap.clone());
             last = Some(snap);
@@ -242,7 +246,7 @@ fn one_per_app(all: Vec<Sess>) -> Vec<(String, Sess)> {
 }
 
 fn snapshot(mgr: &Mgr, hooked: &mut Vec<Hooked>, covers: &mut HashMap<String, CoverCache>,
-            events: &Sender<Msg>, props: &std::collections::HashSet<String>) -> Snapshot {
+            events: &Sender<Msg>, props: &std::collections::HashSet<String>, allow_covers: bool) -> Snapshot {
     let all = sessions(mgr);
     // listen to every session object (Windows hands back the same object for a session, so a
     // new object is a new session, e.g. Firefox replacing its tab's session); stop listening
@@ -270,7 +274,7 @@ fn snapshot(mgr: &Mgr, hooked: &mut Vec<Hooked>, covers: &mut HashMap<String, Co
     for (id, s) in one_per_app(all) {
         // a new session object for an app: look at its picture again too
         let fresh = props.contains(&id) || new_sessions.contains(&s);
-        match read(&s, &id, covers, fresh) {
+        match read(&s, &id, covers, fresh, allow_covers) {
             Ok(info) => out.push(info),
             Err(e) => crate::log(&format!("reading {id}: {e}")),
         }
@@ -332,7 +336,7 @@ fn recheck_due(done: u8, since: Duration) -> bool {
 }
 
 /// `props_changed`: the session said its title, artist or picture changed since the last look.
-fn read(s: &Sess, id: &str, covers: &mut HashMap<String, CoverCache>, props_changed: bool) -> windows::core::Result<Session> {
+fn read(s: &Sess, id: &str, covers: &mut HashMap<String, CoverCache>, props_changed: bool, allow_cover: bool) -> windows::core::Result<Session> {
     let props = s.TryGetMediaPropertiesAsync()?.get()?;
     let info = s.GetPlaybackInfo()?;
     let c = info.Controls()?;
@@ -356,7 +360,9 @@ fn read(s: &Sess, id: &str, covers: &mut HashMap<String, CoverCache>, props_chan
     };
     // a browser: which tab (so which site) is playing it
     let find_tab = || if crate::sites::is_browser(id) { crate::sites::tab_with(&title) } else { None };
-    let (cover, tab) = match covers.get_mut(id) {
+    let (cover, tab) = if !allow_cover {
+        (covers.get(id).and_then(|c| (c.key == key).then(|| c.cover.clone())).flatten(), None)
+    } else { match covers.get_mut(id) {
         Some(c) if c.key == key => {
             let due = recheck_due(c.rechecks, c.at.elapsed());
             if due || props_changed {
@@ -380,7 +386,7 @@ fn read(s: &Sess, id: &str, covers: &mut HashMap<String, CoverCache>, props_chan
             covers.insert(id.to_string(), CoverCache { key, cover: cover.clone(), tab: tab.clone(), at: Instant::now(), rechecks: 0 });
             (cover, tab)
         }
-    };
+    }};
     Ok(Session {
         id: id.to_string(),
         title,

@@ -51,13 +51,14 @@ with, after the strip's redraw, no fade.
   the click still reaches `panel_mouse`.
 
 ## Strip
-- `Content::tint(area, look) -> Option<Tint>`: a brand colour for the strip's highlight boxes
-  instead of the neutral one: whole strip at rest/hover strength, the hovered button's box on top;
-  order in `core::tints`, tested. How strong is Block's: the Content gives `Tint { rgb, active,
-  strength }` (`active` 0 = paused / muted … 1 = playing / unmuted; `Tint::new(rgb, bool)`), Block
-  takes the opacities from `Look::tint` (`core::Shade::of`): the `dock` section's `tint_dark` /
-  `tint_light` levels quiet / active / hover, or `tint_fixed` (one opacity for every state:
-  0 none, 1 solid). Defaults `theme::tint_levels`. Used by discord and media.
+- `Content::tint(area, look) -> Option<Tint>` supplies only an automatic colour and active state
+  for the strip or button; None means no automatic colour, so Block draws its neutral box. Block's
+  `Highlight` setting owns Automatic / Chosen colour / Off, the chosen colour and Strength. Strength
+  multiplies the shared opacity levels. With Chosen colour Block recolours areas using the strip's
+  automatic colour while preserving a button's distinct warning colour. Opacities come from
+  `Look::tint` (`core::Shade::of`): the `dock` section's `tint_dark` / `tint_light` quiet / active /
+  hover levels, or `tint_fixed` (one opacity for every state: 0 none, 1 solid). Defaults
+  `theme::tint_levels`.
 - During a compact switch `Frame::fit_width` is the animated width (`core::fit_width`), so a
   Content that keeps things at its right end lays out to it instead of being cut off (discord: the
   avatar column narrows, its avatars fading with it).
@@ -104,7 +105,18 @@ from `Content::tray_icon`, tooltip `tray_tip`) shows whenever the strip doesn't.
 `tray_icon` gets neither the switch nor the icon. `Ctx::redraw_tray()`: the tray logo changed,
 Block asks `Content::tray_icon` again.
 
+## Idle
+A widget is Idle while it is running, has a tray icon, Show on taskbar is off, and no Main or Picker
+panel is open; the right-click menu does not count. A hidden strip caused only by `Content::visible()`
+is not Idle. Block keeps the process loaded, pauses all content timers, and re-arms each timer still
+requested when the widget wakes. `Content::idle` pauses or resumes work outside those timers; opening
+a tray panel or turning Show on taskbar on wakes it and requests an immediate fetch. Weather and bus
+pause their fetch workers; media keeps its session watch, and Discord keeps its RPC connection and
+`VOICE_CHANNEL_SELECT` watch. dockctl `ping` and `state` report `idle`; Settings shows “Idle” with a
+neutral dot and the process id.
+
 ## Settings Block owns
 Block owns the section's `compact` and `show_on_taskbar` keys. A widget writes only keys the user
 changed; on start it fills absent keys with `settings::fill_missing`, preserving Block's keys and
-any values already in the section.
+any values already in the section. If the section did not exist before first start, Block enables
+Start with Windows; later user changes are kept. Block also owns `highlight`, `highlight_color` and `highlight_strength` in every widget section.

@@ -102,7 +102,7 @@ the pages, compares widget rows with descriptions and `get`, then closes the app
 | `fade_ms`, `glide_ms`, `zoom_ms` | Panel fade-in, slide into place, and drag zoom durations. `glide_ms` also times the compact switch; its default 300 and the slides' easing match the Windows 11 taskbar's own button slide (measured: cubic-bezier(0.5, 0, 0, 1) over 300 ms). |
 | `drag_zoom` | Content size while dragged (1.15 = 115%). |
 | `panel_margin` | Pixels (at 100%) a panel keeps from the taskbar and from the screen edges. Windows 11's own flyouts use 12. |
-| `tint_dark`, `tint_light` | Opacity (0–1) of a widget's brand colour behind its strip (discord's blurple, media's app colour), on a dark / light taskbar: `quiet` while paused or muted, `active` while playing or unmuted, `hover` under the mouse. |
+| `tint_dark`, `tint_light` | Opacity (0 to 1) of the Highlight box colour behind the strip on a dark / light taskbar: `quiet` while paused or muted, `active` while playing or unmuted, `hover` under the mouse; Highlight box Strength multiplies these levels. |
 | `tint_fixed` | `"auto"`: the levels above, by state. A number 0–1: that opacity always, for every state and widget (0 = no tint, 1 = solid colour). |
 
 Missing keys are filled in with the defaults the first time a widget starts, so the file always shows every option. Edits apply within a second, without restarting the widgets.
@@ -148,6 +148,7 @@ not against Apple's real curve).
 `block::run(spec, content)` does everything else (BLOCK.md has the API). The closest examples:
 `taskbar-weather` (smallest), `buswidget\rust` (a picker panel, a worker), `taskbar-media` (buttons, a
 cover, a width that follows its content), `taskbar-discord` (a worker, a width that follows).
+Supply `Content::tint`'s automatic colour for the Highlight box, or None when the widget has no automatic colour.
 
 1. **The crate**: `taskbar-dock = { path = "../taskbar-dock" }`, `build.rs` + `app.manifest`
    copied from `taskbar-weather` (a layered child window of the taskbar needs the Windows 8+
@@ -196,6 +197,8 @@ cover, a width that follows its content), `taskbar-discord` (a worker, a width t
    widget's log). Give-ups are recorded in `%APPDATA%\TaskbarDock\watchdog.json` for dockctl
    status; a successful launcher start clears that widget's record. Use the launcher, never the
    `HKCU\...\Run` key (its values are skipped at sign-in on this PC).
+   Every widget starts with Windows by default; switching Show on taskbar off idles it. Implement
+   `Content::idle` for worker threads; Block pauses content timers by itself.
 8. **Block's job, not the widget's** (the same for every widget): the strip
    window and its DPI handling, the dock slot, order, drag and drop, fit next to the taskbar's
    buttons (narrow, compact, hide), instant reflow on neighbours' changes, hover / click / pin

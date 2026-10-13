@@ -177,6 +177,9 @@ pub fn describe(
     }
     defaults["show_on_taskbar"] = serde_json::json!(true);
     defaults["compact"] = serde_json::json!(false);
+    defaults["highlight"] = serde_json::json!("auto");
+    defaults["highlight_color"] = serde_json::json!("#0078D4");
+    defaults["highlight_strength"] = serde_json::json!(1.0);
 
     let mut settings = settings.map(|make| make()).unwrap_or_default();
     settings.push(crate::describe::Setting::new(
@@ -189,6 +192,26 @@ pub fn describe(
         "Compact mode",
         crate::describe::Kind::Switch,
     ));
+    settings.push(crate::describe::Setting::new(
+        "highlight",
+        "Mode",
+        crate::describe::Kind::Choice {
+            options: vec![
+                (serde_json::json!("auto"), "Automatic".into()),
+                (serde_json::json!("custom"), "Chosen colour".into()),
+                (serde_json::json!("off"), "Off".into()),
+            ],
+            other: false,
+        },
+    ).group("Highlight box").help("Automatic: the colour of what the widget shows. Off: the plain grey box."));
+    settings.push(crate::describe::Setting::new(
+        "highlight_color",
+        "Colour",
+        crate::describe::Kind::Color { hash: true, empty_ok: false },
+    ).group("Highlight box").help("The colour used when the mode is Chosen colour."));
+    settings.push(crate::describe::Setting::number(
+        "highlight_strength", "Strength", 0.0, 3.0, 0.05,
+    ).group("Highlight box").help("How strong the box is: 1 is the usual, 0 none, 3 the strongest."));
 
     Describe {
         section: section.into(),
@@ -305,6 +328,8 @@ pub enum PanelKind {
 #[derive(Clone, Copy, Debug)]
 pub struct PanelFrame<'a> {
     pub look: &'a Look,
+    /// The resolved Highlight box setting for this widget.
+    pub highlight: Highlight,
     /// Display scale of the panel's monitor (1.0 = 100%).
     pub scale: f32,
     /// The panel's size, px (what [`Content::panel_size`] gave).
@@ -387,8 +412,42 @@ pub struct Tint {
     /// 0: paused / muted (the quiet level), 1: playing / unmuted (active); in between while it
     /// fades from one to the other. Hovered it's the hover level either way.
     pub active: f32,
-    /// The widget's own multiplier (media's `tint_strength`), 1 by default.
+    /// Set by Block from the widget's Highlight box Strength setting; a Content leaves it 1.
     pub strength: f32,
+}
+
+/// Block-owned choice for the strip's coloured highlight boxes.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Highlight {
+    pub mode: HighlightMode,
+    /// Chosen colour, as 0xRRGGBB.
+    pub rgb: u32,
+    pub strength: f32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HighlightMode { Auto, Custom, Off }
+
+impl Default for Highlight {
+    fn default() -> Self { Self { mode: HighlightMode::Auto, rgb: 0x0078D4, strength: 1.0 } }
+}
+
+impl Highlight {
+    /// Resolve a Content-provided automatic tint under Block's mode, colour and strength rules.
+    pub fn apply(&self, auto: Option<Tint>, strip_auto_rgb: Option<u32>) -> Option<Tint> {
+        match self.mode {
+            HighlightMode::Off => None,
+            HighlightMode::Auto => auto.map(|mut t| { t.strength = self.strength; t }),
+            HighlightMode::Custom => Some(match auto {
+                Some(mut t) => {
+                    if Some(t.rgb) == strip_auto_rgb { t.rgb = self.rgb; }
+                    t.strength = self.strength;
+                    t
+                }
+                None => { let mut t = Tint::new(self.rgb, true); t.strength = self.strength; t }
+            }),
+        }
+    }
 }
 
 impl Tint {
@@ -416,6 +475,8 @@ impl Tint {
 #[derive(Clone, Copy, Debug)]
 pub struct Frame<'a> {
     pub look: &'a Look,
+    /// The resolved Highlight box setting for this widget.
+    pub highlight: Highlight,
     /// The strip's height (the taskbar's), px.
     pub height: i32,
     /// Display scale × drag zoom: multiply sizes at 100% by this (the content grows while
@@ -773,14 +834,16 @@ pub trait Content: 'static {
         None
     }
 
-    /// The highlight's colour over `area`: [`Hit::Strip`] for the whole strip, a [`Hit::Button`]
-    /// for that button's box. None for the strip: Block's neutral highlight (the default). With a
-    /// strip tint, Block draws the hovered button's box (its tint, else the strip's) at the hover
-    /// level, then the whole strip at its quiet / active level or hover (discord: always in a
-    /// blurple box; [`Tint`]).
+    /// Supplies only an automatic colour and active state for `area`; Block owns the Highlight box
+    /// mode, chosen colour and strength. Return None when no automatic colour is available; Block
+    /// then draws its neutral box. Buttons may return a separate automatic colour as well.
     fn tint(&self, _area: Hit, _look: &Look) -> Option<Tint> {
         None
     }
+
+    /// Allows a Content to suppress every coloured highlight when the current display mode
+    /// requires it (for example, media uses neutral boxes in Windows high contrast mode).
+    fn tint_allowed(&self) -> bool { true }
 
     /// Anything to show (state, e.g. discord in a call)? False: the strip is destroyed (its panels
     /// closed) until this is true again. The user's Show on taskbar switch is Block's: the strip
@@ -795,6 +858,11 @@ pub trait Content: 'static {
 
     /// Once, before the strip is created: start data timers, the first fetch, a tray icon.
     fn start(&mut self, _ctx: &mut Ctx) {}
+
+    /// Block's Idle state changed (BLOCK.md "Idle"): pause / resume worker threads and fetches;
+    /// on `false` fetch at once. Content timers are paused by Block, don't stop them yourself.
+    /// A widget started switched off gets `idle(true)` before [`Content::start`].
+    fn idle(&mut self, _idle: bool, _ctx: &mut Ctx) {}
 
     /// A content timer ([`Ctx::every`]).
     fn timer(&mut self, _id: usize, _ctx: &mut Ctx) {}

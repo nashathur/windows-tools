@@ -44,8 +44,7 @@ pub(crate) fn high_contrast() -> bool {
     }
 }
 
-/// How the shown session presents itself: its brand (the site's, from the browser tab's
-/// title, else the app's), its picture, and its tint colour.
+/// How the shown session presents itself: its brand, picture and automatic tint colour.
 pub(crate) struct Identity {
     /// "YouTube · Firefox", "Spotify".
     pub source: String,
@@ -53,7 +52,7 @@ pub(crate) struct Identity {
     pub picture: Option<media::CoverRef>,
     /// No picture: the brand's colour and label for a badge (no brand: None, a note).
     pub badge: Option<((u32, u32, u32), String)>,
-    /// The tint colour, None when off (setting "off", or high contrast).
+    /// The automatic tint colour, or None in high contrast.
     pub color: Option<(u32, u32, u32)>,
 }
 
@@ -68,30 +67,30 @@ pub(crate) fn identity(a: &App, s: &Session) -> Identity {
     let brand = site.or(app);
     // the app's own icon, for its logo and (for an app not in the brand file) its colour
     let app_icon = || logos::get(app.map_or("app", |b| b.logo.as_str()), &s.id);
-    let logo = site.and_then(|b| logos::get(&b.logo, &s.id)).or_else(app_icon);
+    let tab_icon = if site.is_none() {
+        s.tab.as_deref().and_then(sites::icon_host)
+            .and_then(|host| logos::get(&host, &s.id))
+    } else { None };
+    let logo = site.and_then(|b| logos::get(&b.logo, &s.id)).or(tab_icon.clone()).or_else(app_icon);
     let picture = s.cover.clone().or_else(|| logo.map(media::CoverRef));
     let badge = brand.filter(|_| picture.is_none()).map(|b| (b.color, b.label.clone()));
-    let brand_color = || brand.map(|b| b.color).or_else(|| app_icon().and_then(|i| cover::dominant(&i))).unwrap_or(brands::NEUTRAL);
-    let color = if high_contrast() {
-        None
-    } else {
-        match a.cfg.tint.to_ascii_lowercase().as_str() {
-            "off" => None,
-            "cover" => Some(s.cover.as_ref().and_then(|c| cover::dominant(&c.0)).unwrap_or_else(brand_color)),
-            _ => Some(brand_color()),
-        }
-    };
+    let brand_color = || site.map(|b| b.color)
+        .or_else(|| tab_icon.as_ref().and_then(|i| cover::dominant(i)))
+        .or_else(|| app.map(|b| b.color))
+        .or_else(|| app_icon().and_then(|i| cover::dominant(&i)))
+        .unwrap_or(brands::NEUTRAL);
+    let color = (!high_contrast()).then(brand_color);
     Identity { source, picture, badge, color }
 }
 
 /// The strip's brand tint now: its colour, how far it is from paused (quiet) to playing (active)
-/// as playback fades it, and tint_strength as its multiplier; Block makes the strength from the
-/// shared levels (hover under the mouse). None: no tint (off, high contrast).
+/// as playback fades it. Block supplies the Highlight box Strength. None: no automatic tint
+/// (high contrast).
 pub(crate) fn strip_tint(a: &App) -> Option<taskbar_dock::block::Tint> {
     let s = current(a)?;
     let (r, g, b) = identity(a, s).color?;
     let active = a.tint.value(Instant::now());
-    Some(taskbar_dock::block::Tint { rgb: r << 16 | g << 8 | b, active, strength: a.cfg.tint_strength.clamp(0.0, 3.0) })
+    Some(taskbar_dock::block::Tint { rgb: r << 16 | g << 8 | b, active, strength: 1.0 })
 }
 
 /// The ring for the shown session: its position, or full (pulsing at `ring_level`; red live).

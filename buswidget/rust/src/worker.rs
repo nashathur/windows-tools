@@ -67,6 +67,7 @@ fn notify() {
 }
 
 pub(crate) static FORCE_RT: AtomicBool = AtomicBool::new(false);
+pub(crate) static IDLE: AtomicBool = AtomicBool::new(false);
 pub(crate) static FORCE_TT: AtomicBool = AtomicBool::new(false);
 pub(crate) static CONFIG_CHANGED: AtomicBool = AtomicBool::new(false);
 
@@ -97,6 +98,10 @@ pub(crate) fn worker() {
     let (mut last_poll, mut live_pause_until) = (0i64, 0i64);
     let mut last_sig = String::new();
     loop {
+        if IDLE.load(Relaxed) {
+            thread::sleep(Duration::from_millis(500));
+            continue;
+        }
         let (cfg, sched) = {
             let g = shared().lock().unwrap();
             (g.cfg.clone(), g.sched.clone())

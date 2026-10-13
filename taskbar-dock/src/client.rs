@@ -56,6 +56,8 @@ pub struct Ping {
     pub pid: u32,
     /// The widget executable's build timestamp.
     pub build: u64,
+    /// Whether Block has paused this widget's live updates.
+    pub idle: bool,
 }
 
 impl Ping {
@@ -70,7 +72,8 @@ impl Ping {
             .get("build")
             .and_then(Value::as_u64)
             .ok_or_else(|| SendError::Failed("ping reply has no valid build".into()))?;
-        Ok(Self { pid, build })
+        let idle = value.get("idle").and_then(Value::as_bool).unwrap_or(false);
+        Ok(Self { pid, build, idle })
     }
 }
 thread_local! {
@@ -186,6 +189,15 @@ fn normalize_path(p: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ping_idle_defaults_false_for_older_widgets() {
+        let old = Ping::from_reply(&serde_json::json!({"pid": 7, "build": 11})).unwrap();
+        assert!(!old.idle);
+        let idle =
+            Ping::from_reply(&serde_json::json!({"pid": 7, "build": 11, "idle": true})).unwrap();
+        assert!(idle.idle);
+    }
 
     #[test]
     fn batched_send_timeout_is_bounded_by_round_time_remaining() {

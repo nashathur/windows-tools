@@ -15072,6 +15072,21 @@ impl IScalarTransition {
         }
     }
 }
+
+impl IUIElement {
+    pub(crate) fn SetTransitions(
+        &self,
+        value: Option<&TransitionCollection>,
+    ) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetTransitions)(
+                windows_core::Interface::as_raw(self),
+                value.map_or(core::ptr::null_mut(), windows_core::Interface::as_raw),
+            )
+            .ok()
+        }
+    }
+}
 #[repr(C)]
 pub struct IScalarTransition_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
@@ -19571,7 +19586,10 @@ pub struct IUIElement_Vtbl {
     UseLayoutRounding: usize,
     SetUseLayoutRounding: usize,
     Transitions: usize,
-    SetTransitions: usize,
+    pub SetTransitions: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
     CacheMode: usize,
     SetCacheMode: usize,
     IsTapEnabled: usize,
@@ -25377,6 +25395,201 @@ impl windows_core::RuntimeName for ScalarTransition {
 }
 unsafe impl Send for ScalarTransition {}
 unsafe impl Sync for ScalarTransition {}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EntranceThemeTransition(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    EntranceThemeTransition,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl EntranceThemeTransition {
+    pub(crate) fn new() -> windows_core::Result<Self> {
+        Self::IActivationFactory(|factory| factory.ActivateInstance::<Self>())
+    }
+
+    pub(crate) fn SetFromHorizontalOffset(&self, value: f64) -> windows_core::Result<()> {
+        let interface = windows_core::Interface::cast::<IEntranceThemeTransition>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(&interface).SetFromHorizontalOffset)(
+                windows_core::Interface::as_raw(&interface),
+                value,
+            )
+            .ok()
+        }
+    }
+
+    pub(crate) fn SetFromVerticalOffset(&self, value: f64) -> windows_core::Result<()> {
+        let interface = windows_core::Interface::cast::<IEntranceThemeTransition>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(&interface).SetFromVerticalOffset)(
+                windows_core::Interface::as_raw(&interface),
+                value,
+            )
+            .ok()
+        }
+    }
+
+    pub(crate) fn SetIsStaggeringEnabled(&self, value: bool) -> windows_core::Result<()> {
+        let interface = windows_core::Interface::cast::<IEntranceThemeTransition>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(&interface).SetIsStaggeringEnabled)(
+                windows_core::Interface::as_raw(&interface),
+                value,
+            )
+            .ok()
+        }
+    }
+
+    fn IActivationFactory<
+        R,
+        F: FnOnce(&windows_core::imp::IGenericFactory) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<
+            EntranceThemeTransition,
+            windows_core::imp::IGenericFactory,
+        > = windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for EntranceThemeTransition {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IEntranceThemeTransition>();
+}
+unsafe impl windows_core::Interface for EntranceThemeTransition {
+    type Vtable = <IEntranceThemeTransition as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <IEntranceThemeTransition as windows_core::Interface>::IID;
+}
+impl core::ops::Deref for EntranceThemeTransition {
+    type Target = IEntranceThemeTransition;
+    fn deref(&self) -> &Self::Target {
+        unsafe { core::mem::transmute(self) }
+    }
+}
+impl windows_core::RuntimeName for EntranceThemeTransition {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Media.Animation.EntranceThemeTransition";
+}
+
+#[repr(C)]
+pub struct IEntranceThemeTransition_Vtbl {
+    base__: windows_core::IInspectable_Vtbl,
+    FromHorizontalOffset: usize,
+    SetFromHorizontalOffset:
+        unsafe extern "system" fn(*mut core::ffi::c_void, f64) -> windows_core::HRESULT,
+    FromVerticalOffset: usize,
+    SetFromVerticalOffset:
+        unsafe extern "system" fn(*mut core::ffi::c_void, f64) -> windows_core::HRESULT,
+    IsStaggeringEnabled: usize,
+    SetIsStaggeringEnabled:
+        unsafe extern "system" fn(*mut core::ffi::c_void, bool) -> windows_core::HRESULT,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IEntranceThemeTransition(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    IEntranceThemeTransition,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+unsafe impl windows_core::Interface for IEntranceThemeTransition {
+    type Vtable = IEntranceThemeTransition_Vtbl;
+    const IID: windows_core::GUID = windows_core::GUID::from_u128(
+        0x8eb681fa_1629_5e29_ac1e_70f3639329f8,
+    );
+}
+impl windows_core::RuntimeType for IEntranceThemeTransition {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Transition(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(Transition, windows_core::IUnknown, windows_core::IInspectable);
+impl windows_core::RuntimeType for Transition {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ITransition>();
+}
+unsafe impl windows_core::Interface for Transition {
+    type Vtable = <ITransition as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <ITransition as windows_core::Interface>::IID;
+}
+impl core::ops::Deref for Transition {
+    type Target = ITransition;
+    fn deref(&self) -> &Self::Target {
+        unsafe { core::mem::transmute(self) }
+    }
+}
+impl windows_core::RuntimeName for Transition {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Media.Animation.Transition";
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ITransition(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(ITransition, windows_core::IUnknown, windows_core::IInspectable);
+unsafe impl windows_core::Interface for ITransition {
+    type Vtable = windows_core::IInspectable_Vtbl;
+    const IID: windows_core::GUID = windows_core::GUID::from_u128(
+        0xe5b71956_8e44_5a38_b41e_274d706102bf,
+    );
+}
+impl windows_core::RuntimeType for ITransition {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransitionCollection(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    TransitionCollection,
+    windows_core::IUnknown,
+    windows_core::IInspectable,
+    windows_collections::IVector<Transition>
+);
+impl TransitionCollection {
+    pub(crate) fn new() -> windows_core::Result<Self> {
+        Self::IActivationFactory(|factory| factory.ActivateInstance::<Self>())
+    }
+
+    fn IActivationFactory<
+        R,
+        F: FnOnce(&windows_core::imp::IGenericFactory) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<
+            TransitionCollection,
+            windows_core::imp::IGenericFactory,
+        > = windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for TransitionCollection {
+    const SIGNATURE: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::for_class::<
+        Self,
+        windows_collections::IVector<Transition>,
+    >();
+}
+unsafe impl windows_core::Interface for TransitionCollection {
+    type Vtable = <windows_collections::IVector<Transition> as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID =
+        <windows_collections::IVector<Transition> as windows_core::Interface>::IID;
+}
+impl core::ops::Deref for TransitionCollection {
+    type Target = windows_collections::IVector<Transition>;
+    fn deref(&self) -> &Self::Target {
+        unsafe { core::mem::transmute(self) }
+    }
+}
+impl windows_core::RuntimeName for TransitionCollection {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Media.Animation.TransitionCollection";
+}
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ScrollBarVisibility(pub i32);

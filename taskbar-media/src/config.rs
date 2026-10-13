@@ -27,20 +27,6 @@ pub fn settings() -> Vec<Setting> {
             .unit("s")
             .group("Playback"),
         Setting::new(
-            "tint",
-            "Tint",
-            Kind::Choice {
-                options: vec![
-                    (serde_json::json!("brand"), "Brand".into()),
-                    (serde_json::json!("cover"), "Cover".into()),
-                    (serde_json::json!("off"), "Off".into()),
-                ],
-                other: false,
-            },
-        )
-        .group("Colour"),
-        Setting::number("tint_strength", "Tint strength", 0., 3., 0.05).group("Colour"),
-        Setting::new(
             "live_color",
             "Live colour",
             Kind::Color {
@@ -66,9 +52,6 @@ pub struct Config {
     pub hide_after_pause_s: u32,
     /// The −/+ buttons for apps without previous/next (single videos).
     pub skip_seconds: u32,
-    /// Strip and panel tint: "brand", "cover" or "off".
-    pub tint: String,
-    pub tint_strength: f32,
     /// The progress ring for a live stream.
     pub live_color: String,
 }
@@ -81,18 +64,25 @@ impl Default for Config {
             click_panel_width: 360.0,
             hide_after_pause_s: 120,
             skip_seconds: 15,
-            tint: "brand".into(),
-            tint_strength: 1.0,
             live_color: format!("#{:06X}", taskbar_dock::theme::brand("media.live", true).rgb24()),
         }
     }
 }
 
 impl Config {
-    /// Loads the media section, filling only missing keys on startup.
+    /// Reads the media section; Block fills missing defaults before Content::start.
     pub fn load() -> Config {
-        let defaults = serde_json::to_value(Config::default()).unwrap_or_default();
-        let _ = settings::fill_missing("media", &defaults);
+        let _ = settings::update(|root| {
+            let Some(sec) = root.get_mut("media").and_then(serde_json::Value::as_object_mut) else { return };
+            if sec.contains_key("tint") && !sec.contains_key("highlight") {
+                let old = sec.get("tint").and_then(serde_json::Value::as_str).unwrap_or("brand");
+                sec.insert("highlight".into(), serde_json::json!(if old == "off" { "off" } else { "auto" }));
+                let strength = sec.get("tint_strength").cloned().unwrap_or(serde_json::json!(1.0));
+                sec.insert("highlight_strength".into(), strength);
+            }
+            sec.remove("tint");
+            sec.remove("tint_strength");
+        });
         Config::read()
     }
 

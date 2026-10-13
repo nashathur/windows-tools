@@ -439,8 +439,8 @@ pub fn strip(cv: Option<&mut block::Canvas>, c: &StripContent, compact: bool, fi
         };
         avatars::draw_ring_a(buf, width, ring_x as f32, (cover_top - around) as f32, ring_d as f32, s(RING_WIDTH) as f32, rgb24, alpha);
 
-        // the people in the places, stacked, the first on top; everyone else (muted, deafened,
-        // quiet longest, or more than fit): "+N"; at the column's left end, by the logo.
+        // the people in the places, stacked, the first on top; everyone without a place (quiet
+        // longest, muted, or more than fit): "+N"; at the column's left end, by the logo.
         // A narrowed column (a compact switch, a width gliding) keeps the natural one's stack,
         // cut off at its right end and faded by how much of the column is left, so it fades in
         // and out evenly; a widened one (a width held or gliding) just has room to spare.

@@ -224,11 +224,9 @@ fn sort(members: &mut [Member]) {
     members.sort_by_key(|m| m.name.to_lowercase());
 }
 
-/// Who gets the strip's few avatar places. When everyone fits, everyone has one (muted or not),
-/// in the call's order. Otherwise people who can talk (not muted or deafened) compete for them:
-/// whoever speaks takes an empty place, else the place of the one quiet longest. The places keep
-/// their order, so the avatars don't reshuffle each time someone speaks; places nobody has won
-/// yet go to the others who can talk, in the call's order.
+/// Who gets the strip's few avatar places. In a crowded call, everyone can hold a place, muted or
+/// not; speakers who can talk can take an empty place or replace whoever has been quiet longest.
+/// Remaining places go first to people who can talk, then to muted or deafened people, in call order.
 #[derive(Clone, Debug, Default)]
 pub struct Slots {
     /// (member id, the update they last spoke in; 0: not yet)
@@ -251,7 +249,7 @@ impl Slots {
         }
         let can_talk = |m: &Member| !m.muted && !m.deafened;
         let find = |id: &str| members.iter().find(|m| m.id == id);
-        self.held.retain(|(id, _)| find(id).is_some_and(can_talk));
+        self.held.retain(|(id, _)| find(id).is_some());
         self.held.truncate(max);
         for (id, last) in &mut self.held {
             if find(id).is_some_and(|m| m.speaking) {
@@ -269,6 +267,14 @@ impl Slots {
             }
         }
         for m in members.iter().filter(|m| can_talk(m)) {
+            if self.held.len() >= max {
+                break;
+            }
+            if !self.held.iter().any(|(id, _)| *id == m.id) {
+                self.held.push((m.id.clone(), 0));
+            }
+        }
+        for m in members.iter().filter(|m| !can_talk(m)) {
             if self.held.len() >= max {
                 break;
             }
@@ -402,35 +408,62 @@ mod tests {
     }
 
     #[test]
-    fn slots_skip_the_muted_and_go_to_speakers() {
+    fn slots_go_to_speakers_and_the_muted_keep_theirs_until_then() {
         let mut ms = people(7);
         ms[1].muted = true;
         ms[3].deafened = true;
         let mut s = Slots::default();
         s.update(&ms, 3);
         assert_eq!(ids(&s, &ms), ["0", "2", "4"]);
-        // 6 speaks: takes the place of the one quiet longest (0, the first never to have spoken)
+
+        // With only two people who can talk, the remaining place goes to the first muted member.
+        let mut sparse = ms.clone();
+        for m in &mut sparse[4..] {
+            m.muted = true;
+        }
+        let mut room = Slots::default();
+        room.update(&sparse, 3);
+        assert_eq!(ids(&room, &sparse), ["0", "2", "1"]);
+
+        // Nobody new speaks: the muted member keeps their place.
+        room.update(&sparse, 3);
+        assert_eq!(ids(&room, &sparse), ["0", "2", "1"]);
+
+        // The two can-talk holders spoke this tick, so speaker 5 takes the never-spoken muted holder's place.
+        sparse[0].speaking = true;
+        sparse[2].speaking = true;
+        sparse[5].muted = false;
+        sparse[5].speaking = true;
+        room.update(&sparse, 3);
+        assert_eq!(ids(&room, &sparse), ["0", "2", "5"]);
+
+        // A muted member flagged as speaking cannot take a place.
+        sparse[0].speaking = false;
+        sparse[2].speaking = false;
+        sparse[5].speaking = false;
+        sparse[1].speaking = true;
+        room.update(&sparse, 3);
+        assert_eq!(ids(&room, &sparse), ["0", "2", "5"]);
+
+        // Someone who mutes while holding a place keeps it while nobody new speaks.
+        ms[0].muted = true;
+        s.update(&ms, 3);
+        assert_eq!(ids(&s, &ms), ["0", "2", "4"]);
+
+        // A new speaker replaces the holder quiet longest, while speakers this tick stay.
+        ms[2].speaking = true;
+        ms[4].speaking = true;
         ms[6].speaking = true;
         s.update(&ms, 3);
         assert_eq!(ids(&s, &ms), ["6", "2", "4"]);
-        // 5 speaks while 6 still does: 2 goes, 6 stays
-        ms[5].speaking = true;
-        s.update(&ms, 3);
-        assert_eq!(ids(&s, &ms), ["6", "5", "4"]);
-        // a muted speaker never gets in; someone muting leaves their place
-        ms[6].speaking = false;
-        ms[5].speaking = false;
-        ms[1].speaking = true;
-        ms[4].muted = true;
-        s.update(&ms, 3);
-        assert_eq!(ids(&s, &ms), ["6", "5", "0"]);
-        // all speaking and the places full: nobody is pushed out
+
+        // All speakers with places full: nobody is pushed out.
         for m in ms.iter_mut() {
             m.speaking = true;
         }
-        ms[1].muted = false;
+        ms[1].speaking = true;
         s.update(&ms, 3);
-        assert_eq!(ids(&s, &ms), ["6", "5", "0"]);
+        assert_eq!(ids(&s, &ms), ["6", "2", "4"]);
     }
 
     #[test]
@@ -441,11 +474,11 @@ mod tests {
         let mut s = Slots::default();
         s.update(&ms, 5);
         assert_eq!(ids(&s, &ms), ["0", "1", "2", "3", "4"], "five places, five people: all of them");
-        // a sixth joins: the places go to those who can talk again
+        // a sixth joins: held places persist when nobody new speaks
         let mut six = ms.clone();
         six.extend(people(6).into_iter().skip(5));
         s.update(&six, 5);
-        assert_eq!(ids(&s, &six), ["0", "1", "3", "5"]);
+        assert_eq!(ids(&s, &six), ["0", "1", "2", "3", "4"]);
         // back to five: everyone again
         s.update(&ms, 5);
         assert_eq!(ids(&s, &ms), ["0", "1", "2", "3", "4"]);

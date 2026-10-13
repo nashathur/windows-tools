@@ -90,6 +90,7 @@ fn main() {
         for status in statuses {
             let state = match status.state {
                 control::State::Running => "running",
+                control::State::Idle => "idle",
                 control::State::NotResponding => "not responding",
                 control::State::Stopped => "stopped",
                 control::State::KeepsCrashing => "keeps crashing",

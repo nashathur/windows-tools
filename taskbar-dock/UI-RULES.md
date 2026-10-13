@@ -32,6 +32,12 @@ Modelled on Apple's hardware/UI: the closer a surface is to the hand, the rounde
    callers just pass the radius. Capsules and circles (radius ≥ shorter side ÷ 3) stay
    circular. Only the cover art in the media panel (12 px at 96 px) uses it today.
 
+## Highlight box colour
+
+Every widget's highlight box follows Block's Highlight box settings: Automatic uses what the widget
+shows, Chosen colour uses the selected colour, Strength scales the shared opacity levels, and Off
+uses the neutral box. The widget supplies only its automatic colour through `Content::tint`.
+
 ## Button highlights
 A button's hover / pressed / state highlight box is **its glyph plus a small margin, not the
 full-height bar**: the tray-icon box (`draw::icon_box`, 16 px at 100%) + `draw::BUTTON_MARGIN`

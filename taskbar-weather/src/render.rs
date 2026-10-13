@@ -258,7 +258,7 @@ struct Palette {
 fn palette(t: &Theme) -> Palette {
     let cr = |c: Rgb| COLORREF(c.colorref());
     Palette { fg: cr(t.color.fg), dim: cr(t.color.dim), line: cr(t.color.line),
-              rain: cr(t.brand("weather.rain")), track: cr(t.color.track), bar: cr(t.brand("weather.temp_bar")) }
+              rain: cr(t.brand("weather.rain_bar")), track: cr(t.color.track), bar: cr(t.brand("weather.temp_bar")) }
 }
 
 /// Rain chance (%) shown from this on, and in the rain colour from `RAIN_LIKELY` (below: dim).

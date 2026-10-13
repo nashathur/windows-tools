@@ -23,5 +23,11 @@ windows = { version = "0.58", features = [
     "Win32_System_Threading", "UI_ViewManagement"
 ] }
 
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+
 [patch.crates-io]
 windows-reactor = { path = "vendor/windows-reactor" }

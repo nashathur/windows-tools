@@ -1075,6 +1075,30 @@ pub fn set_property(
                 .SetOpacityTransition(&transition)
                 .map_err(native_error)
         }
+        (
+            Handle::Border(control),
+            PropertyId::BorderEntranceTransition,
+            PropertyValue::EntranceTransition(value),
+        ) => {
+            let transition = EntranceThemeTransition::new().map_err(native_error)?;
+            transition
+                .SetFromHorizontalOffset(value.from_horizontal_offset)
+                .map_err(native_error)?;
+            transition
+                .SetFromVerticalOffset(value.from_vertical_offset)
+                .map_err(native_error)?;
+            transition
+                .SetIsStaggeringEnabled(false)
+                .map_err(native_error)?;
+            let transitions = TransitionCollection::new().map_err(native_error)?;
+            let transition = transition.cast::<Transition>().map_err(native_error)?;
+            transitions.Append(&transition).map_err(native_error)?;
+            control
+                .cast::<IUIElement>()
+                .map_err(native_error)?
+                .SetTransitions(Some(&transitions))
+                .map_err(native_error)
+        }
         (Handle::Border(control), PropertyId::BorderScale, PropertyValue::F64(value)) => {
             let control = control.cast::<IUIElement>().map_err(native_error)?;
             let element = control.cast::<IFrameworkElement>().map_err(native_error)?;
@@ -3046,6 +3070,11 @@ pub fn clear_property(handle: &Handle, property: PropertyId) -> Result<(), Runti
             .cast::<IUIElement>()
             .map_err(native_error)?
             .SetOpacityTransition(None::<&ScalarTransition>)
+            .map_err(native_error),
+        (Handle::Border(control), PropertyId::BorderEntranceTransition) => control
+            .cast::<IUIElement>()
+            .map_err(native_error)?
+            .SetTransitions(None)
             .map_err(native_error),
         (Handle::Border(control), PropertyId::BorderScale) => control
             .cast::<IUIElement>()

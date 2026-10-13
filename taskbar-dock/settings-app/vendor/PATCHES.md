@@ -20,3 +20,4 @@ Not patched: sliders have no key-up event, so the app writes a keyboard-changed 
 400 ms without change (pointer release and capture loss write at once).
 - `src/native/winui/bootstrap.rs` (part of the runtime patch): `GetPackagePathByFullName` returns a
   Win32 status; any non-zero result is an error, and the path is cut to the buffer.
+- `src/element.rs`, `src/generated.rs`, `src/native/winui/bindings.rs`, `src/native/winui/generated.rs`: add Border entrance transitions using `UIElement.Transitions` and a non-staggered `EntranceThemeTransition`; bind its real interface and `TransitionCollection`'s `IVector<Transition>` default interface.

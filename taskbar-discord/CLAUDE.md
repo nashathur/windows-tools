@@ -16,10 +16,10 @@ Show on taskbar switch is on (`Content::visible`); otherwise Block shows the tra
 ## Files (src/)
 Everything about the strip window, dock, panels, tray icon and the standard menu rows is Block's
 (`..\taskbar-dock\BLOCK.md`); discord supplies the `Content`.
-- main.rs: `App` (the `block::Content`: strip `measure`/`draw`, `hit` (Mute/Deafen/Leave buttons,
+- main.rs: `App` (the `block::Content`: `idle` pauses avatars, strip `measure`/`draw`, `hit` (Mute/Deafen/Leave buttons,
   logo), `cover`, `tint` (blurple boxes), `visible`, ring pulse timer, worker posts in `on_message`
   (`on_voice`: redraw + `resize_panel`), panel size/draw/mouse, tray logo + tooltip), the `Spec`, `main`.
-- rpc.rs: the worker thread: pipe frames, sign-in state machine, subscriptions, commands
+- rpc.rs: the idle-aware worker thread: pipe frames, sign-in state machine, subscriptions, commands
   (`Cmd`: Mute, Deaf, Leave, SignIn, Reconnect), test aid `TASKBAR_DISCORD_TEST=<n>` (fake call).
 - voice.rs: `Voice`/`Channel`/`Member`/`Status` and applying RPC payloads (tested).
 - auth.rs: OAuth exchange/refresh (discord.com/api/oauth2/token), token in
@@ -36,7 +36,7 @@ Everything about the strip window, dock, panels, tray icon and the standard menu
   column's right end and faded by how much of the column is left (`over`), so a compact switch keeps
   the buttons right and fades evenly both ways),
   `tint`, `tray_logo`, panel layout + hit test, `paint_panel`.
-- config.rs: the `discord` section; fills missing defaults on start and reads without writing on reload.
+- config.rs: the `discord` section (Block fills missing defaults on start; reads without writing).
 - open.rs: brings Discord's window to the front (the logo's click).
 
 ## Testing

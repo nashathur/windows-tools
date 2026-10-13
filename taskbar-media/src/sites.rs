@@ -48,3 +48,30 @@ pub fn tab_with(media_title: &str) -> Option<String> {
         None
     }
 }
+
+/// A host when UI Automation exposed the address itself, or a standalone host in the tab title.
+/// Ordinary page titles usually have no host; callers then use the app's colour until an icon is
+/// available through a known site brand.
+pub fn icon_host(tab: &str) -> Option<String> {
+    let clean = tab.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+    let host = if let Some(rest) = clean.strip_prefix("https://").or_else(|| clean.strip_prefix("http://")) {
+        rest.split(&['/', '?', '#'][..]).next().unwrap_or("")
+    } else {
+        clean.split_whitespace().find(|part| part.contains('.')).unwrap_or("")
+    };
+    let host = host.trim_start_matches("www.").trim_end_matches('.');
+    (host.contains('.') && !host.contains(':') && host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
+        .then(|| host.to_ascii_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::icon_host;
+
+    #[test]
+    fn icon_host_only_uses_an_exposed_host() {
+        assert_eq!(icon_host("https://www.example.com/watch?v=1"), Some("example.com".into()));
+        assert_eq!(icon_host("Playing - example.org"), Some("example.org".into()));
+        assert_eq!(icon_host("A song - YouTube"), None);
+    }
+}

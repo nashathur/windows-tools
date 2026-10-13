@@ -11,7 +11,7 @@
 use crate::cover::{self, Cover};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 use windows::core::{Interface, HSTRING, PCWSTR};
@@ -38,6 +38,8 @@ enum Slot {
 
 static SLOTS: OnceLock<Mutex<HashMap<String, Slot>>> = OnceLock::new();
 static MAIN: AtomicUsize = AtomicUsize::new(0);
+static IDLE: AtomicBool = AtomicBool::new(false);
+pub fn set_idle(idle: bool) { IDLE.store(idle, Ordering::Relaxed); }
 
 fn slots() -> &'static Mutex<HashMap<String, Slot>> {
     SLOTS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -56,6 +58,7 @@ pub fn forget() {
 /// The logo for a brand's `logo` value (`app_id`: the media session's app, for `app`). None
 /// while it loads (the widget is told when it's ready) or if there is none.
 pub fn get(logo: &str, app_id: &str) -> Option<Arc<Cover>> {
+    if IDLE.load(Ordering::Relaxed) { return None; }
     let key = match logo.trim() {
         "" => return None,
         "app" => format!("app:{app_id}"),

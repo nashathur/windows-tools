@@ -15,10 +15,10 @@ tray icon's line badge (shown when Show on taskbar is off). `compact` and `show_
 configuration keys.
 
 ## Files (rust/src/)
-- main.rs: `App` (the `block::Content`: measure/draw, 1 s content timer, worker messages
+- main.rs: `App` (the `block::Content`: `idle` pauses the worker, measure/draw, 1 s content timer, worker messages
   → `refresh`, panel hooks, menu rows, `settings_changed`, tray icon/tip), the `Spec`,
   `badge_colors`, `main`. The stop picker state also lives in `App`.
-- worker.rs: `Shared` state, `current()`, `set_config`/`apply_config`, the worker thread (timetable
+- worker.rs: `Shared` state, `current()`, `set_config`/`apply_config`, the idle-aware worker thread (timetable
   builds, live polling from OVapi every 60 s when a bus is due within 90 min); posts WM_DATA to Block's main window.
 - bar.rs: strip text (`bar_text_for`), `measure`/`draw` into Block's canvas, `tray_logo`.
 - popup.rs: departures panel content (`popup_content`), `panel_size`, `panel_draw` (Block owns the window).

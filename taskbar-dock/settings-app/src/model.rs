@@ -143,6 +143,9 @@ pub struct WidgetRow {
     pub pid: Option<u32>,
     /// Diagnostic reason, including a failed description.
     pub reason: Option<String>,
+    /// The widget described itself, so its page can open (a running problem keeps it openable:
+    /// its page holds Stop / Restart).
+    pub openable: bool,
     /// Whether the widget's taskbar strip is shown.
     pub show_on_taskbar: bool,
 }

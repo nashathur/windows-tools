@@ -23,9 +23,11 @@ library in `..\taskbar-dock`, and looks and behaves like them.
 - **Tray icon** (a play logo): shown while the strip isn't (Show on taskbar off, or nothing
   playing). Left click opens the click panel ("Nothing playing" when that's so), right click the
   right-click panel.
-- **Tint**: the strip and panels take the app's or site's brand colour while playing (YouTube red,
-  Spotify green, …): stronger while playing, quieter while paused, strongest under the mouse (the same levels as discord; set in the `dock` section: `tint_dark`, `tint_light`, `tint_fixed`). For browsers the playing tab is found by UI Automation,
-  so the panel says "YouTube · Firefox".
+- **Highlight box**: colour and strength follow Block's shared Highlight box settings. Automatic
+  uses the site's or app's brand colour; for an unlisted site it uses the tab icon's dominant
+  colour when the tab exposes a host, then falls back to the app's colour while the icon loads.
+  High contrast suppresses tint. The playing tab is found by UI Automation, so the
+  panel says the YouTube tab is playing in Firefox.
 - **No cover**: the site's or app's logo, else a badge in the brand colour, else ♪.
 
 Supported players: Spotify (desktop app) and Firefox are tested; anything that reports to
@@ -56,13 +58,12 @@ apply within a second, without a restart. Missing keys are added with these defa
   "click_panel_width": 360,
   "hide_after_pause_s": 120,
   "skip_seconds": 15,
-  "tint": "brand",
-  "tint_strength": 1.0,
   "live_color": "#FF4E45"
 }
 ```
 
 `compact` and `show_on_taskbar` are Block's switches (right-click panel).
+Highlight box colour and strength are Block's shared settings.
 
 - `max_width`: the text column's widest (px at 100%); a longer title or artist scrolls, as in
   the panel (waits 1.5 s, then loops; cut with "…" when Windows' animations are off). The column
@@ -70,8 +71,6 @@ apply within a second, without a restart. Missing keys are added with these defa
   with the track: it glides there at once, the neighbouring widgets following.
 - `fixed_width`: true keeps the text column at `max_width` (the strip never changes width
   between tracks).
-- `tint`: `"brand"` (media_brands.txt, else the app icon's colour), `"cover"` (the cover's main
-  colour) or `"off"`. Off anyway in high contrast.
 - `skip_seconds`: the −/+ buttons for single videos.
 
 The shared `dock` section (font, gap, timings, hover delays) applies as in the other widgets.

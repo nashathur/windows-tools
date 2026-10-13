@@ -32,6 +32,8 @@ use render::{glyph, Geo, Ring, StripContent};
 use timeline::Progress;
 use std::ffi::c_void;
 use std::sync::mpsc::Sender;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use taskbar_dock::anim::{self, Appear};
 use taskbar_dock::block::{self, Box4, Canvas, CommandReply, Content, Ctx, Float, FloatAt, Frame, Hit, MenuBuilder, PanelFrame, PanelKind, PanelMouse, ReplyToken, Spec, Tint};
@@ -68,6 +70,7 @@ pub(crate) struct App {
     /// Shared style + Windows settings, kept current.
     look: Look,
     pub(crate) media: Option<Sender<Msg>>,
+    idle: Arc<AtomicBool>,
     pub(crate) sessions: Vec<Session>,
     selector: select::Selector,
     /// The session shown, None = nothing to show (the strip goes).
@@ -247,6 +250,10 @@ impl App {
 }
 
 impl Content for App {
+    fn tint_allowed(&self) -> bool {
+        !high_contrast()
+    }
+
     fn commands(&self) -> Vec<(&'static str, &'static str)> {
         commands::commands()
     }
@@ -313,7 +320,7 @@ impl Content for App {
         self.main = ctx.main_window();
         let main = self.main as usize;
         logos::init(HWND(main as *mut c_void));
-        self.media = Some(media::start(move |snap| {
+        self.media = Some(media::start(self.idle.clone(), move |snap| {
             let p = Box::into_raw(Box::new(snap));
             unsafe {
                 if PostMessageW(HWND(main as *mut c_void), WM_MEDIA, WPARAM(0), LPARAM(p as isize)).is_err() {
@@ -322,6 +329,16 @@ impl Content for App {
             }
         }));
         ctx.every(TIMER_WATCH, 1000);
+    }
+
+    fn idle(&mut self, idle: bool, ctx: &mut Ctx) {
+        self.idle.store(idle, Ordering::Relaxed);
+        logos::set_idle(idle);
+        if !idle {
+            if let Some(tx) = &self.media { let _ = tx.send(Msg::Wake); }
+            ctx.redraw();
+            ctx.redraw_panel();
+        }
     }
 
     fn timer(&mut self, id: usize, ctx: &mut Ctx) {
@@ -486,6 +503,7 @@ fn main() {
         cfg: Config::load(),
         look: Look::current(),
         media: None,
+        idle: Arc::new(AtomicBool::new(false)),
         sessions: Vec::new(),
         selector: select::Selector::default(),
         shown: None,

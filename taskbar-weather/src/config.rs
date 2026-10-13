@@ -154,10 +154,8 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Loads the weather section, filling only missing keys on startup.
+    /// Reads the weather section; Block fills missing defaults before Content::start.
     pub fn load() -> Config {
-        let defaults = serde_json::to_value(Config::default()).unwrap_or_default();
-        let _ = settings::fill_missing("weather", &defaults);
         Config::read()
     }
 

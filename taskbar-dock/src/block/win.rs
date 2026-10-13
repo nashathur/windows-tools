@@ -57,6 +57,7 @@ struct State {
     content: Box<dyn Content>,
     core: Core,
     look: Look,
+    highlight: Highlight,
     build_time: u64,
     main: HWND,
     /// The strip window (0: none right now).
@@ -92,11 +93,16 @@ struct State {
     tray_icon: HICON,
     tray_size: i32,
     tray_tip: String,
+    idle: bool,
+    content_timers: core::ContentTimers,
 }
 
 /// Block's keys in the widget's settings section.
 const COMPACT_KEY: &str = "compact";
 const SHOW_KEY: &str = "show_on_taskbar";
+const HIGHLIGHT_KEY: &str = "highlight";
+const HIGHLIGHT_COLOR_KEY: &str = "highlight_color";
+const HIGHLIGHT_STRENGTH_KEY: &str = "highlight_strength";
 
 thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
@@ -123,6 +129,22 @@ pub fn run<C: Content>(spec: Spec, content: C) {
         let _mutex = CreateMutexW(std::ptr::null(), 1, name.as_ptr());
         if GetLastError() == ERROR_ALREADY_EXISTS {
             return;
+        }
+        let section_existed = settings::section(spec.section).is_some();
+        let mut defaults = spec
+            .defaults
+            .map(|make| make())
+            .unwrap_or_else(|| serde_json::json!({}));
+        if !defaults.is_object() {
+            defaults = serde_json::json!({});
+        }
+        defaults[SHOW_KEY] = serde_json::json!(true);
+        defaults[COMPACT_KEY] = serde_json::json!(false);
+        defaults[HIGHLIGHT_KEY] = serde_json::json!("auto");
+        defaults[HIGHLIGHT_COLOR_KEY] = serde_json::json!("#0078D4");
+        defaults[HIGHLIGHT_STRENGTH_KEY] = serde_json::json!(1.0);
+        if let Err(e) = settings::fill_missing(spec.section, &defaults) {
+            (spec.log)(&format!("filling settings defaults failed: {e}"));
         }
         // a crash closes the widget at once (panic = abort): write why to the log first
         crate::crash::log_panics(spec.log);
@@ -167,6 +189,7 @@ pub fn run<C: Content>(spec: Spec, content: C) {
         }
         let compact = read_bool(spec.section, COMPACT_KEY, false);
         let show = read_bool(spec.section, SHOW_KEY, true);
+        let highlight = read_highlight(spec.section);
         let build_time = std::env::current_exe()
             .ok()
             .and_then(|path| std::fs::metadata(path).ok()?.modified().ok())
@@ -181,6 +204,7 @@ pub fn run<C: Content>(spec: Spec, content: C) {
                     ..Default::default()
                 },
                 look: Look::current(),
+                highlight,
                 build_time,
                 main,
                 strip: 0,
@@ -205,6 +229,8 @@ pub fn run<C: Content>(spec: Spec, content: C) {
                 tray_icon: 0,
                 tray_size: 0,
                 tray_tip: String::new(),
+                idle: false,
+                content_timers: core::ContentTimers::default(),
                 spec,
             })
         });
@@ -215,7 +241,15 @@ pub fn run<C: Content>(spec: Spec, content: C) {
             s.has_tray = icon.is_some();
             (s.tray_icon, s.tray_size) = (icon.unwrap_or(0), size);
         });
+        // idle before start, so a widget started switched off doesn't fetch first
+        refresh_idle();
         call(|c, ctx| c.start(ctx));
+        if core::first_run_startup(section_existed) {
+            let name = st(|s| s.spec.section).unwrap_or("");
+            if let Err(e) = startup::set(name, true) {
+                log(&format!("enabling Start with Windows failed: {e}"));
+            }
+        }
         redraw(); // creates the strip
         tray_sync(false, false);
         update_hooks();
@@ -258,6 +292,34 @@ fn call<R>(f: impl FnOnce(&mut dyn Content, &mut Ctx) -> R) -> Option<R> {
     Some(r)
 }
 
+/// Recomputes Block's Idle rule, pausing content timers and notifying the Content on transitions.
+fn refresh_idle() {
+    let change = st(|s| {
+        let next = core::idle(s.core.show, s.has_tray, s.panel != 0);
+        if next == s.idle {
+            return None;
+        }
+        s.idle = next;
+        let timers = s.content_timers.set_idle(next);
+        Some((s.main, timers, next))
+    })
+    .flatten();
+    let Some((main, timers, idle)) = change else {
+        return;
+    };
+    for (id, interval) in timers {
+        unsafe {
+            if let Some(ms) = interval {
+                SetTimer(main, id, ms, None);
+            } else {
+                KillTimer(main, id);
+            }
+        }
+    }
+    log(if idle { "idle" } else { "awake" });
+    call(|c, ctx| c.idle(idle, ctx));
+}
+
 fn apply(reqs: Vec<Request>) {
     let (mut redraw_after, mut resize_after) = (false, false);
     for r in reqs {
@@ -271,12 +333,14 @@ fn apply(reqs: Vec<Request>) {
             Request::ResizePanel => resize_after = true,
             Request::RedrawTray => tray_sync(true, false),
             Request::Every(id, ms) => {
-                if let Some(main) = st(|s| s.main) {
+                let arm = st(|s| (s.content_timers.every(id, ms), s.main));
+                if let Some((Some(ms), main)) = arm {
                     unsafe { SetTimer(main, id, ms, None) };
                 }
             }
             Request::Stop(id) => {
-                if let Some(main) = st(|s| s.main) {
+                let kill = st(|s| (s.content_timers.stop(id), s.main));
+                if let Some((true, main)) = kill {
                     unsafe { KillTimer(main, id) };
                 }
             }
@@ -824,6 +888,7 @@ fn open_panel_kind_with(kind: PanelKind, activate: bool) -> bool {
     }
     timer(T_FADE, true);
     call(|c, ctx| c.panel_shown(kind, true, ctx));
+    refresh_idle();
     true
 }
 
@@ -838,6 +903,7 @@ fn close_panel_window() {
     if p != 0 {
         shell::destroy(p);
         call(|c, ctx| c.panel_shown(kind, false, ctx));
+        refresh_idle();
     }
 }
 
@@ -1166,6 +1232,7 @@ fn flip(id: usize, section: &str) -> bool {
             redraw();
             st(|s| s.flipping = false);
             tray_sync(false, false);
+            refresh_idle();
             on
         }
         Route::Compact => {
@@ -1200,6 +1267,22 @@ fn read_bool(section: &str, key: &str, default: bool) -> bool {
     settings::section(section)
         .and_then(|v| v.get(key)?.as_bool())
         .unwrap_or(default)
+}
+
+fn read_highlight(section: &str) -> Highlight {
+    use serde_json::Value;
+    let values = settings::section(section).unwrap_or(Value::Null);
+    let mode = match values.get(HIGHLIGHT_KEY).and_then(Value::as_str) {
+        Some("custom") => HighlightMode::Custom,
+        Some("off") => HighlightMode::Off,
+        _ => HighlightMode::Auto,
+    };
+    let color = values.get(HIGHLIGHT_COLOR_KEY).and_then(Value::as_str)
+        .and_then(|s| u32::from_str_radix(s.trim_start_matches('#'), 16).ok())
+        .filter(|c| *c <= 0xFFFFFF).unwrap_or(0x0078D4);
+    let strength = values.get(HIGHLIGHT_STRENGTH_KEY).and_then(Value::as_f64)
+        .unwrap_or(1.0).clamp(0.0, 3.0) as f32;
+    Highlight { mode, rgb: color, strength }
 }
 
 fn save_bool(section: &str, key: &str, on: bool) -> std::io::Result<()> {
@@ -1252,6 +1335,17 @@ enum TrayDo {
 /// restarted (the tray lost it). The tooltip is compared and changed only when it changed.
 fn tray_sync(redo: bool, re_add: bool) {
     let size = tray::size();
+    if redo {
+        if let Some(old) = st(|s| {
+            let icon = tray::draw(s.content.as_mut(), &s.look, size);
+            s.has_tray = icon.is_some();
+            s.tray_size = size;
+            std::mem::replace(&mut s.tray_icon, icon.unwrap_or(0))
+        }) {
+            unsafe { tray::destroy(old) };
+        }
+        refresh_idle();
+    }
     let todo = st(|s| {
         let want = !s.quitting && core::tray_shown(s.core.show, s.content.visible(), s.has_tray);
         if !want {
@@ -1266,13 +1360,16 @@ fn tray_sync(redo: bool, re_add: bool) {
             ));
         }
         let add = re_add || !s.tray_on;
-        let mut changed = add;
+        let mut changed = add || redo; // a redrawn logo must reach the tray
         let mut old = 0;
-        if redo || s.tray_icon == 0 || s.tray_size != size {
+        if !redo && (s.tray_icon == 0 || s.tray_size != size) {
             if let Some(icon) = tray::draw(s.content.as_mut(), &s.look, size) {
+                s.has_tray = true;
                 old = std::mem::replace(&mut s.tray_icon, icon);
                 s.tray_size = size;
                 changed = true;
+            } else {
+                s.has_tray = false;
             }
         }
         let mut tip = s.content.tray_tip();
@@ -1316,6 +1413,7 @@ fn tray_sync(redo: bool, re_add: bool) {
             None => {}
         }
     }
+    refresh_idle();
 }
 
 // ---------------------------------------------------------------- the strip window
@@ -1545,16 +1643,19 @@ fn follow_settings(force: bool) {
     let m = settings::mtime();
     if let Some(Some(section)) = st(|s| (force || s.settings_mtime != m).then_some(s.spec.section))
     {
-        let (compact, show) = (
+        let (compact, show, highlight) = (
             read_bool(section, COMPACT_KEY, false),
             read_bool(section, SHOW_KEY, true),
+            read_highlight(section),
         );
         st(|s| {
             s.settings_mtime = m;
             s.core.compact = compact;
             s.core.show = show;
+            s.highlight = highlight;
         });
         call(|c, ctx| c.settings_changed(ctx));
+        refresh_idle();
     }
 }
 
@@ -1613,9 +1714,10 @@ unsafe extern "system" fn on_win_event(
 
 // ---------------------------------------------------------------- drawing and placing
 
-fn frame(look: &Look, height: i32, scale: f32, compact: bool) -> Frame<'_> {
+fn frame(look: &Look, highlight: Highlight, height: i32, scale: f32, compact: bool) -> Frame<'_> {
     Frame {
         look,
+        highlight,
         height,
         scale,
         compact,
@@ -1693,7 +1795,7 @@ fn redraw() {
         // its widths for the dock's fit: in the chosen mode (a gliding width held steady first),
         // and compact (unzoomed)
         let Some((size, raw, compact_w, side, zoom, dragging, look, stretch, glide)) = st(|s| {
-            let f = frame(&s.look, height, dpi, s.core.compact);
+            let f = frame(&s.look, s.highlight, height, dpi, s.core.compact);
             let chosen = s.content.measure(&f, s.core.compact);
             let compact = s.content.measure(&f, true);
             let held = if s.spec.glide_width {
@@ -1762,7 +1864,7 @@ fn redraw() {
         let shown_compact = compact && resize_w.is_none();
         let fit_w = core::fit_width(resize_w, target, natural_w, zoom);
         let Some(Some((mut cv, feel, cover, hover, dragging_now, hot, tint))) = st(|s| {
-            let mut f = frame(&s.look, height, dpi * zoom, shown_compact);
+            let mut f = frame(&s.look, s.highlight, height, dpi * zoom, shown_compact);
             // crowded, held or animating: the width it's drawn at (a Content that can narrow or
             // widen lays out to it, so its right end isn't cut off)
             f.fit_width = fit_w;
@@ -1772,12 +1874,16 @@ fn redraw() {
             let hot = s.core.hot;
             // a brand tint for the strip (and the hovered button's own)
             // at the shared levels (Look::tint) for the state the Content says it's in
+            let strip_auto = s.content.tint(Hit::Strip, &s.look);
+            let strip_auto_rgb = strip_auto.map(|t| t.rgb);
+            let tint_allowed = s.content.tint_allowed();
+            let resolved = tint_allowed.then(|| s.highlight.apply(strip_auto, strip_auto_rgb)).flatten();
             let shade = |t: Tint| core::Shade::of(t, &s.look.tint);
-            let tint = s.content.tint(Hit::Strip, &s.look).map(|t| {
+            let tint = resolved.map(|t| {
                 (
                     shade(t),
                     matches!(hot, Hit::Button(..))
-                        .then(|| s.content.tint(hot, &s.look))
+                        .then(|| tint_allowed.then(|| s.highlight.apply(s.content.tint(hot, &s.look), strip_auto_rgb)).flatten())
                         .flatten()
                         .map(shade),
                 )
@@ -1946,13 +2052,7 @@ fn redraw() {
         if slot.is_some_and(|s| s.follow) {
             follow(strip, tb, target(width)); // a neighbour is changing width: keep flush with it
         } else {
-            // after a drop (zooming back) or while another member is dragged: slide, so it flows
-            move_to(
-                strip,
-                tb,
-                target(width),
-                !settled || slot.is_some_and(|s| s.slide),
-            );
+            move_to(strip, tb, target(width)); // every move slides (strip.rs rules)
         }
     }
 }
@@ -2083,13 +2183,9 @@ unsafe fn put(strip: HWND, tb: HWND, x: i32) {
 }
 
 /// Heads for x: a slide or a jump (rules in `strip`).
-fn move_to(strip: HWND, tb: HWND, x: i32, always_slide: bool) {
+fn move_to(strip: HWND, tb: HWND, x: i32) {
     let cur = unsafe { dock::rect(strip).left };
-    match st(|s| {
-        s.core
-            .motion
-            .glide_to(cur, x, always_slide, &s.look, Instant::now())
-    }) {
+    match st(|s| s.core.motion.glide_to(cur, x, &s.look, Instant::now())) {
         Some(Glide::Jump(x)) => {
             timer(T_GLIDE, false);
             unsafe { put(strip, tb, x) };
@@ -2128,7 +2224,7 @@ fn reposition(always_slide: bool) {
         let tb = GetParent(strip);
         let (scale, gap) = scale_gap(tb, &look);
         let width = width_of(strip);
-        let (x, slide, follows) = if side == Side::Right {
+        let (x, follows) = if side == Side::Right {
             let size = dock_size(strip, width);
             let Some(slot) = dock::slot(tb, strip, size, dock::tray_boundary(tb, scale), gap)
             else {
@@ -2138,9 +2234,9 @@ fn reposition(always_slide: bool) {
             if apply_fit(strip, slot.fit, true) != FitChange::None {
                 return;
             }
-            (slot.x_for(width), slot.slide, slot.follow)
+            (slot.x_for(width), slot.follow)
         } else {
-            (place::left_side(tb, strip, width, gap, scale), false, false)
+            (place::left_side(tb, strip, width, gap, scale), false)
         };
         if IsWindowVisible(strip) == 0 {
             return;
@@ -2148,7 +2244,7 @@ fn reposition(always_slide: bool) {
         if follows && !always_slide {
             follow(strip, tb, x); // a neighbour is changing width: keep flush with it
         } else {
-            move_to(strip, tb, x, always_slide || slide);
+            move_to(strip, tb, x);
         }
     }
 }

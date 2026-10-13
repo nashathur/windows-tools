@@ -635,8 +635,8 @@ fn run(to: ReplyTo, cmd: Command) {
         }
         Command::Ping => {
             let pid = std::process::id();
-            let build = st(|state| state.build_time).unwrap_or(0);
-            ok(json!({"pid":pid,"build":build}))
+            let (build, idle) = st(|state| (state.build_time, state.idle)).unwrap_or_default();
+            ok(json!({"pid":pid,"build":build,"idle":idle}))
         }
         Command::Describe => {
             let description = describe_current();
@@ -779,11 +779,20 @@ fn state() -> Value {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs());
     let menu = crate::menu_panel::rows().map(|(h, _)| h).unwrap_or(0);
-    let (tray_on, tip, title, section) =
-        st(|s| (s.tray_on, s.tray_tip.clone(), s.spec.title, s.spec.section)).unwrap_or_default();
+    let (tray_on, tip, title, section, idle) = st(|s| {
+        (
+            s.tray_on,
+            s.tray_tip.clone(),
+            s.spec.title,
+            s.spec.section,
+            s.idle,
+        )
+    })
+    .unwrap_or_default();
     json!({
         "widget": title,
         "section": section,
+        "idle": idle,
         "pid": std::process::id(),
         "exe": exe.map(|p| p.display().to_string()),
         "exe_built": built,

@@ -41,6 +41,7 @@ pub(crate) struct App {
     /// Who has the strip's avatar places.
     slots: voice::Slots,
     rpc: Option<Sender<rpc::Cmd>>,
+    idle: bool,
     /// The strip as last drawn (its buttons and logo, for hit tests).
     strip: Option<render::StripLayout>,
     /// Since when the ring has been pulsing (from dim), and whether its timer runs.
@@ -137,8 +138,8 @@ impl App {
     fn content(&mut self, ring: Ring, images: bool) -> (Vec<voice::Member>, Vec<Option<std::sync::Arc<avatars::Image>>>, Option<std::sync::Arc<avatars::Image>>, Ring) {
         let main = self.main as usize;
         let people = self.slots.people(self.voice.channel.as_ref().map_or(&[], |c| &c.members));
-        let avatars = if images { people.iter().map(|m| avatars::get(m, move || notify_avatar(main))).collect() } else { Vec::new() };
-        let logo = if images { guild_logo(&self.voice, main) } else { None };
+        let avatars = if images && !self.idle { people.iter().map(|m| avatars::get(m, move || notify_avatar(main))).collect() } else { Vec::new() };
+        let logo = if images && !self.idle { guild_logo(&self.voice, main) } else { None };
         (people, avatars, logo, ring)
     }
 
@@ -220,6 +221,15 @@ impl Content for App {
                 }
             }
         })));
+        if self.idle {
+            self.send(rpc::Cmd::Idle(true)); // Block said so before start
+        }
+    }
+
+    fn idle(&mut self, idle: bool, ctx: &mut Ctx) {
+        self.idle = idle;
+        self.send(rpc::Cmd::Idle(idle));
+        if !idle { ctx.redraw(); ctx.redraw_panel(); }
     }
 
     fn timer(&mut self, id: usize, ctx: &mut Ctx) {
@@ -364,6 +374,7 @@ fn main() {
         voice: Voice { status, ..Default::default() },
         slots: voice::Slots::default(),
         rpc: None,
+        idle: false,
         strip: None,
         ring_since: None,
         beating: false,

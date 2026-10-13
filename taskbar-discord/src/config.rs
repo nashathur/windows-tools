@@ -74,10 +74,8 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Loads the section, filling only missing keys on startup.
+    /// Reads the section; Block fills missing defaults before Content::start.
     pub fn load() -> Config {
-        let defaults = serde_json::to_value(Config::default()).unwrap_or_default();
-        let _ = settings::fill_missing("discord", &defaults);
         Config::read()
     }
 

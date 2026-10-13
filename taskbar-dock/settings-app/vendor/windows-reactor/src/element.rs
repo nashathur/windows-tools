@@ -2160,6 +2160,29 @@ pub struct ExitTransition {
     duration: Duration,
 }
 
+/// A theme transition applied when an element first enters the native tree.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EntranceTransition {
+    /// Horizontal offset from which the element enters, in DIPs.
+    pub from_horizontal_offset: f64,
+    /// Vertical offset from which the element enters, in DIPs.
+    pub from_vertical_offset: f64,
+}
+
+impl EntranceTransition {
+    /// Creates an entrance from below by `offset` DIPs.
+    pub fn from_below(offset: f64) -> Self {
+        assert!(
+            offset.is_finite(),
+            "Entrance transition offset must be finite"
+        );
+        Self {
+            from_horizontal_offset: 0.0,
+            from_vertical_offset: offset,
+        }
+    }
+}
+
 impl ExitTransition {
     /// Creates a fade-out transition.
     ///
