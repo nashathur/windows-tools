@@ -5,22 +5,16 @@ look from `theme`, and dockctl configures every widget. The step notes, inventor
 checklist and token measurements were removed from this folder; they are in git history
 (`git log -- taskbar-dock/plan`).
 
-## 12. Settings app (decided 2026-10-12)
+## 12, 12a, 12b. Settings app (done 2026-10-13)
 
-The control panel for every registered widget, with a Dock page and a Developer tab; dockctl
-reaches every setting through the same library path. Decisions, contracts, jobs and checks:
-`step12.md`.
+The settings app (WinUI 3, crate `settings-app`) for every registered widget, plus Idle,
+Highlight box settings and gliding strips for every widget: `step12.md` (decisions, 12a build
+notes), `step12b.md` (the 12b changes).
 
-## 12a. Windows Settings look (built, committed)
+## 12c. Open checks (next)
 
-The settings app rebuilt with real Windows controls (WinUI 3, crate `settings-app\`):
-`step12.md` "12a" and "12a build notes".
-
-## 12b. Changes after trying the new app (next)
-
-Widgets page on/off text, an Idle status, Windows Settings motion, highlight box settings for
-every widget, "Bus stop", discord's avatar places, neighbours glide instead of jumping: `step12b.md`; session prompt
-`step12b-session.md`.
+What 12 and 12b left to check live or to decide: `step12b.md` "Still open"; session prompt
+`step12c-session.md`.
 
 ## 13. One tray icon (idea)
 

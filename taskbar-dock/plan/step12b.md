@@ -116,25 +116,21 @@ The user asked for these after trying the 12a app. 12a is committed and pushed (
 - **5, bus name:** the title is "Bus stop" in the bus widget's Spec; the app, tray and menu read it
   from there.
 
-## Order of work
+## Status
+Built, checked live and committed 2026-10-13 (`c56eda6`, after one Codex Sol review: four
+findings, all fixed).
 
-1. (Done: the answers are under "Decided".)
-2. Codex Luna briefs for the independent pieces, in parallel worktrees:
-   6 (discord slots + tests), 5 (bus title), 1 (widgets page), 3 (reactor transitions patch).
-   7 (neighbours glide) is Block's: investigate it yourself first (which rule picks the jump),
-   then one brief.
-   2 and 4 touch Block and every widget: one brief each, after the grilling, one at a time.
-3. Build every widget and the app; live checks through dockctl (scheduled tasks, real
-   `%APPDATA%`); screenshots of the app in dark and light (switch Windows' mode, put it back to
-   dark); `TASKBAR_DISCORD_TEST=4` for the avatar places.
-4. One Codex Sol review of the whole 12b change, then ask the user to commit.
-5. Then mark 12, 12a and 12b done in `PLAN.md` (one line, current facts), remove the step12
-   session prompt files (`step12-session.md`, `step12-build-session.md`,
-   `step12-build-session-7.md`, `step12b-session.md`), ask to commit again.
-
-## Still open from 12a (unchanged)
+## Still open (the next session: `step12c-session.md`)
 - Edit settings… from each widget's right-click menu, and the Dock time format followed by bus
   and weather: re-check live on the WinUI app.
 - 125% / 150% scaling: needs a display-scale change (ask the user).
-- The user signs out and in; then check every widget on `startup` runs.
+- The user signs out and in; then check every widget on `startup` runs, and that a widget with
+  Show on taskbar off starts idle (no fetch until its tray panel opens).
+- 12b checked live only through dockctl and scripts so far: the Idle wake from a real tray click,
+  the Highlight box rows changed in the app itself (Chosen colour, Strength slider, Off), and the
+  page slide-ins and centring clicked by the user.
+- Media: a site's colour from its tab icon only when the tab title shows the address; reading the
+  tab's address through UI Automation would cover every site (an idea; ask).
+- The Highlight box Colour row shows in every mode; hiding it unless "Chosen colour" needs a
+  "shown when" rule in the settings description (an idea; ask).
 - Optional Gemini Flash rating of the screenshots; delete `tools\winui-test\` (ask).
