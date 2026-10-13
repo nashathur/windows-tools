@@ -172,12 +172,17 @@ Supply `Content::tint`'s automatic colour for the Highlight box, or None when th
 3. **A `Content`** (`block::Content`): `measure(frame, compact)` and `draw(canvas, frame)` are
    required; everything else has a default: `hit`, `cover`, `tint`, `visible`, `side`, `start`,
    `timer`, `button`, `cover_click`, the panels (`panel_size`, `panel_draw`, `panel_mouse`,
-   `panel_key`, `panel_char`, `panel_wheel`, `panel_shown`, `panel_state`), the right-click panel's own rows (`menu`, `menu_switch`, `menu_action`),
+   `panel_key`, `panel_char`, `panel_wheel`, `panel_shown`, `panel_state`), the right-click panel's own rows (`menu`, `menu_switch`, `menu_choice` (a `menu_panel::Row::choice` picker), `menu_action`),
    `settings_changed`, `look_changed`, `taskbar_restarted`, `on_message`, `closing`, and the tray
    icon (`tray_icon`, `tray_tip`). A `Ctx` collects what a callback wants done (`redraw`,
    `redraw_panel`, `every`, `after`, ...).
 4. **Drawing**: colours, fonts and sizes come from `theme` (`Theme::new(look)`, `theme::space`,
    `theme::size`, the text styles), never typed in; `tests\theme_lint.rs` (dev.ps1) checks it.
+   Every width and position is measured text or `theme::space` × scale, never a pixel number
+   (the lint can't catch those). Strip text uses the taskbar clock's font (`look.font`,
+   `look.font_size`) on the clock's two baselines (`draw::two_line_tops`); the pattern is
+   `taskbar-weather\src\render.rs` `LabelLayout`. A panel computes one layout used by
+   `panel_size`, drawing and `panel_mouse` alike.
    Times: `look.time(h, m)` / `look.hour(h)`, never a fixed format. Helpers: `draw::icon_box`
    (the tray-icon box: 16 px, so everything lines up with Windows' tray icons), `draw::fit_icon`
    (a glyph drawn large, white on black, then fitted and centred), `draw::round_rect`,
@@ -262,8 +267,8 @@ seconds, or 120 seconds for `do`; `--timeout` overrides it.
 | `panel type "<text>"` | send panel text through the same character-input path |
 | `panel state` | active panel kind, open state, rectangle and widget-owned content state |
 | `menu open\|close` | the right-click panel |
-| `menu rows` | id, label, switch state of every row (of the open menu, or the one a right click would show) |
-| `menu click <id\|label>` | a row, as a click does: a switch flips and the menu stays open; opens the menu first if needed |
+| `menu rows` | id, label, switch state and `choice` (`{options, selected}` or null) of every row (of the open menu, or the one a right click would show) |
+| `menu click <id\|label> [option]` | a row, as a click does: a switch flips and the menu stays open; a choice row needs its option (index or label, case ignored) and replies `chose`; opens the menu first if needed |
 | `tray click left\|right` | a click on the tray icon (error while it isn't shown) |
 | `set <key> <value>` / `get [key]` | the widget's settings section, written by the widget (`settings::update`) and followed at once; value is JSON or else text; secrets (`*key*`, `*token*`, …) print as `***` |
 | `set/get --dock ...` | set or inspect the shared `dock` section; changes are re-read and drawn before the reply |

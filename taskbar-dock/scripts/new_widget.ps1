@@ -24,7 +24,15 @@ $extraDir = Join-Path $PSScriptRoot 'live\extra'
 $extra = Join-Path $extraDir "$Section.ps1"
 
 if (-not (Test-Path -LiteralPath $template -PathType Container)) { throw "Template not found: $template" }
-if (Test-Path -LiteralPath $destination) { throw "Widget folder already exists: $destination" }
+# A folder holding only plan notes written ahead (PLAN.md, a mockup) is kept; the template's
+# files must not be there yet.
+$templateFiles = @(Get-ChildItem -LiteralPath $template -File -Recurse | ForEach-Object { $_.FullName.Substring($template.Length + 1) })
+if (Test-Path -LiteralPath $destination) {
+    $clash = @($templateFiles | Where-Object { Test-Path -LiteralPath (Join-Path $destination $_) })
+    if ($clash.Count -gt 0 -or (Test-Path -LiteralPath (Join-Path $destination 'Cargo.toml'))) {
+        throw "Widget folder already has a crate: $destination ($($clash -join ', '))"
+    }
+}
 if (Test-Path -LiteralPath $extra) { throw "Live extra already exists: $extra" }
 
 # Section names are unique across widget Specs. Check both the current source forms:
@@ -44,6 +52,14 @@ foreach ($crate in Get-ChildItem -LiteralPath $root -Directory) {
 }
 if ($sections.Contains($Section)) { throw "Settings section is already used by a sibling widget: $Section" }
 
+# cargo writes progress to stderr; under 'Stop' PS 5.1 turns that into a terminating error when
+# the caller captures output (2>&1), so native calls run with 'Continue' and are judged by exit code.
+function Invoke-Cargo([string[]]$CargoArgs) {
+    $ErrorActionPreference = 'Continue'
+    & cargo @CargoArgs 2>&1 | ForEach-Object { "$_" }
+    if ($LASTEXITCODE -ne 0) { throw "cargo $($CargoArgs -join ' ') failed with exit code $LASTEXITCODE" }
+}
+
 $utf8NoBom = [Text.UTF8Encoding]::new($false)
 $tokens = @{
     '__NAME__' = $Name
@@ -55,9 +71,18 @@ $tokens = @{
 $className = (($Name -replace '^taskbar-', '') -split '-' | ForEach-Object { (Get-Culture).TextInfo.ToTitleCase($_) }) -join ''
 $tokens['__CLASS__'] = "Taskbar${className}Strip"
 
+# What already exists is left alone by a rollback (plan notes, a src\ with notes in it, ...).
+$templateDirs = @($templateFiles | ForEach-Object { Split-Path -Parent $_ } | Where-Object { $_ } | Sort-Object -Unique -Descending)
+$preexisting = @(@($destination) + @($templateDirs + @('Cargo.lock', 'target') | ForEach-Object { Join-Path $destination $_ }) | Where-Object { Test-Path -LiteralPath $_ })
+
 try {
-    Copy-Item -LiteralPath $template -Destination $destination -Recurse
-    foreach ($file in Get-ChildItem -LiteralPath $destination -File -Recurse) {
+    [IO.Directory]::CreateDirectory($destination) | Out-Null
+    foreach ($relative in $templateFiles) {
+        $target = Join-Path $destination $relative
+        [IO.Directory]::CreateDirectory((Split-Path -Parent $target)) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $template $relative) -Destination $target
+    }
+    foreach ($file in $templateFiles | ForEach-Object { Get-Item -LiteralPath (Join-Path $destination $_) }) {
         $content = [IO.File]::ReadAllText($file.FullName)
         foreach ($token in $tokens.Keys) { $content = $content.Replace($token, $tokens[$token]) }
         [IO.File]::WriteAllText($file.FullName, $content, $utf8NoBom)
@@ -75,15 +100,25 @@ try {
 
     Push-Location $destination
     try {
-        & cargo build --profile fast
-        if ($LASTEXITCODE -ne 0) { throw "cargo build --profile fast failed with exit code $LASTEXITCODE" }
-        & cargo test --profile fast
-        if ($LASTEXITCODE -ne 0) { throw "cargo test --profile fast failed with exit code $LASTEXITCODE" }
+        Invoke-Cargo @('build', '--profile', 'fast')
+        Invoke-Cargo @('test', '--profile', 'fast')
     } finally {
         Pop-Location
     }
 } catch {
-    Write-Error $_
+    # Leave the folder as it was so the starter can simply be run again: remove only the files this
+    # run copied, the build output it made, and the folders it created once they are empty.
+    foreach ($relative in $templateFiles) {
+        $path = Join-Path $destination ($relative -replace '__NAME__', $Name)
+        if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+    }
+    foreach ($made in @('Cargo.lock', 'target') | ForEach-Object { Join-Path $destination $_ }) {
+        if (($made -notin $preexisting) -and (Test-Path -LiteralPath $made)) { Remove-Item -LiteralPath $made -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    foreach ($dir in @($templateDirs | ForEach-Object { Join-Path $destination $_ }) + @($destination)) {
+        if (($dir -notin $preexisting) -and -not (Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) { Remove-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue }
+    }
+    Remove-Item -LiteralPath $extra -Force -ErrorAction SilentlyContinue
     throw
 }
 
@@ -92,8 +127,7 @@ Write-Output "Live check: $extra"
 $exe = Join-Path $destination "target\release\$Name.exe"
 Push-Location $destination
 try {
-    & cargo build --release
-    if ($LASTEXITCODE -ne 0) { throw "cargo build --release failed with exit code $LASTEXITCODE" }
+    Invoke-Cargo @('build', '--release')
 } finally { Pop-Location }
 
 if (-not $NoRegister) {

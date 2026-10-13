@@ -1,0 +1,39 @@
+[package]
+name = "taskbar-sysmon"
+version = "0.1.0"
+edition = "2021"
+description = "CPU, GPU, memory and network use in the taskbar"
+
+[dependencies]
+taskbar-dock = { path = "../taskbar-dock" }
+serde_json = "1"
+
+[dependencies.windows]
+version = "0.58"
+features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Registry",
+  "Win32_System_Threading",
+  "Win32_System_SystemInformation",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+]
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"
+
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true

@@ -682,6 +682,54 @@ mod tests {
         assert_eq!(size(40, 40, &spec).min, 40, "already compact");
     }
 
+    /// A row's state as text: a switch "+" / "-", a choice " [selected option]".
+    fn mark(r: &menu_panel::Row) -> String {
+        if let Some(c) = &r.choice {
+            let o = c.options.get(c.selected).map_or("?", |o| o.as_str());
+            return format!(" {} [{o}]", r.label);
+        }
+        r.switch
+            .map_or("", |on| if on { "+" } else { "-" })
+            .to_string()
+    }
+
+    #[test]
+    fn a_choice_row_renders_as_label_and_selected_option_and_groups_with_switches() {
+        struct Speedy;
+        impl Content for Speedy {
+            fn measure(&mut self, _: &Frame, _: bool) -> i32 {
+                1
+            }
+            fn draw(&mut self, _: &mut Canvas, _: &Frame) {}
+            fn menu(&mut self, m: &mut MenuBuilder) {
+                m.item(Row::action(1, menu_panel::glyph::REFRESH, "Refresh"))
+                    .sep()
+                    .item(Row::choice(3, "Speed", &["High", "Low"], 1));
+            }
+        }
+        let m = menu(&mut Speedy, None, false, false);
+        let (c, s, e, q) = (
+            std_ids::COMPACT,
+            std_ids::STARTUP,
+            std_ids::SETTINGS,
+            std_ids::QUIT,
+        );
+        // ended on a choice row: the standard switches join its group
+        assert_eq!(
+            ids(&m),
+            [
+                "1",
+                "sep",
+                "3 Speed [Low]",
+                &format!("{c}-"),
+                &format!("{s}-"),
+                "sep",
+                &format!("{e}|{q}")
+            ]
+        );
+        assert_eq!(route(3), Route::Content(3));
+    }
+
     #[test]
     fn menu_gets_the_standard_rows() {
         let mut f = Fake {
@@ -697,7 +745,7 @@ mod tests {
                 Item::Row(r) => format!(
                     "{}{}",
                     r.id,
-                    r.switch.map_or("", |on| if on { "+" } else { "-" })
+                    mark(r)
                 ),
                 Item::Pair(a, b) => format!("{}|{}", a.id, b.id),
                 Item::Sep => "sep".into(),
@@ -734,7 +782,7 @@ mod tests {
                 Item::Row(r) => format!(
                     "{}{}",
                     r.id,
-                    r.switch.map_or("", |on| if on { "+" } else { "-" })
+                    mark(r)
                 ),
                 Item::Pair(a, b) => format!("{}|{}", a.id, b.id),
                 Item::Sep => "sep".into(),

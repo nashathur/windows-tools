@@ -1086,7 +1086,8 @@ fn right_click(on_panel: bool) {
         }
         let scale = system::scale_for(if strip != 0 { strip } else { main });
         let mut on_switch = |id: usize| flip(id, section);
-        let cmd = crate::menu_panel::run(anchor, menu, &look, scale, &mut on_switch);
+        let mut on_choice = |id: usize, option: usize| pick(id, option);
+        let cmd = crate::menu_panel::run(anchor, menu, &look, scale, &mut on_switch, &mut on_choice);
         // the mouse is likely still on the strip: no hover-open until it leaves and comes back
         st(|s| s.core.panel.menu_closed());
         match cmd.map(core::route) {
@@ -1261,6 +1262,19 @@ fn flip(id: usize, section: &str) -> bool {
             on
         }
         _ => false,
+    }
+}
+
+/// A choice in the right-click panel picked: the option now selected (the panel stays open).
+fn pick(id: usize, option: usize) -> usize {
+    match core::route(id) {
+        Route::Content(id) => {
+            st(|s| s.flipping = true);
+            let now = call(|c, ctx| c.menu_choice(id, option, ctx)).unwrap_or(option);
+            st(|s| s.flipping = false);
+            now
+        }
+        _ => option,
     }
 }
 

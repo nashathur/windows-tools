@@ -1,7 +1,8 @@
 # taskbar-dock: shared library for the taskbar widgets
 
 Widgets using it: `..\buswidget` (bus departures), `..\taskbar-weather`, `..\taskbar-media`,
-`..\taskbar-discord` (Discord voice chat via Discord's local RPC). Each widget's CLAUDE.md imports
+`..\taskbar-discord` (Discord voice chat via Discord's local RPC), `..\taskbar-sysmon` (CPU / GPU /
+RAM / network, with an elevated CPU-temperature helper in `temp\`). Each widget's CLAUDE.md imports
 this file. Reference, read by section when the task reaches it:
 - **BLOCK.md**: Block's API (Spec, Content, Ctx, panel shell, tray icon, settings it owns). Read
   before changing Block or building or changing a widget.
@@ -81,7 +82,7 @@ fetches it runs outside content timers.
 
 ## Testing (prefer in this order)
 1. Unit tests (pure logic in the library: `block/core.rs`, `ctl.rs`, `panel.rs`, …).
-2. **dockctl** for widgets on Block (weather, discord, bus, media):
+2. **dockctl** for widgets on Block (weather, discord, bus, media, sysmon):
    `taskbar-dock\dockctl.exe <widget|all> state|panel …|menu …|tray click …|set|get|log|redraw|quit|simulate …`
    (README.md "Testing"). It runs commands through Block's own paths in the running widget, so
    settings, logs and state are the REAL `%APPDATA%`. Use it instead of `_tmp\real.ps1` for the

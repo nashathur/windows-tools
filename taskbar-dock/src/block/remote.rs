@@ -13,7 +13,8 @@ use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
 
 thread_local! {
     /// A row `menu click` will click once the menu it opened is up.
-    static PENDING: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// (row id, the option to pick when it is a choice row).
+    static PENDING: std::cell::Cell<Option<(usize, Option<usize>)>> = const { std::cell::Cell::new(None) };
     /// A widget that answers `Done` has dropped or kept its token; ignore its later drop-reply.
     static DONE_IDS: std::cell::RefCell<std::collections::HashSet<u64>> = std::cell::RefCell::new(std::collections::HashSet::new());
 }
@@ -28,8 +29,12 @@ pub(super) fn click_message() -> u32 {
 
 /// Completes a queued menu-row click from inside the menu's message loop.
 pub(super) fn pending_click() {
-    if let Some(id) = PENDING.with(|p| p.take()) {
-        if !crate::menu_panel::click(id) {
+    if let Some((id, option)) = PENDING.with(|p| p.take()) {
+        let done = match option {
+            Some(i) => crate::menu_panel::choose(id, i),
+            None => crate::menu_panel::click(id),
+        };
+        if !done {
             log(&format!(
                 "dockctl: menu click {id:#x}: the menu didn't open"
             ));
@@ -508,25 +513,59 @@ fn run(to: ReplyTo, cmd: Command) {
         Command::MenuRows => {
             let (open, rows) = menu_rows();
             ok(
-                json!({ "open": open, "rows": rows.iter().map(|r| json!({ "id": r.id, "hex": format!("{:#x}", r.id), "label": r.label, "switch": r.switch })).collect::<Vec<_>>() }),
+                json!({ "open": open, "rows": rows.iter().map(|r| json!({ "id": r.id, "hex": format!("{:#x}", r.id), "label": r.label, "switch": r.switch, "choice": r.choice.as_ref().map(|c| json!({ "options": c.options, "selected": c.selected })) })).collect::<Vec<_>>() }),
             );
         }
         Command::MenuClick(name) => {
             let (open, rows) = menu_rows();
             let named: Vec<(usize, String)> =
                 rows.iter().map(|r| (r.id, r.label.clone())).collect();
-            let Some(row) =
-                ctl::find_row(&named, &name).and_then(|id| rows.into_iter().find(|r| r.id == id))
-            else {
+            let Some((id, option)) = ctl::split_row_option(&named, &name) else {
                 return send_reply(to, &ctl::error(format!("no menu row {name:?}")));
             };
-            let what = json!({ "clicked": row.label, "id": row.id, "switch_was": row.switch, "opened_menu": !open });
+            let Some(row) = rows.into_iter().find(|r| r.id == id) else {
+                return send_reply(to, &ctl::error(format!("no menu row {name:?}")));
+            };
+            let mut what = json!({ "clicked": row.label, "id": row.id, "switch_was": row.switch, "opened_menu": !open });
+            let mut chose = None;
+            if let Some(c) = &row.choice {
+                let list = c.options.join(", ");
+                let Some(text) = option else {
+                    return send_reply(
+                        to,
+                        &ctl::error(format!(
+                            "menu click {:?} needs an option (index or label): {list}",
+                            row.label
+                        )),
+                    );
+                };
+                let Some(i) = ctl::find_option(&c.options, &text) else {
+                    return send_reply(
+                        to,
+                        &ctl::error(format!(
+                            "no option {text:?} for {:?}; options: {list}",
+                            row.label
+                        )),
+                    );
+                };
+                what["chose"] = json!(c.options[i]);
+                chose = Some(i);
+            } else if let Some(text) = option {
+                return send_reply(to, &ctl::error(format!("no menu row {name:?} ({text:?})")));
+            }
             if open {
-                crate::menu_panel::click(row.id);
+                match chose {
+                    Some(i) => {
+                        crate::menu_panel::choose(row.id, i);
+                    }
+                    None => {
+                        crate::menu_panel::click(row.id);
+                    }
+                }
                 return ok(what);
             }
             // open it as a right click would; the click runs from inside its loop
-            PENDING.with(|p| p.set(Some(row.id)));
+            PENDING.with(|p| p.set(Some((row.id, chose))));
             if let Some(main) = st(|s| s.main) {
                 unsafe { PostMessageW(main, click_message(), 0, 0) };
             }

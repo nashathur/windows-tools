@@ -101,14 +101,8 @@ impl Content for App {
     }
 
     fn measure(&mut self, frame: &Frame, compact: bool) -> i32 {
-        let look = frame.look;
-        let theme = theme::Theme::new(look);
-        let font = Font::new(
-            theme::BODY,
-            &theme.font.text,
-            CLEARTYPE_QUALITY,
-            frame.scale,
-        );
+        // the taskbar clock's font, as every strip (README "Building a new widget" step 4)
+        let font = Font::new(strip_text(frame.look), &frame.look.font, CLEARTYPE_QUALITY, frame.scale);
         let text = if compact {
             self.counter_text()
         } else {
@@ -125,12 +119,7 @@ impl Content for App {
 
     fn draw(&mut self, cv: &mut Canvas, frame: &Frame) {
         let palette = theme::Theme::new(frame.look);
-        let font = Font::new(
-            theme::BODY,
-            &palette.font.text,
-            CLEARTYPE_QUALITY,
-            frame.scale,
-        );
+        let font = Font::new(strip_text(frame.look), &frame.look.font, CLEARTYPE_QUALITY, frame.scale);
         let text = if frame.compact {
             self.counter_text()
         } else {
@@ -284,6 +273,12 @@ impl Content for App {
     fn tray_tip(&self) -> String {
         format!("__TITLE__: {}", self.counter_text())
     }
+}
+
+/// Strip text: the taskbar clock's size, regular weight. A strip whose text changes length should
+/// measure its longest text, so the width doesn't jump with every update.
+fn strip_text(look: &Look) -> theme::TextStyle {
+    theme::TextStyle { px: look.font_size, weight: 400 }
 }
 
 struct Font(HFONT);

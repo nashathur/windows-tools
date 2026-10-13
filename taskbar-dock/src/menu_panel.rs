@@ -9,6 +9,7 @@
 //! ───────────────────────────────────     Item::Sep
 //!    Compact mode              [ on ]     a switch: flips, the panel stays open
 //!    Start with Windows        [off ]
+//!    Update speed   [High|Normal|Low]     a choice: the segment clicked is selected, stays open
 //! ───────────────────────────────────
 //! ⚙  Edit settings…    ⏻  Quit            Item::Pair: two actions side by side
 //! ```
@@ -46,24 +47,27 @@ const TIMER_FADE: usize = 1;
 /// A right click that closed the panel (by taking focus away) shouldn't reopen it.
 const REOPEN_GUARD: Duration = Duration::from_millis(400);
 
-/// One row: an action, or a switch when `switch` is Some(on).
+/// A choice row's segmented picker: the options and the one selected.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Choice {
+    pub options: Vec<String>,
+    pub selected: usize,
+}
+
+/// One row: an action, a switch when `switch` is Some(on), or a choice when `choice` is Some.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub id: usize,
-    /// A Segoe Fluent Icons glyph left of the label (actions; switches have none).
+    /// A Segoe Fluent Icons glyph left of the label (actions; switches and choices have none).
     pub glyph: Option<char>,
     pub label: String,
     pub switch: Option<bool>,
+    pub choice: Option<Choice>,
 }
 
 impl Row {
     pub fn action(id: usize, glyph: char, label: &str) -> Item {
-        Item::Row(Row {
-            id,
-            glyph: Some(glyph),
-            label: label.into(),
-            switch: None,
-        })
+        Item::Row(Row::act(id, glyph, label))
     }
 
     pub fn switch(id: usize, label: &str, on: bool) -> Item {
@@ -72,6 +76,22 @@ impl Row {
             glyph: None,
             label: label.into(),
             switch: Some(on),
+            choice: None,
+        })
+    }
+
+    /// A label with a segmented picker on the right; a click on a segment selects it and the
+    /// panel stays open (`Content::menu_choice`).
+    pub fn choice(id: usize, label: &str, options: &[&str], selected: usize) -> Item {
+        Item::Row(Row {
+            id,
+            glyph: None,
+            label: label.into(),
+            switch: None,
+            choice: Some(Choice {
+                options: options.iter().map(|o| o.to_string()).collect(),
+                selected,
+            }),
         })
     }
 
@@ -81,6 +101,7 @@ impl Row {
             glyph: Some(glyph),
             label: label.into(),
             switch: None,
+            choice: None,
         }
     }
 }
@@ -153,16 +174,38 @@ pub struct Layout {
     pub rows: Vec<(Rc, Row)>,
     /// Separator lines' y.
     pub seps: Vec<i32>,
+    /// A choice row's segments: (row id, option index, rect), in option order.
+    pub segments: Vec<(usize, usize, Rc)>,
 }
 
 impl Layout {
+    /// The row under (x, y). A choice row is never returned: only its segments take clicks.
     pub fn hit(&self, x: i32, y: i32) -> Option<usize> {
         self.rows
             .iter()
-            .find(|(r, _)| r.contains(x, y))
+            .find(|(r, row)| row.choice.is_none() && r.contains(x, y))
             .map(|(_, row)| row.id)
     }
+
+    /// The choice segment under (x, y): (row id, option index).
+    pub fn hit_segment(&self, x: i32, y: i32) -> Option<(usize, usize)> {
+        self.segments
+            .iter()
+            .find(|(_, _, r)| r.contains(x, y))
+            .map(|&(id, option, _)| (id, option))
+    }
 }
+
+/// A segment's width at `scale`, px: the text's estimated width plus padding. Layout can't
+/// measure text (it is pure), so this is a fixed average advance per character.
+fn segment_width(option: &str, scale: f32) -> i32 {
+    const ADVANCE_EM: f32 = 0.5;
+    let text = option.chars().count() as f32 * CAPTION.px * ADVANCE_EM;
+    ((text + 2.0 * space::S) * scale).round() as i32
+}
+
+/// The gap between a choice's track edge and its segments, px at 100%.
+const SEGMENT_GAP: f32 = space::XS / 2.0;
 
 pub fn layout(menu: &Menu, scale: f32) -> Layout {
     let s = |v: f32| (v * scale).round() as i32;
@@ -175,6 +218,7 @@ pub fn layout(menu: &Menu, scale: f32) -> Layout {
         subtitle: Rc::default(),
         rows: Vec::new(),
         seps: Vec::new(),
+        segments: Vec::new(),
     };
     let mut y = s(6.0);
     if !menu.title.is_empty() {
@@ -197,15 +241,34 @@ pub fn layout(menu: &Menu, scale: f32) -> Layout {
     for item in &menu.items {
         match item {
             Item::Row(r) => {
-                l.rows.push((
-                    Rc {
-                        x: inset,
-                        y,
-                        w: w - 2 * inset,
-                        h: rh,
-                    },
-                    r.clone(),
-                ));
+                let rc = Rc {
+                    x: inset,
+                    y,
+                    w: w - 2 * inset,
+                    h: rh,
+                };
+                if let Some(c) = &r.choice {
+                    // right-aligned where a switch sits, centred vertically, packed edge to edge
+                    let widths: Vec<i32> =
+                        c.options.iter().map(|o| segment_width(o, scale)).collect();
+                    let gap = s(SEGMENT_GAP);
+                    let mut x = rc.x + rc.w - s(10.0) - gap - widths.iter().sum::<i32>();
+                    let (sy, sh) = (rc.y + s(space::XS), rc.h - 2 * s(space::XS));
+                    for (i, sw) in widths.into_iter().enumerate() {
+                        l.segments.push((
+                            r.id,
+                            i,
+                            Rc {
+                                x,
+                                y: sy,
+                                w: sw,
+                                h: sh,
+                            },
+                        ));
+                        x += sw;
+                    }
+                }
+                l.rows.push((rc, r.clone()));
                 y += rh;
             }
             Item::Pair(a, b) => {
@@ -327,7 +390,15 @@ unsafe fn text(dc: HDC, f: HFONT, s: &str, color: u32, r: RECT, flags: u32) {
 }
 
 /// Paints the panel into `dc` (its client area).
-unsafe fn paint(dc: HDC, l: &Layout, menu: &Menu, look: &Look, scale: f32, hover: Option<usize>) {
+unsafe fn paint(
+    dc: HDC,
+    l: &Layout,
+    menu: &Menu,
+    look: &Look,
+    scale: f32,
+    hover: Option<usize>,
+    hover_seg: Option<(usize, usize)>,
+) {
     let s = |v: f32| (v * scale).round() as i32;
     let theme = Theme::new(look);
     let pal = &theme.color;
@@ -395,6 +466,50 @@ unsafe fn paint(dc: HDC, l: &Layout, menu: &Menu, look: &Look, scale: f32, hover
                 scale,
             );
         }
+        if let Some(c) = &row.choice {
+            let segs: Vec<&(usize, usize, Rc)> =
+                l.segments.iter().filter(|(id, _, _)| *id == row.id).collect();
+            if let (Some(first), Some(last)) = (segs.first(), segs.last()) {
+                let gap = s(SEGMENT_GAP) as f32;
+                let track_r = (look.control_radius * scale).round();
+                fill_round(
+                    buf,
+                    l.w,
+                    (
+                        first.2.x as f32 - gap,
+                        first.2.y as f32 - gap,
+                        (last.2.x + last.2.w) as f32 + gap,
+                        (last.2.y + last.2.h) as f32 + gap,
+                    ),
+                    track_r,
+                    pal.button.tuple(),
+                );
+                let seg_r = crate::draw::concentric(track_r, gap, 0.0);
+                for &&(_, i, r) in &segs {
+                    let fill = if i == c.selected {
+                        Some(pal.button_hover)
+                    } else if hover_seg == Some((row.id, i)) {
+                        Some(pal.hover)
+                    } else {
+                        None
+                    };
+                    if let Some(fill) = fill {
+                        fill_round(
+                            buf,
+                            l.w,
+                            (
+                                r.x as f32,
+                                r.y as f32,
+                                (r.x + r.w) as f32,
+                                (r.y + r.h) as f32,
+                            ),
+                            seg_r,
+                            fill.tuple(),
+                        );
+                    }
+                }
+            }
+        }
     }
     // the text over the shapes
     SetBkMode(mem, TRANSPARENT as _);
@@ -443,12 +558,17 @@ unsafe fn paint(dc: HDC, l: &Layout, menu: &Menu, look: &Look, scale: f32, hover
         } else {
             rc.x + s(10.0)
         };
-        let right = rc.x + rc.w
-            - if row.switch.is_some() {
-                s(56.0)
-            } else {
-                s(8.0)
-            };
+        let right = match l.segments.iter().find(|(id, _, _)| *id == row.id) {
+            Some((_, _, first)) => first.x - s(SEGMENT_GAP) - s(space::S),
+            None => {
+                rc.x + rc.w
+                    - if row.switch.is_some() {
+                        s(56.0)
+                    } else {
+                        s(8.0)
+                    }
+            }
+        };
         text(
             mem,
             body_f,
@@ -462,6 +582,19 @@ unsafe fn paint(dc: HDC, l: &Layout, menu: &Menu, look: &Look, scale: f32, hover
             },
             DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS,
         );
+        if let Some(c) = &row.choice {
+            for (_, i, r) in l.segments.iter().filter(|(id, _, _)| *id == row.id) {
+                let color = if *i == c.selected { pal.fg } else { pal.dim };
+                text(
+                    mem,
+                    sub_f,
+                    c.options.get(*i).map_or("", |o| o.as_str()),
+                    color.colorref(),
+                    r.rect(),
+                    DT_CENTER | DT_VCENTER,
+                );
+            }
+        }
     }
     GdiFlush();
     BitBlt(dc, 0, 0, l.w, l.h, mem, 0, 0, SRCCOPY);
@@ -482,13 +615,18 @@ struct State {
     look: Look,
     scale: f32,
     hover: Option<usize>,
+    /// The hovered choice segment (row id, option).
+    hover_seg: Option<(usize, usize)>,
     pressed: Option<usize>,
+    pressed_seg: Option<(usize, usize)>,
     tracking: bool,
     fade: panel::Fade,
     /// An action was chosen.
     chosen: Option<usize>,
     /// A switch was clicked: `run` flips it (outside the window procedure).
     flip: Option<usize>,
+    /// A choice segment was clicked (row id, option): `run` hands it to `on_choice`.
+    pick: Option<(usize, usize)>,
 }
 
 thread_local! {
@@ -546,6 +684,25 @@ pub fn click(id: usize) -> bool {
     true
 }
 
+/// Picks an option of a choice row of the open menu panel as a click on its segment does (the
+/// panel stays open). False: no panel, no such choice row, or `option` out of range.
+pub fn choose(id: usize, option: usize) -> bool {
+    let Some(Some(h)) = with(|s| {
+        s.layout
+            .rows
+            .iter()
+            .find(|(_, r)| r.id == id)
+            .and_then(|(_, r)| r.choice.as_ref())
+            .filter(|c| option < c.options.len())
+            .map(|_| s.hwnd)
+    }) else {
+        return false;
+    };
+    with(|s| s.pick = Some((id, option)));
+    unsafe { PostMessageW(h, WM_NULL, 0, 0) }; // wakes `run`'s loop, which does it
+    true
+}
+
 fn class() -> *const u16 {
     static NAME: std::sync::OnceLock<Vec<u16>> = std::sync::OnceLock::new();
     let name = NAME.get_or_init(|| {
@@ -573,7 +730,9 @@ fn class() -> *const u16 {
 /// Shows the menu panel above (or next to) `anchor` (screen rect: the strip, or a small rect
 /// at the cursor for a tray icon) and returns when it closes: the action row chosen, or None.
 /// A switch row calls `on_switch(id)`, which does the change and returns the switch's new state;
-/// the panel stays open. Like a menu, it runs its own message loop meanwhile.
+/// the panel stays open. A choice segment calls `on_choice(id, option)`, which does the change
+/// and returns the option now selected; the panel stays open. Like a menu, it runs its own
+/// message loop meanwhile.
 /// A right click that closed the panel a moment ago (the click on the strip took its focus)
 /// returns None at once, so that right click closes it rather than reopening it.
 pub unsafe fn run(
@@ -582,6 +741,7 @@ pub unsafe fn run(
     look: &Look,
     scale: f32,
     on_switch: &mut dyn FnMut(usize) -> bool,
+    on_choice: &mut dyn FnMut(usize, usize) -> usize,
 ) -> Option<usize> {
     if is_open() {
         close();
@@ -647,11 +807,14 @@ pub unsafe fn run(
             look: look.clone(),
             scale,
             hover: None,
+            hover_seg: None,
             pressed: None,
+            pressed_seg: None,
             tracking: false,
             fade,
             chosen: None,
             flip: None,
+            pick: None,
         })
     });
     ShowWindow(hwnd, SW_SHOW);
@@ -674,6 +837,22 @@ pub unsafe fn run(
                     if let Item::Row(r) = item {
                         if r.id == id {
                             r.switch = Some(on);
+                        }
+                    }
+                }
+                s.layout = layout(&s.menu, s.scale);
+            });
+            InvalidateRect(hwnd, std::ptr::null(), 0);
+        }
+        if let Some((id, option)) = with(|s| s.pick.take()).flatten() {
+            let now = on_choice(id, option);
+            with(|s| {
+                for item in s.menu.items.iter_mut() {
+                    if let Item::Row(r) = item {
+                        if r.id == id {
+                            if let Some(c) = r.choice.as_mut() {
+                                c.selected = now;
+                            }
                         }
                     }
                 }
@@ -705,16 +884,17 @@ unsafe extern "system" fn proc_(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESUL
         WM_PAINT => {
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
             let dc = BeginPaint(h, &mut ps);
-            if let Some((layout, menu, look, scale, hover)) = with(|s| {
+            if let Some((layout, menu, look, scale, hover, hover_seg)) = with(|s| {
                 (
                     s.layout.clone(),
                     s.menu.clone(),
                     s.look.clone(),
                     s.scale,
                     s.hover,
+                    s.hover_seg,
                 )
             }) {
-                paint(dc, &layout, &menu, &look, scale, hover);
+                paint(dc, &layout, &menu, &look, scale, hover, hover_seg);
             }
             EndPaint(h, &ps);
             0
@@ -735,8 +915,10 @@ unsafe extern "system" fn proc_(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESUL
             let (x, y) = client_pt(l);
             let (changed, track) = with(|s| {
                 let hit = s.layout.hit(x, y);
-                let changed = s.hover != hit;
+                let seg = s.layout.hit_segment(x, y);
+                let changed = s.hover != hit || s.hover_seg != seg;
                 s.hover = hit;
+                s.hover_seg = seg;
                 (changed, !std::mem::replace(&mut s.tracking, true))
             })
             .unwrap_or((false, false));
@@ -757,6 +939,7 @@ unsafe extern "system" fn proc_(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESUL
         WM_MOUSELEAVE => {
             with(|s| {
                 s.hover = None;
+                s.hover_seg = None;
                 s.tracking = false;
             });
             InvalidateRect(h, std::ptr::null(), 0);
@@ -764,13 +947,22 @@ unsafe extern "system" fn proc_(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESUL
         }
         WM_LBUTTONDOWN => {
             let (x, y) = client_pt(l);
-            with(|s| s.pressed = s.layout.hit(x, y));
+            with(|s| {
+                s.pressed = s.layout.hit(x, y);
+                s.pressed_seg = s.layout.hit_segment(x, y);
+            });
             0
         }
         WM_LBUTTONUP => {
             // a row acts when released where it was pressed
             let (x, y) = client_pt(l);
             let act = with(|s| {
+                let seg = s.layout.hit_segment(x, y);
+                if let Some(seg) = seg.filter(|_| seg == s.pressed_seg.take()) {
+                    s.pick = Some(seg);
+                    PostMessageW(h, WM_NULL, 0, 0); // wakes `run`'s loop
+                    return None;
+                }
                 let here = s.layout.hit(x, y);
                 let pressed = s.pressed.take();
                 let id = here.filter(|_| here == pressed)?;
@@ -862,6 +1054,60 @@ mod tests {
         assert_eq!(l.hit(100, 20), None);
         assert_eq!(l.hit(200, 180), Some(5));
         assert_eq!(l.hit(1, 70), None); // the inset
+    }
+
+    fn choice_menu() -> Menu {
+        Menu {
+            items: vec![
+                Row::action(1, glyph::REFRESH, "Refresh"),
+                Row::choice(7, "Update speed", &["High", "Normal", "Low", "Paused"], 1),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_choice_rows_segments_sit_right_aligned_inside_the_row_in_order() {
+        for scale in [1.0, 1.5] {
+            let l = layout(&choice_menu(), scale);
+            let row = l.rows[1].0;
+            assert_eq!(l.segments.len(), 4);
+            let mut prev_right = None;
+            for (n, (id, i, r)) in l.segments.iter().enumerate() {
+                assert_eq!((*id, *i), (7, n));
+                assert!(r.x >= row.x && r.x + r.w <= row.x + row.w);
+                assert!(r.y >= row.y && r.y + r.h <= row.y + row.h);
+                if let Some(p) = prev_right {
+                    assert!(r.x >= p, "segments overlap");
+                }
+                prev_right = Some(r.x + r.w);
+            }
+            // the last segment ends where a switch would, give or take the track gap
+            let right = row.x + row.w;
+            let end = prev_right.unwrap();
+            assert!(end < right && right - end < (14.0 * scale) as i32 + 2);
+            // the label has room on the left
+            assert!(l.segments[0].2.x > row.x + (70.0 * scale) as i32);
+        }
+    }
+
+    #[test]
+    fn hit_segment_finds_each_segment_and_not_the_label() {
+        let l = layout(&choice_menu(), 1.0);
+        let row = l.rows[1].0;
+        for (id, i, r) in &l.segments {
+            assert_eq!(
+                l.hit_segment(r.x + r.w / 2, r.y + r.h / 2),
+                Some((*id, *i))
+            );
+            // a choice row is never a plain row hit
+            assert_eq!(l.hit(r.x + r.w / 2, r.y + r.h / 2), None);
+        }
+        assert_eq!(l.hit_segment(row.x + 12, row.y + row.h / 2), None);
+        assert_eq!(l.hit(row.x + 12, row.y + row.h / 2), None);
+        // other rows still hit
+        assert_eq!(l.hit(100, l.rows[0].0.y + 5), Some(1));
+        assert_eq!(l.hit_segment(100, l.rows[0].0.y + 5), None);
     }
 
     #[test]

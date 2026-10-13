@@ -1,7 +1,7 @@
 # Block: the shared strip window (`src\block`)
 
 A widget gives a `Spec` and a `Content` and calls `block::run`; Block owns the strip window and all
-its behaviour. On Block: weather, discord, bus, media.
+its behaviour. On Block: weather, discord, bus, media, sysmon.
 How it got here: the plan step commits in git history.
 
 Files: `mod.rs` (the API), `core.rs` (pure decisions, tested with a fake Content), `place.rs` (left
@@ -21,6 +21,9 @@ setting metadata. A side-effect-free `Describe` supplies the JSON written by `--
 includes `compact` and `show_on_taskbar` in both. `reload` re-reads widget and dock settings;
 `ping` returns the process id and executable build time without adding a log entry. dockctl
 `status` batches these quiet pings from its own message window and also reports stopped widgets.
+Right-click panel rows: `menu_panel::Row::switch` calls `Content::menu_switch`; `menu_panel::Row::choice`
+(a label with a segmented picker, e.g. Update speed [High|Normal|Low|Paused]) calls
+`Content::menu_choice(id, option, ctx) -> usize`, the option now selected; the panel stays open.
 A left click on the strip always toggles the panel (Block's, no widget decides); a tray icon's clicks
 are Block's too (no strip needed: the panel opens above the pointer).
 

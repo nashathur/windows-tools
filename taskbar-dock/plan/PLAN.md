@@ -16,11 +16,10 @@ notes), `step12b.md` (the 12b changes).
 The live checks and small decisions left by 12 and 12b: `step12b.md` "12c". One idea left there
 ("Still open": media's site colour for every tab).
 
-## Next widget: taskbar-sysmon (the user has a plan for it; session prompt `sysmon-session.md`)
+## taskbar-sysmon (done 2026-10-13)
 
-Build it with `scripts\new_widget.ps1` (README "Building a new widget"): the starter's first real
-use, so check the starter itself as it goes (all five parts live, `scripts\live\run.ps1 -Widgets
-sysmon`, `status.ps1`) and fix the template for what it misses.
+Spec and measurements: `..\taskbar-sysmon\PLAN.md`. It added the choice row to `menu_panel`
+(`Row::choice`, `Content::menu_choice`, dockctl `menu click <row> <option>`).
 
 ## 13. One tray icon (idea)
 

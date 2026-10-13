@@ -79,7 +79,8 @@ pub enum Command {
     MenuOpen,
     MenuClose,
     MenuRows,
-    /// A row by id (decimal or 0x hex) or label; opens the menu first if it's closed.
+    /// A row by id (decimal or 0x hex) or label, for a choice row followed by its option (index
+    /// or label); opens the menu first if it's closed.
     MenuClick(String),
     Tray(MouseButton),
     Set(bool, String, String),
@@ -502,6 +503,28 @@ pub fn find_row(rows: &[(usize, String)], name: &str) -> Option<usize> {
         .map(|(id, _)| *id)
 }
 
+/// `menu click` text split into a row and an optional trailing option: the whole text as a row
+/// first, else the longest row name that leads it, the rest being the option.
+pub fn split_row_option(rows: &[(usize, String)], text: &str) -> Option<(usize, Option<String>)> {
+    if let Some(id) = find_row(rows, text) {
+        return Some((id, None));
+    }
+    let words: Vec<&str> = text.split_whitespace().collect();
+    (1..words.len()).rev().find_map(|k| {
+        let id = find_row(rows, &words[..k].join(" "))?;
+        Some((id, Some(words[k..].join(" "))))
+    })
+}
+
+/// A choice option named on the command line: its index or its label (case ignored).
+pub fn find_option(options: &[String], name: &str) -> Option<usize> {
+    let name = name.trim();
+    if let Some(i) = options.iter().position(|o| o.eq_ignore_ascii_case(name)) {
+        return Some(i);
+    }
+    name.parse().ok().filter(|&i| i < options.len())
+}
+
 /// One widget dockctl knows: its name on the command line, its strip class (the main window
 /// is `<class>Main`), and its exe's file name.
 #[derive(Clone, Copy, Debug)]
@@ -840,5 +863,28 @@ mod tests {
         assert_eq!(find_row(&rows, "Edit settings..."), Some(0xF002));
         assert_eq!(find_row(&rows, "7"), None);
         assert_eq!(find_row(&rows, "Quit"), None);
+    }
+
+    #[test]
+    fn a_menu_click_splits_into_row_and_option() {
+        let rows = vec![
+            (1, "Refresh now".to_string()),
+            (7, "Update speed".into()),
+        ];
+        assert_eq!(split_row_option(&rows, "Refresh now"), Some((1, None)));
+        assert_eq!(
+            split_row_option(&rows, "update speed Low"),
+            Some((7, Some("Low".into())))
+        );
+        assert_eq!(
+            split_row_option(&rows, "7 very slow"),
+            Some((7, Some("very slow".into())))
+        );
+        assert_eq!(split_row_option(&rows, "Nope low"), None);
+        let options: Vec<String> = ["High", "Normal", "Low"].map(String::from).to_vec();
+        assert_eq!(find_option(&options, "low"), Some(2));
+        assert_eq!(find_option(&options, "1"), Some(1));
+        assert_eq!(find_option(&options, "3"), None);
+        assert_eq!(find_option(&options, "fast"), None);
     }
 }

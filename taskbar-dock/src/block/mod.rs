@@ -938,6 +938,11 @@ pub trait Content: 'static {
         false
     }
 
+    /// A choice row's option picked (the panel stays open): do it, return the option now selected.
+    fn menu_choice(&mut self, _id: usize, option: usize, _ctx: &mut Ctx) -> usize {
+        option
+    }
+
     /// An action row of the widget's chosen (the panel has closed).
     fn menu_action(&mut self, _id: usize, _ctx: &mut Ctx) {}
 
@@ -1070,7 +1075,7 @@ impl MenuBuilder {
         let show = self.show_on.is_some() && !self.placed_show;
         if show || !self.placed_compact || !self.placed_startup {
             // after the widget's rows: with its switches, or in a group of their own
-            if !matches!(self.menu.items.last(), Some(Item::Row(r)) if r.switch.is_some()) {
+            if !matches!(self.menu.items.last(), Some(Item::Row(r)) if r.switch.is_some() || r.choice.is_some()) {
                 self.sep();
             }
             if show {

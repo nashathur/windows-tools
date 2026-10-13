@@ -75,12 +75,14 @@ body{background:#f3f3f3;color:#333;font-family:"Segoe UI",system-ui,sans-serif;m
 <div>
 <div class="cap">3 · Panel (same for hover and left-click)</div>
 <div class="pn">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
     <span style="font-size:13px">System</span>
-    <span style="display:flex;gap:8px;align-items:center">
-      <span class="seg" id="seg"><span class="on" data-n="60">1m</span><span data-n="300">5m</span><span data-n="3600">1h</span></span>
-      <span class="btn">↗ Task Manager</span>
-    </span>
+    <span class="btn">↗ Task Manager</span>
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;flex-wrap:wrap">
+    <span class="seg" id="seg" title="Graph range"><span class="on" data-n="60">1m</span><span data-n="300">5m</span><span data-n="3600">1h</span></span>
+    <span class="seg" title="Update speed"><span>High</span><span class="on">Normal</span><span>Low</span></span>
+    <span class="btn">⟲ Reset graphs</span>
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
     <div class="card"><div class="row"><span style="color:#fff">CPU · Ryzen 5 5600X</span><span style="color:#85B7EB">23%</span></div><svg class="bx" width="100%" height="36" viewBox="0 0 150 36" preserveAspectRatio="none" id="pC"></svg><div style="display:grid;grid-template-columns:repeat(12,1fr);gap:2px;height:16px;align-items:end;margin:4px 0" id="cores"></div><div class="row"><span>Clock</span><span>4.4 GHz</span></div><div class="row"><span>Temp</span><span>54 °C</span></div></div>
@@ -93,10 +95,14 @@ body{background:#f3f3f3;color:#333;font-family:"Segoe UI",system-ui,sans-serif;m
 <div>
 <div class="cap">4 · Right-click panel</div>
 <div class="pn" style="padding:6px">
+  <div class="mi"><span>Open Task Manager</span></div>
+  <div class="mi"><span>Reset graphs</span></div>
+  <div class="mi"><span>Update speed</span><span class="seg"><span>High</span><span class="on">Normal</span><span>Low</span></span></div>
+  <div style="border-top:1px solid #3c3c3c;margin:4px 0"></div>
+  <div class="mi"><span>Show on taskbar</span><span class="sw"></span></div>
   <div class="mi"><span>Compact mode</span><span class="sw off"></span></div>
   <div class="mi"><span>Start with Windows</span><span class="sw"></span></div>
   <div style="border-top:1px solid #3c3c3c;margin:4px 0"></div>
-  <div class="mi"><span>Open Task Manager</span></div>
   <div class="mi"><span>Edit settings…</span></div>
   <div class="mi"><span>Quit</span></div>
 </div>

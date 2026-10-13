@@ -1,11 +1,16 @@
 # Rebuild, install and check the shared library tools, settings app and every registered widget.
 # Switches: -Fast (widgets' fast profile), -Only <lib|tools|app|widget-folder ...>, -Live.
 # Example: .\build_all.ps1 -Fast -Only tools app taskbar-weather -Live
+[CmdletBinding()]
 param(
     [switch]$Fast,
     [string[]]$Only = @(),
-    [switch]$Live
+    [switch]$Live,
+    # the names after the first in "-Only a b c": PowerShell binds only "a" to -Only (and without
+    # this would silently drop the rest)
+    [Parameter(ValueFromRemainingArguments = $true)][string[]]$MoreOnly = @()
 )
+$Only = @(@($Only) + @($MoreOnly) | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 
 $ErrorActionPreference = 'Continue'
 $dock = Split-Path $PSScriptRoot

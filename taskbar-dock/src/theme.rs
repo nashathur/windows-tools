@@ -371,6 +371,12 @@ pub const BRANDS: &[(&str, u32, u32)] = &[
     ("weather.snow", 0xC9E3F5, 0xC9E3F5),
     ("weather.thunderstorm", 0x8E44D9, 0x8E44D9),
     ("weather.hail", 0xC2389E, 0xC2389E),
+    // sysmon's metrics (strip values, sparklines, panel graphs); light: darker for a light taskbar
+    ("sysmon.cpu", 0x2F74C0, 0x85B7EB),
+    ("sysmon.gpu", 0x4E8A1E, 0x97C459),
+    ("sysmon.ram", 0x6B5FD0, 0xAFA9EC),
+    ("sysmon.down", 0x158A6A, 0x5DCAA5),
+    ("sysmon.up", 0xC8552F, 0xF0997B),
     // overrides
     // rain chance in Windows' default accent blue (the live accent would change it)
     ("weather.rain_bar", 0x0067C0, 0x60CDFF),
