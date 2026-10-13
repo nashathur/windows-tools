@@ -57,18 +57,12 @@ pub(crate) struct App {
 }
 
 fn log_file() -> std::path::PathBuf {
-    taskbar_dock::settings::dir().join("taskbar-discord.log")
+    taskbar_dock::log::path("taskbar-discord")
 }
 
 /// Appends a line to taskbar-discord.log in the settings folder. Never tokens or secrets.
 pub(crate) fn log(line: &str) {
-    use std::io::Write;
-    let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
-    // one write per line: the RPC worker logs too, and appends of whole lines don't interleave
-    let text = format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02} {line}\r\n", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_file()) {
-        let _ = f.write_all(text.as_bytes());
-    }
+    taskbar_dock::log::append(&log_file(), line);
 }
 
 /// The media strip's text column, px at 100% (its `max_width`): our strip is as wide as its own.
@@ -160,6 +154,11 @@ impl App {
 }
 
 impl Content for App {
+    /// The RPC connection and its call watch keep running while idle.
+    fn live_while_idle(&self) -> bool {
+        true
+    }
+
     fn commands(&self) -> Vec<(&'static str, &'static str)> {
         commands::commands()
     }

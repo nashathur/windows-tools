@@ -11,10 +11,10 @@ The settings app (WinUI 3, crate `settings-app`) for every registered widget, pl
 Highlight box settings and gliding strips for every widget: `step12.md` (decisions, 12a build
 notes), `step12b.md` (the 12b changes).
 
-## 12c. Open checks (next)
+## 12c. Open checks (done 2026-10-13)
 
-What 12 and 12b left to check live or to decide: `step12b.md` "Still open"; session prompt
-`step12c-session.md`.
+The live checks and small decisions left by 12 and 12b: `step12b.md` "12c". One idea left there
+("Still open": media's site colour for every tab).
 
 ## 13. One tray icon (idea)
 

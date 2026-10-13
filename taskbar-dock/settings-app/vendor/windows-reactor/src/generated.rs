@@ -71,6 +71,14 @@ pub mod public {
         Secondary,
     }
     #[non_exhaustive]
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    pub enum ContentDialogButton {
+        #[default]
+        None,
+        Primary,
+        Secondary,
+    }
+    #[non_exhaustive]
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub enum ButtonStyle {
         Default,
@@ -489,6 +497,7 @@ pub mod public {
     #[derive(Clone, Debug, Default, PartialEq)]
     pub struct Button {
         is_enabled: Property<bool>,
+        padding: Property<Thickness>,
         horizontal_content_alignment: Property<HorizontalAlignment>,
         vertical_content_alignment: Property<VerticalAlignment>,
         resource_overrides: Property<ResourceOverrides>,
@@ -510,6 +519,10 @@ pub mod public {
         pub fn is_enabled(mut self, value: impl Into<Option<bool>>) -> Self {
             let value = value.into();
             self.is_enabled = Property::from(value);
+            self
+        }
+        pub fn padding(mut self, value: impl Into<Thickness>) -> Self {
+            self.padding = Property::Set(value.into());
             self
         }
         pub fn horizontal_content_alignment(
@@ -3511,6 +3524,7 @@ pub mod public {
     #[derive(Clone, Debug, Default, PartialEq)]
     pub struct Expander {
         is_expanded: Property<bool>,
+        horizontal_content_alignment: Property<HorizontalAlignment>,
         on_is_expanded_changed: Option<Callback<bool>>,
         element_state: Option<std::rc::Rc<ElementState>>,
     }
@@ -3521,6 +3535,14 @@ pub mod public {
         pub fn is_expanded(mut self, value: impl Into<Option<bool>>) -> Self {
             let value = value.into();
             self.is_expanded = Property::from(value);
+            self
+        }
+        pub fn horizontal_content_alignment(
+            mut self,
+            value: impl Into<Option<HorizontalAlignment>>,
+        ) -> Self {
+            let value = value.into();
+            self.horizontal_content_alignment = Property::from(value);
             self
         }
         pub fn on_is_expanded_changed(mut self, callback: impl IntoPayloadCallback<bool>) -> Self {
@@ -4733,6 +4755,7 @@ pub mod public {
     #[derive(Clone, Debug, Default, PartialEq)]
     pub struct ContentDialog {
         title: Property<String>,
+        default_button: Property<ContentDialogButton>,
         primary_button_text: Property<String>,
         secondary_button_text: Property<String>,
         close_button_text: Property<String>,
@@ -4752,6 +4775,10 @@ pub mod public {
         }
         pub fn title(mut self, value: impl Into<String>) -> Self {
             self.title = Property::Set(value.into());
+            self
+        }
+        pub fn default_button(mut self, value: ContentDialogButton) -> Self {
+            self.default_button = Property::Set(value);
             self
         }
         pub fn title_optional<T>(mut self, value: Option<T>) -> Self
@@ -6452,6 +6479,7 @@ pub mod public {
                     let value = std::rc::Rc::unwrap_or_clone(value);
                     let Button {
                         is_enabled,
+                        padding,
                         horizontal_content_alignment,
                         vertical_content_alignment,
                         resource_overrides,
@@ -6466,6 +6494,7 @@ pub mod public {
                         kind: MountedKind::Button,
                         props: MountedProps::Button(std::rc::Rc::new(ButtonMountedProps {
                             is_enabled,
+                            padding,
                             horizontal_content_alignment,
                             vertical_content_alignment,
                             resource_overrides,
@@ -7489,6 +7518,7 @@ pub mod public {
                     let value = std::rc::Rc::unwrap_or_clone(value);
                     let Expander {
                         is_expanded,
+                        horizontal_content_alignment,
                         on_is_expanded_changed,
                         element_state,
                     } = value;
@@ -7496,6 +7526,7 @@ pub mod public {
                         kind: MountedKind::Expander,
                         props: MountedProps::Expander(std::rc::Rc::new(ExpanderMountedProps {
                             is_expanded,
+                            horizontal_content_alignment,
                             on_is_expanded_changed,
                         })),
                         reference: None,
@@ -7953,6 +7984,7 @@ pub mod public {
                     let value = std::rc::Rc::unwrap_or_clone(value);
                     let ContentDialog {
                         title,
+                        default_button,
                         primary_button_text,
                         secondary_button_text,
                         close_button_text,
@@ -7967,6 +7999,7 @@ pub mod public {
                         props: MountedProps::ContentDialog(std::rc::Rc::new(
                             ContentDialogMountedProps {
                                 title,
+                                default_button,
                                 primary_button_text,
                                 secondary_button_text,
                                 close_button_text,
@@ -8263,6 +8296,7 @@ pub mod public {
                 }
                 (Self::Button(value), MountedProps::Button(mounted)) => {
                     true && value.is_enabled == mounted.is_enabled
+                        && value.padding == mounted.padding
                         && value.horizontal_content_alignment
                             == mounted.horizontal_content_alignment
                         && value.vertical_content_alignment == mounted.vertical_content_alignment
@@ -8527,6 +8561,7 @@ pub mod public {
                 }
                 (Self::Expander(value), MountedProps::Expander(mounted)) => {
                     true && value.is_expanded == mounted.is_expanded
+                        && value.horizontal_content_alignment == mounted.horizontal_content_alignment
                         && value.on_is_expanded_changed == mounted.on_is_expanded_changed
                 }
                 (Self::ComboBox(value), MountedProps::ComboBox(mounted)) => {
@@ -8628,6 +8663,7 @@ pub mod public {
                 (Self::ToolTip(_), MountedProps::ToolTip(_)) => true,
                 (Self::ContentDialog(value), MountedProps::ContentDialog(mounted)) => {
                     true && value.title == mounted.title
+                        && value.default_button == mounted.default_button
                         && value.primary_button_text == mounted.primary_button_text
                         && value.secondary_button_text == mounted.secondary_button_text
                         && value.close_button_text == mounted.close_button_text
@@ -9476,6 +9512,13 @@ impl MountedPropsExt for MountedProps {
                 );
             }
             Self::Button(values) => {
+                visit(
+                    PropertyId::ButtonPadding,
+                    match &values.padding {
+                        Property::Inherited => None,
+                        Property::Set(value) => Some(PropertyValueRef::Thickness(value)),
+                    },
+                );
                 visit(
                     PropertyId::ButtonIsEnabled,
                     match &values.is_enabled {
@@ -10636,6 +10679,13 @@ impl MountedPropsExt for MountedProps {
                         Property::Set(value) => Some(PropertyValueRef::Bool(*value)),
                     },
                 );
+                visit(
+                    PropertyId::ExpanderHorizontalContentAlignment,
+                    match &values.horizontal_content_alignment {
+                        Property::Inherited => None,
+                        Property::Set(value) => Some(PropertyValueRef::HorizontalAlignment(*value)),
+                    },
+                );
             }
             Self::ComboBox(values) => {
                 visit(
@@ -10999,6 +11049,15 @@ impl MountedPropsExt for MountedProps {
             }
             Self::ToolTip(_) => {}
             Self::ContentDialog(values) => {
+                visit(
+                    PropertyId::ContentDialogDefaultButton,
+                    match &values.default_button {
+                        Property::Inherited => None,
+                        Property::Set(ContentDialogButton::None) => Some(PropertyValueRef::I32(0)),
+                        Property::Set(ContentDialogButton::Primary) => Some(PropertyValueRef::I32(1)),
+                        Property::Set(ContentDialogButton::Secondary) => Some(PropertyValueRef::I32(2)),
+                    },
+                );
                 visit(
                     PropertyId::ContentDialogTitle,
                     match &values.title {
@@ -12679,6 +12738,7 @@ impl PartialEq for TextBlockMountedProps {
 #[derive(Clone, Debug)]
 pub(crate) struct ButtonMountedProps {
     is_enabled: Property<bool>,
+    padding: Property<Thickness>,
     horizontal_content_alignment: Property<HorizontalAlignment>,
     vertical_content_alignment: Property<VerticalAlignment>,
     resource_overrides: Property<ResourceOverrides>,
@@ -12689,6 +12749,7 @@ pub(crate) struct ButtonMountedProps {
 impl PartialEq for ButtonMountedProps {
     fn eq(&self, other: &Self) -> bool {
         true && self.is_enabled == other.is_enabled
+            && self.padding == other.padding
             && self.horizontal_content_alignment == other.horizontal_content_alignment
             && self.vertical_content_alignment == other.vertical_content_alignment
             && self.resource_overrides == other.resource_overrides
@@ -13315,11 +13376,13 @@ impl PartialEq for RatingControlMountedProps {
 #[derive(Clone, Debug)]
 pub(crate) struct ExpanderMountedProps {
     is_expanded: Property<bool>,
+    horizontal_content_alignment: Property<HorizontalAlignment>,
     on_is_expanded_changed: Option<Callback<bool>>,
 }
 impl PartialEq for ExpanderMountedProps {
     fn eq(&self, other: &Self) -> bool {
         true && self.is_expanded == other.is_expanded
+            && self.horizontal_content_alignment == other.horizontal_content_alignment
             && self.on_is_expanded_changed == other.on_is_expanded_changed
     }
 }
@@ -13588,6 +13651,7 @@ impl PartialEq for ToolTipMountedProps {
 #[derive(Clone, Debug)]
 pub(crate) struct ContentDialogMountedProps {
     title: Property<String>,
+    default_button: Property<ContentDialogButton>,
     primary_button_text: Property<String>,
     secondary_button_text: Property<String>,
     close_button_text: Property<String>,
@@ -13598,6 +13662,7 @@ pub(crate) struct ContentDialogMountedProps {
 impl PartialEq for ContentDialogMountedProps {
     fn eq(&self, other: &Self) -> bool {
         true && self.title == other.title
+            && self.default_button == other.default_button
             && self.primary_button_text == other.primary_button_text
             && self.secondary_button_text == other.secondary_button_text
             && self.close_button_text == other.close_button_text
@@ -13898,6 +13963,7 @@ pub enum PropertyId {
     TextBlockTextTrimming,
     TextBlockForeground,
     ButtonIsEnabled,
+    ButtonPadding,
     ButtonHorizontalContentAlignment,
     ButtonVerticalContentAlignment,
     ButtonResources,
@@ -14044,6 +14110,7 @@ pub enum PropertyId {
     RatingControlCaption,
     RatingControlIsReadOnly,
     ExpanderIsExpanded,
+    ExpanderHorizontalContentAlignment,
     ComboBoxItemsSource,
     ComboBoxSelectedIndex,
     ComboBoxPlaceholderText,
@@ -14091,6 +14158,7 @@ pub enum PropertyId {
     CalendarDatePickerIsCalendarOpen,
     CalendarDatePickerIsEnabled,
     ContentDialogTitle,
+    ContentDialogDefaultButton,
     ContentDialogPrimaryButtonText,
     ContentDialogSecondaryButtonText,
     ContentDialogCloseButtonText,
@@ -14874,6 +14942,17 @@ const TEXT_BLOCK_PROPERTIES: &[PropertyDescriptor] = &[
 const TEXT_BLOCK_EVENTS: &[EventDescriptor] = &[];
 const TEXT_BLOCK_SLOTS: &[SlotDescriptor] = &[];
 const BUTTON_PROPERTIES: &[PropertyDescriptor] = &[
+    PropertyDescriptor {
+        id: PropertyId::ButtonPadding,
+        name: "Padding",
+        field: "padding",
+        value: "Thickness",
+        interface: "Microsoft.UI.Xaml.Controls.IControl",
+        clearable: false,
+        feedback: None,
+        feedback_contract: None,
+        observes_feedback: false,
+    },
     PropertyDescriptor {
         id: PropertyId::ButtonIsEnabled,
         name: "IsEnabled",
@@ -17059,6 +17138,16 @@ const EXPANDER_PROPERTIES: &[PropertyDescriptor] = &[PropertyDescriptor {
     feedback: Some("IsExpandedChanged"),
     feedback_contract: Some("synchronous_exact"),
     observes_feedback: true,
+}, PropertyDescriptor {
+    id: PropertyId::ExpanderHorizontalContentAlignment,
+    name: "HorizontalContentAlignment",
+    field: "horizontal_content_alignment",
+    value: "HorizontalAlignment",
+    interface: "Microsoft.UI.Xaml.Controls.IControl",
+    clearable: true,
+    feedback: None,
+    feedback_contract: None,
+    observes_feedback: false,
 }];
 const EXPANDER_EVENTS: &[EventDescriptor] = &[EventDescriptor {
     id: EventId::ExpanderIsExpandedChanged,
@@ -17850,6 +17939,17 @@ const TOOL_TIP_PROPERTIES: &[PropertyDescriptor] = &[];
 const TOOL_TIP_EVENTS: &[EventDescriptor] = &[];
 const TOOL_TIP_SLOTS: &[SlotDescriptor] = &[];
 const CONTENT_DIALOG_PROPERTIES: &[PropertyDescriptor] = &[
+    PropertyDescriptor {
+        id: PropertyId::ContentDialogDefaultButton,
+        name: "DefaultButton",
+        field: "default_button",
+        value: "I32",
+        interface: "Microsoft.UI.Xaml.Controls.IContentDialog",
+        clearable: false,
+        feedback: None,
+        feedback_contract: None,
+        observes_feedback: false,
+    },
     PropertyDescriptor {
         id: PropertyId::ContentDialogTitle,
         name: "Title",

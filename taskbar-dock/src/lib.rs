@@ -20,6 +20,7 @@
 //!   line up with the tray icons.
 //! - [`anim`]: easing, and a slow pulse for "alive, nothing else to show".
 //! - [`marquee`]: scrolling text for a line too long for its box.
+//! - [`log`]: shared timestamped widget logs in the settings folder, with size rotation.
 //! - [`menu_panel`]: the right-click panel (a widget's menu in the panels' look, with switches).
 //! - [`strip`]: how a strip moves in the dock (glide to its slot, drag to reorder, zoom while
 //!   picked up), one behaviour for every widget.
@@ -45,6 +46,7 @@ pub mod dock;
 pub mod draw;
 pub mod emoji;
 pub mod icons;
+pub mod log;
 pub mod marquee;
 pub mod menu_panel;
 pub mod panel;

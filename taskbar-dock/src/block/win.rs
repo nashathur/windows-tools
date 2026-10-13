@@ -318,6 +318,7 @@ fn refresh_idle() {
     }
     log(if idle { "idle" } else { "awake" });
     call(|c, ctx| c.idle(idle, ctx));
+    tray_sync(false, false); // the tooltip says whether it's paused
 }
 
 fn apply(reqs: Vec<Request>) {
@@ -1372,10 +1373,8 @@ fn tray_sync(redo: bool, re_add: bool) {
                 s.has_tray = false;
             }
         }
-        let mut tip = s.content.tray_tip();
-        if tip.is_empty() {
-            tip = s.spec.title.to_string();
-        }
+        let idle = core::idle(s.core.show, s.has_tray, s.panel != 0);
+        let tip = core::tray_tip(s.content.tray_tip(), s.spec.title, idle, s.content.live_while_idle());
         if tip != s.tray_tip {
             s.tray_tip = tip.clone();
             changed = true;

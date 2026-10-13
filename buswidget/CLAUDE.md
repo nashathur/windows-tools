@@ -3,7 +3,7 @@
 @../taskbar-dock/CLAUDE.md
 
 Rust (`windows-sys`), crate in `rust\`. Runs from a copy: `buswidget.exe` in this folder
-(dev.ps1 copies it). Data folder `data\` next to the exe: `buswidget.log`, `schedule.tsv`
+(dev.ps1 copies it). Data folder `data\` next to the exe: `schedule.tsv`; log: `%APPDATA%\TaskbarDock\buswidget.log`.
 (timetable built from the GTFS zip; ovapi.nl may answer 429, it retries after 180 min),
 `line_colors.txt`. Settings section `bus`; start with Windows via the shared `startup` list
 (switch in the right-click panel). `compact: true`: badge + next two departures on two lines.

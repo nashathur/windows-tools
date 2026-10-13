@@ -112,11 +112,13 @@ is not Idle. Block keeps the process loaded, pauses all content timers, and re-a
 requested when the widget wakes. `Content::idle` pauses or resumes work outside those timers; opening
 a tray panel or turning Show on taskbar on wakes it and requests an immediate fetch. Weather and bus
 pause their fetch workers; media keeps its session watch, and Discord keeps its RPC connection and
-`VOICE_CHANNEL_SELECT` watch. dockctl `ping` and `state` report `idle`; Settings shows “Idle” with a
+`VOICE_CHANNEL_SELECT` watch. While idle the tray tooltip is Block's "<title>: paused. Click to
+update." instead of `Content::tray_tip` (which would show old or no data), unless
+`Content::live_while_idle` says the data stays live (Discord, media). dockctl `ping` and `state` report `idle`; Settings shows “Idle” with a
 neutral dot and the process id.
 
 ## Settings Block owns
 Block owns the section's `compact` and `show_on_taskbar` keys. A widget writes only keys the user
 changed; on start it fills absent keys with `settings::fill_missing`, preserving Block's keys and
 any values already in the section. If the section did not exist before first start, Block enables
-Start with Windows; later user changes are kept. Block also owns `highlight`, `highlight_color` and `highlight_strength` in every widget section.
+Start with Windows; later user changes are kept. Block also owns `highlight`, `highlight_color` and `highlight_strength` in every widget section. The Colour row shows only when Highlight box Mode is Chosen colour.

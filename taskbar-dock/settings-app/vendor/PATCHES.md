@@ -21,3 +21,5 @@ Not patched: sliders have no key-up event, so the app writes a keyboard-changed 
 - `src/native/winui/bootstrap.rs` (part of the runtime patch): `GetPackagePathByFullName` returns a
   Win32 status; any non-zero result is an error, and the path is cut to the buffer.
 - `src/element.rs`, `src/generated.rs`, `src/native/winui/bindings.rs`, `src/native/winui/generated.rs`: add Border entrance transitions using `UIElement.Transitions` and a non-staggered `EntranceThemeTransition`; bind its real interface and `TransitionCollection`'s `IVector<Transition>` default interface.
+- `src/element.rs`, `src/generated.rs`, `src/native/winui/bindings.rs`, `src/native/winui/generated.rs`: expose the WinUI `ControlStrokeColorDefaultBrush`, add `Button::padding` through `IControl.SetPadding`, and add `ContentDialog::default_button` through `IContentDialog.SetDefaultButton` (including `ContentDialogButton`) for swatches and the primary Done button.
+- `src/generated.rs`, `src/native/winui/generated.rs`: add `Expander::horizontal_content_alignment` through `IControl.SetHorizontalContentAlignment`, so expanded content can stretch across its row.

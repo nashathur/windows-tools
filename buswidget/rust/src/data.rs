@@ -286,10 +286,8 @@ pub fn clock(t: i64, fmt: &str) -> String {
     Amsterdam.timestamp_opt(t, 0).single().map(|d| d.format(fmt).to_string()).unwrap_or_default()
 }
 
-pub fn log(dir: &Path, msg: &str) {
-    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(dir.join("buswidget.log")) {
-        let _ = writeln!(f, "{} {}", Utc::now().with_timezone(&Amsterdam).format("%Y-%m-%d %H:%M:%S"), msg);
-    }
+pub fn log(_dir: &Path, msg: &str) {
+    taskbar_dock::log::append(&taskbar_dock::log::path("buswidget"), msg);
 }
 
 /// GTFS time: seconds after "noon minus 12h" local time on the service date.

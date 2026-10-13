@@ -81,11 +81,6 @@ pub(crate) fn data_dir() -> &'static PathBuf {
     })
 }
 
-/// The cache and log directory beside the executable, without creating it.
-pub(crate) fn data_dir_path() -> PathBuf {
-    std::env::current_exe().ok().and_then(|e|e.parent().map(|p|p.join("data"))).unwrap_or_else(||PathBuf::from("data"))
-}
-
 pub(crate) fn worker() {
     let dir = data_dir();
     if let Some(s) = data::load_schedule(dir) {

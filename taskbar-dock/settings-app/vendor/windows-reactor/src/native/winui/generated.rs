@@ -905,6 +905,23 @@ pub fn set_property(
         }
         (
             Handle::Button(control),
+            PropertyId::ButtonPadding,
+            PropertyValue::Thickness(value),
+        ) => control
+            .cast::<IControl>()
+            .map_err(native_error)?
+            .SetPadding({
+                let [left, top, right, bottom] = value.values();
+                bindings::Thickness {
+                    left,
+                    top,
+                    right,
+                    bottom,
+                }
+            })
+            .map_err(native_error),
+        (
+            Handle::Button(control),
             PropertyId::ButtonHorizontalContentAlignment,
             PropertyValue::HorizontalAlignment(value),
         ) => control
@@ -2340,6 +2357,16 @@ pub fn set_property(
         (Handle::Expander(control), PropertyId::ExpanderIsExpanded, PropertyValue::Bool(value)) => {
             control.SetIsExpanded(*value).map_err(native_error)
         }
+        (Handle::Expander(control), PropertyId::ExpanderHorizontalContentAlignment, PropertyValue::HorizontalAlignment(value)) => control
+            .cast::<IControl>()
+            .map_err(native_error)?
+            .SetHorizontalContentAlignment(match value {
+                crate::HorizontalAlignment::Left => bindings::HorizontalAlignment::Left,
+                crate::HorizontalAlignment::Center => bindings::HorizontalAlignment::Center,
+                crate::HorizontalAlignment::Right => bindings::HorizontalAlignment::Right,
+                crate::HorizontalAlignment::Stretch => bindings::HorizontalAlignment::Stretch,
+            })
+            .map_err(native_error),
         (
             Handle::ComboBox(control),
             PropertyId::ComboBoxItemsSource,
@@ -2692,6 +2719,11 @@ pub fn set_property(
             .map_err(native_error)?
             .SetIsEnabled(*value)
             .map_err(native_error),
+        (
+            Handle::ContentDialog(control),
+            PropertyId::ContentDialogDefaultButton,
+            PropertyValue::I32(value),
+        ) => control.SetDefaultButton(*value).map_err(native_error),
         (
             Handle::ContentDialog(control),
             PropertyId::ContentDialogTitle,
@@ -3535,6 +3567,9 @@ pub fn clear_property(handle: &Handle, property: PropertyId) -> Result<(), Runti
             .map_err(native_error),
         (Handle::Expander(_), PropertyId::ExpanderIsExpanded) => dependency_object
             .ClearValue(&bindings::Expander::IsExpandedProperty().map_err(native_error)?)
+            .map_err(native_error),
+        (Handle::Expander(_), PropertyId::ExpanderHorizontalContentAlignment) => dependency_object
+            .ClearValue(&bindings::Control::HorizontalContentAlignmentProperty().map_err(native_error)?)
             .map_err(native_error),
         (Handle::ComboBox(_), PropertyId::ComboBoxItemsSource) => dependency_object
             .ClearValue(&bindings::ItemsControl::ItemsSourceProperty().map_err(native_error)?)

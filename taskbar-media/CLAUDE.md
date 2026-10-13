@@ -4,7 +4,7 @@
 
 Rust, `windows` 0.58 crate (WinRT GSMTC + Win32). User docs: README.md.
 Runs from a copy: `taskbar-media.exe` here (dev.ps1 stops, copies, restarts). Log:
-`taskbar-media.log` (also panics). Learned real-time table: `progress.txt`. Logo cache: `logos\`.
+`%APPDATA%\TaskbarDock\taskbar-media.log` (also panics; rotates above 256 KB to `.log.old`). Learned real-time table: `progress.txt`. Logo cache: `logos\`.
 
 ## Files (src/)
 Everything about the strip window, dock, panels, tray icon and the standard menu rows is Block's

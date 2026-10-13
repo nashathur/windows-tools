@@ -7417,6 +7417,15 @@ impl IContentDialog {
             (windows_core::Interface::vtable(self).Hide)(windows_core::Interface::as_raw(self)).ok()
         }
     }
+    pub(crate) fn SetDefaultButton(&self, value: i32) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetDefaultButton)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
     pub(crate) fn ShowAsync(
         &self,
     ) -> windows_core::Result<windows_future::IAsyncOperation<ContentDialogResult>> {
@@ -7482,7 +7491,8 @@ pub struct IContentDialog_Vtbl {
     CloseButtonStyle: usize,
     SetCloseButtonStyle: usize,
     DefaultButton: usize,
-    SetDefaultButton: usize,
+    pub SetDefaultButton:
+        unsafe extern "system" fn(*mut core::ffi::c_void, i32) -> windows_core::HRESULT,
     Closing: usize,
     RemoveClosing: usize,
     pub Closed: unsafe extern "system" fn(
@@ -7642,6 +7652,15 @@ impl IControl {
             .ok()
         }
     }
+    pub(crate) fn SetPadding(&self, value: Thickness) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetPadding)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
     pub(crate) fn SetBackground<P0>(&self, value: P0) -> windows_core::Result<()>
     where
         P0: windows_core::Param<Brush>,
@@ -7709,7 +7728,8 @@ pub struct IControl_Vtbl {
     Template: usize,
     SetTemplate: usize,
     Padding: usize,
-    SetPadding: usize,
+    pub SetPadding:
+        unsafe extern "system" fn(*mut core::ffi::c_void, Thickness) -> windows_core::HRESULT,
     HorizontalContentAlignment: usize,
     pub SetHorizontalContentAlignment: unsafe extern "system" fn(
         *mut core::ffi::c_void,

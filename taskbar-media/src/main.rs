@@ -117,20 +117,12 @@ pub(crate) struct App {
 }
 
 fn log_file() -> std::path::PathBuf {
-    std::env::current_exe().map(|e| e.with_file_name("taskbar-media.log")).unwrap_or_else(|_| "taskbar-media.log".into())
+    taskbar_dock::log::path("taskbar-media")
 }
 
-/// Appends a line to taskbar-media.log next to the exe (kept small).
+/// Appends a line to taskbar-media.log in the settings folder.
 pub fn log(line: &str) {
-    let path = log_file();
-    if std::fs::metadata(&path).is_ok_and(|m| m.len() > 256 * 1024) {
-        let _ = std::fs::rename(&path, path.with_extension("log.old"));
-    }
-    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        use std::io::Write;
-        let _ = writeln!(f, "{now} {line}");
-    }
+    taskbar_dock::log::append(&log_file(), line);
 }
 
 impl App {
@@ -250,6 +242,11 @@ impl App {
 }
 
 impl Content for App {
+    /// The media session watch keeps running while idle.
+    fn live_while_idle(&self) -> bool {
+        true
+    }
+
     fn tint_allowed(&self) -> bool {
         !high_contrast()
     }

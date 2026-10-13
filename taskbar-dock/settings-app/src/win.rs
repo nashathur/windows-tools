@@ -64,6 +64,9 @@ enum Message {
     Action(String, String),
     Restore(String),
     Expand(String, bool),
+    DialogOpen(String, String),
+    DialogColor(String),
+    DialogClosed(ContentDialogResult),
     RefreshDeveloper,
     Copy(usize),
     RegisterDialog,
@@ -374,6 +377,7 @@ struct Model {
     /// Widgets with a Start / Stop / Restart running; a second one is refused meanwhile.
     busy: std::collections::HashSet<String>,
     expanded: HashMap<String, bool>,
+    color_dialog: Option<(String, String, String)>,
     developer_details: Vec<Value>,
     developer_raw: Option<String>,
     developer_badge: String,
@@ -419,6 +423,7 @@ impl Component for Model {
             pending_actions: HashMap::new(),
             busy: std::collections::HashSet::new(),
             expanded: HashMap::new(),
+            color_dialog: None,
             developer_details: vec![],
             developer_raw: Some("Loading settings…".into()),
             developer_badge: String::new(),
@@ -440,6 +445,44 @@ impl Component for Model {
             Message::Restore(group) => self.restore_group(&group),
             Message::Expand(id, expanded) => {
                 self.expanded.insert(id, expanded);
+            }
+            Message::DialogOpen(section, key) => {
+                let row = self
+                    .rows
+                    .iter()
+                    .find(|r| r.section == section && r.key == key);
+                if let Some(row) = row {
+                    let color = row
+                        .value
+                        .as_str()
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.trim_start_matches('#').to_ascii_uppercase())
+                        .unwrap_or_else(|| "0078D4".into());
+                    self.color_dialog = Some((section, key, color));
+                    self.expanded.insert(format!("color:{}", row_id(row)), true);
+                }
+            }
+            Message::DialogColor(color) => {
+                if let Some((_, _, current)) = &mut self.color_dialog {
+                    *current = color;
+                }
+            }
+            Message::DialogClosed(result) => {
+                if let Some((section, key, color)) = self.color_dialog.take() {
+                    if result == ContentDialogResult::Primary {
+                        let hash = self
+                            .rows
+                            .iter()
+                            .find(|r| r.section == section && r.key == key)
+                            .is_some_and(|r| {
+                                matches!(r.setting.kind, Kind::Color { hash: true, .. })
+                            });
+                        let text = if hash { format!("#{color}") } else { color };
+                        if let Err(error) = self.set(&section, &key, &text) {
+                            self.show_badge(format!("Not saved: {error}"), false, ctx);
+                        }
+                    }
+                }
             }
             Message::RefreshDeveloper => self.refresh_developer(true),
             Message::Copy(index) => {
@@ -550,7 +593,10 @@ impl Component for Model {
                     self.refresh_developer(true);
                 }
             }
-            Message::Work(WorkResult::File { result: Ok(v), mtime }) => {
+            Message::Work(WorkResult::File {
+                result: Ok(v),
+                mtime,
+            }) => {
                 // Reads run on their own threads: an older snapshot arriving late is dropped.
                 if let (Some(shown), Some(read)) = (self.file_mtime, mtime) {
                     if read < shown {
@@ -595,6 +641,7 @@ impl Component for Model {
                         result.as_ref().err().cloned(),
                     );
                 }
+                self.refresh_visibility();
                 // An older write's result never replaces the badge of a newer one.
                 if sequence >= self.badge_seq {
                     self.badge_seq = sequence;
@@ -615,7 +662,10 @@ impl Component for Model {
                 }
                 self.finished.insert(
                     sequence,
-                    result.as_ref().err().map(|e| format!("{section}.{key}: {e}")),
+                    result
+                        .as_ref()
+                        .err()
+                        .map(|e| format!("{section}.{key}: {e}")),
                 );
                 self.finished.retain(|seq, _| *seq + 256 > sequence);
                 let mut done = Vec::new();
@@ -648,7 +698,11 @@ impl Component for Model {
             }) => {
                 self.busy.remove(&name);
                 let title = self.title_of(&name);
-                self.show_badge(action_badge(&title, &action, &result, warning.as_deref()), false, ctx);
+                self.show_badge(
+                    action_badge(&title, &action, &result, warning.as_deref()),
+                    false,
+                    ctx,
+                );
                 if let Some(refresh) = &self.status_refresh {
                     let _ = refresh.send(());
                 }
@@ -755,7 +809,9 @@ impl Component for Model {
                             Ok(()) => json!({"ok":true}),
                             Err(error) => json!({"ok":false,"error":error}),
                         },
-                        None => json!({"ok":false,"error":"no switch row with that id on this page"}),
+                        None => {
+                            json!({"ok":false,"error":"no switch row with that id on this page"})
+                        }
                     },
                     Ok(C::Click(id)) => self.remote_click(&id, ctx),
                     Ok(C::Key(key)) => {
@@ -992,7 +1048,7 @@ impl Model {
             let value = if secret && !row.value.as_str().unwrap_or_default().is_empty() { json!("***") } else { row.value.clone() };
             let default = if secret && !row.default.as_str().unwrap_or_default().is_empty() { json!("***") } else { row.default.clone() };
             let kind = match row.control() { Control::Switch=>"switch",Control::Dropdown=>"dropdown",Control::Slider=>"slider",Control::NumberBox=>"numberbox",Control::Text=>"text",Control::Color=>"color",Control::Secret=>"secret",Control::Auto=>"auto" };
-            json!({"id":row_id(row),"label":row.setting.label,"kind":kind,"value":value,"default":default,"draft":if secret && row.draft.is_some() { Some("***") } else { row.draft.as_deref() },"error":row.error,"enabled":row.enabled})
+            json!({"id":row_id(row),"label":row.setting.label,"kind":kind,"value":value,"default":default,"draft":if secret && row.draft.is_some() { Some("***") } else { row.draft.as_deref() },"error":row.error,"enabled":row.enabled,"shown":row.shown})
         }).collect::<Vec<_>>();
         let widgets = self.widgets.iter().map(|widget| json!({"name":widget.name,"title":widget.title,"status":widget.status,"pid":widget.pid})).collect::<Vec<_>>();
         let rect = has_rect.then(
@@ -1006,7 +1062,7 @@ impl Model {
                     let value = if secret && !row.value.as_str().unwrap_or_default().is_empty() { json!("***") } else { row.value.clone() };
                     let default = if secret && !row.default.as_str().unwrap_or_default().is_empty() { json!("***") } else { row.default.clone() };
                     let draft = if secret && row.draft.is_some() { Some("***") } else { row.draft.as_deref() };
-                    json!({"id":row_id(row),"label":row.setting.label,"kind":format!("{:?}",row.control()).to_lowercase(),"value":value,"default":default,"draft":draft,"error":row.error,"enabled":row.enabled})
+                    json!({"id":row_id(row),"label":row.setting.label,"kind":format!("{:?}",row.control()).to_lowercase(),"value":value,"default":default,"draft":draft,"error":row.error,"enabled":row.enabled,"shown":row.shown})
                 }).collect::<Vec<_>>()
             })).collect::<Vec<_>>();
             let registered = model::registered_widgets(&self.entries).into_iter().map(|item| json!({"name":item.name,"title":item.title,"exe":item.exe,"error":item.error})).collect::<Vec<_>>();
@@ -1014,7 +1070,11 @@ impl Model {
         } else {
             Value::Null
         };
-        json!({"ok":true,"page":page_name(&self.page),"title":actual_title,"visible":visible,"rect":rect,"scale":scale,"banner":self.banner,"badge":self.badge,"rows":rows,"widgets":widgets,"focused":Value::Null,"cards":cards,"runtime":self.runtime})
+        let dialog = self
+            .color_dialog
+            .as_ref()
+            .map(|(section, key, color)| json!({"row":format!("{section}.{key}"),"color":color}));
+        json!({"ok":true,"page":page_name(&self.page),"title":actual_title,"visible":visible,"rect":rect,"scale":scale,"banner":self.banner,"badge":self.badge,"rows":rows,"widgets":widgets,"focused":Value::Null,"cards":cards,"runtime":self.runtime,"dialog":dialog})
     }
     fn page_title(&self) -> String {
         match &self.page {
@@ -1064,10 +1124,12 @@ impl Model {
                 .find(|old| old.section == row.section && old.key == row.key)
             {
                 if old.draft.is_some() || old.pending.is_some() || old.error.is_some() {
-                    // Keep the edit, pending write and error; enablement is always derived anew.
+                    // Keep the edit, pending write and error; enablement and visibility are derived anew.
                     let enabled = row.enabled;
+                    let shown = row.shown;
                     *row = old.clone();
                     row.enabled = enabled;
+                    row.shown = shown;
                 }
             }
             if self.banner.is_some() {
@@ -1075,6 +1137,43 @@ impl Model {
             }
         }
         self.rows = next;
+        self.drop_orphan_dialog();
+    }
+    /// Forgets the custom-colour dialog once its row is gone or hidden: WinUI hides a removed
+    /// dialog without its Closed event, which would leave `dialog` in state and reopen it later.
+    fn drop_orphan_dialog(&mut self) {
+        let open = self.color_dialog.as_ref().is_some_and(|(s, k, _)| {
+            self.rows.iter().any(|r| &r.section == s && &r.key == k && r.shown)
+        });
+        if !open {
+            self.color_dialog = None;
+        }
+    }
+    /// Re-evaluates visibility after a successful local write before the file watcher replies.
+    fn refresh_visibility(&mut self) {
+        let sections = self
+            .rows
+            .iter()
+            .map(|row| row.section.clone())
+            .collect::<std::collections::HashSet<_>>();
+        for section in sections {
+            let mut values = self
+                .settings
+                .get(&section)
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            for row in self
+                .rows
+                .iter()
+                .filter(|row| row.section == section && row.key != "startup")
+            {
+                set_json_path(&mut values, &row.key, row.value.clone());
+            }
+            for row in self.rows.iter_mut().filter(|row| row.section == section) {
+                row.shown = model::shown_when_matches(&row.setting, &values);
+            }
+        }
+        self.drop_orphan_dialog();
     }
     fn refresh_widgets(&mut self) {
         self.widgets = model::registered_widgets(&self.entries)
@@ -1223,7 +1322,11 @@ impl Model {
     /// Writes a row's described default (dockctl `row <id> reset`).
     fn reset_row(&mut self, section: &str, key: &str) -> Result<(), String> {
         let (target, follow) = self.target(section)?;
-        if !self.rows.iter().any(|r| r.section == section && r.key == key) {
+        if !self
+            .rows
+            .iter()
+            .any(|r| r.section == section && r.key == key)
+        {
             return Err("row is not on the current page".into());
         }
         let sequence = self.seq + 1;
@@ -1375,6 +1478,100 @@ impl Model {
         Some((row.section.clone(), row.key.clone(), text))
     }
     fn remote_click(&mut self, id: &str, ctx: &ComponentContext<Self>) -> Value {
+        if id == "dialog:done" || id == "dialog:cancel" {
+            let Some((section, key, color)) = self.color_dialog.take() else {
+                return json!({"ok":false,"error":"no custom colour dialog is open"});
+            };
+            if id == "dialog:done" {
+                let hash = self
+                    .rows
+                    .iter()
+                    .find(|r| r.section == section && r.key == key)
+                    .is_some_and(|r| matches!(r.setting.kind, Kind::Color { hash: true, .. }));
+                let text = if hash { format!("#{color}") } else { color };
+                return match self.set(&section, &key, &text) {
+                    Ok(()) => json!({"ok":true}),
+                    Err(error) => json!({"ok":false,"error":error}),
+                };
+            }
+            return json!({"ok":true});
+        }
+        if let Some(id) = id.strip_prefix("automatic:") {
+            return match self.row_key(id) {
+                Some((section, key))
+                    if self.rows.iter().any(|r| {
+                        r.section == section
+                            && r.key == key
+                            && matches!(r.setting.kind, Kind::Color { empty_ok: true, .. })
+                    }) =>
+                {
+                    match self.set(&section, &key, "") {
+                        Ok(()) => json!({"ok":true}),
+                        Err(error) => json!({"ok":false,"error":error}),
+                    }
+                }
+                _ => {
+                    json!({"ok":false,"error":"no automatic colour row with that id on this page"})
+                }
+            };
+        }
+        if let Some(target) = id.strip_prefix("swatch:") {
+            if let Some((row_id, color)) = target.rsplit_once(':') {
+                if color.len() == 6 && color.chars().all(|c| c.is_ascii_hexdigit()) {
+                    if let Some((section, key)) = self.row_key(row_id) {
+                        // only a colour row: a swatch id naming another row must not write it
+                        let Some(hash) = self
+                            .rows
+                            .iter()
+                            .find(|r| r.section == section && r.key == key)
+                            .and_then(|r| match r.setting.kind {
+                                Kind::Color { hash, .. } => Some(hash),
+                                _ => None,
+                            })
+                        else {
+                            return json!({"ok":false,"error":"no colour row with that id on this page"});
+                        };
+                        let text = if hash {
+                            format!("#{color}")
+                        } else {
+                            color.to_string()
+                        };
+                        return match self.set(&section, &key, &text) {
+                            Ok(()) => json!({"ok":true}),
+                            Err(error) => json!({"ok":false,"error":error}),
+                        };
+                    }
+                }
+            }
+            return json!({"ok":false,"error":"invalid colour swatch target"});
+        }
+        if let Some(id) = id.strip_prefix("custom:") {
+            return match self.row_key(id) {
+                Some((section, key))
+                    if self.rows.iter().any(|r| {
+                        r.section == section
+                            && r.key == key
+                            && matches!(r.setting.kind, Kind::Color { .. })
+                    }) =>
+                {
+                    let row = self
+                        .rows
+                        .iter()
+                        .find(|r| r.section == section && r.key == key)
+                        .unwrap();
+                    let color = row
+                        .value
+                        .as_str()
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.trim_start_matches('#').to_ascii_uppercase())
+                        .unwrap_or_else(|| "0078D4".into());
+                    self.color_dialog = Some((section, key, color));
+                    self.expanded.insert(format!("color:{id}"), true);
+                    json!({"ok":true})
+                }
+                _ => json!({"ok":false,"error":"no colour row with that id on this page"}),
+            };
+        }
         if id == "notepad" {
             open_notepad();
             return json!({"ok":true});
@@ -1715,12 +1912,13 @@ impl Model {
                     self.rows
                         .iter()
                         .filter(|row| row.section == section)
+                        .filter(|row| row.shown)
                         .cloned()
                         .collect::<Vec<_>>()
                 })
-                .unwrap_or_else(|| self.rows.clone())
+                .unwrap_or_else(|| self.rows.iter().filter(|row| row.shown).cloned().collect())
         } else {
-            self.rows.clone()
+            self.rows.iter().filter(|row| row.shown).cloned().collect()
         };
         let mut cards = Vec::<View>::new();
         for (i, r) in rows.iter().enumerate() {
@@ -1935,38 +2133,18 @@ impl Model {
                         .unwrap_or_else(|| r.value.as_str().unwrap_or_default().to_string());
                     let swatch: View = if let Some(color) = parse_swatch(&text) {
                         Border::new()
-                            .width(20.0)
-                            .height(20.0)
+                            .width(24.0)
+                            .height(24.0)
                             .corner_radius(CornerRadius::uniform(4.0))
                             .background(Brush::Solid(color))
                             .border_brush(ThemeBrush::CardStroke)
                             .border_thickness(Thickness::uniform(1.0))
                             .into()
                     } else {
-                        TextBlock::new().text("").into()
+                        TextBlock::new().text("Automatic").font_size(14.0).into()
                     };
-                    StackPanel::new()
-                        .orientation(Orientation::Horizontal)
-                        .spacing(8.0)
-                        .children((
-                            swatch,
-                            TextBox::new()
-                                .placeholder_text("Default")
-                                .text(text)
-                                .is_enabled(r.enabled)
-                                .on_text_changed(ctx.callback({
-                                    let s = r.section.clone();
-                                    let k = r.key.clone();
-                                    move |v| Message::Draft(s.clone(), k.clone(), v)
-                                }))
-                                .on_lost_focus(ctx.callback({
-                                    let s = r.section.clone();
-                                    let k = r.key.clone();
-                                    move |_| Message::Commit(s.clone(), k.clone())
-                                }))
-                                .width(120.0)
-                                .automation_id(id.clone()),
-                        ))
+                    let _ = text;
+                    swatch
                 }
                 Kind::Secret => PasswordBox::new()
                     .width(240.0)
@@ -2002,7 +2180,9 @@ impl Model {
                         })
                     }))
                     .placeholder_text(match &r.setting.kind {
-                        Kind::Text { placeholder, .. } if !placeholder.is_empty() => placeholder.clone(),
+                        Kind::Text { placeholder, .. } if !placeholder.is_empty() => {
+                            placeholder.clone()
+                        }
                         _ => "Not set".to_string(),
                     })
                     .is_enabled(r.enabled)
@@ -2084,7 +2264,195 @@ impl Model {
                     .horizontal_alignment(HorizontalAlignment::Right)
                     .content(control),
             ));
-            cards.push(
+            let row = if let Kind::Color { empty_ok, hash } = &r.setting.kind {
+                let expanded_id = format!("color:{id}");
+                let current = r.value.as_str().unwrap_or_default().trim_start_matches('#');
+                let mut editor = Vec::<View>::new();
+                if *empty_ok {
+                    editor.push(
+                        Button::new()
+                            .automation_id(format!("automatic:{id}"))
+                            .is_enabled(r.enabled)
+                            .on_click(ctx.callback({
+                                let section = r.section.clone();
+                                let key = r.key.clone();
+                                move |_| Message::Set {
+                                    section: section.clone(),
+                                    key: key.clone(),
+                                    text: String::new(),
+                                }
+                            }))
+                            .content("Automatic")
+                            .into(),
+                    );
+                }
+                for (line, colors) in color_palette().chunks(8).enumerate() {
+                    let buttons = colors
+                        .iter()
+                        .map(|hex| {
+                            let selected = current.eq_ignore_ascii_case(hex);
+                            let color = parse_swatch(hex).unwrap();
+                            let value = if *hash {
+                                format!("#{hex}")
+                            } else {
+                                (*hex).to_string()
+                            };
+                            Border::new()
+                                .padding(Thickness::uniform(2.0))
+                                .corner_radius(CornerRadius::uniform(6.0))
+                                .border_brush(if selected {
+                                    ThemeBrush::PrimaryText
+                                } else {
+                                    ThemeBrush::ControlStroke
+                                })
+                                .border_thickness(Thickness::uniform(if selected {
+                                    2.0
+                                } else {
+                                    1.0
+                                }))
+                                .content(
+                                    Button::new()
+                                        .style(ButtonStyle::Subtle)
+                                        .width(32.0)
+                                        .height(32.0)
+                                        .padding(Thickness::uniform(0.0))
+                                        .is_enabled(r.enabled)
+                                        .automation_id(format!("swatch:{id}:{hex}"))
+                                        .on_click(ctx.callback({
+                                            let section = r.section.clone();
+                                            let key = r.key.clone();
+                                            let value = value.clone();
+                                            move |_| Message::Set {
+                                                section: section.clone(),
+                                                key: key.clone(),
+                                                text: value.clone(),
+                                            }
+                                        }))
+                                        .content(
+                                            Border::new()
+                                                .width(32.0)
+                                                .height(32.0)
+                                                .corner_radius(CornerRadius::uniform(4.0))
+                                                .background(Brush::Solid(color))
+                                                .border_brush(ThemeBrush::ControlStroke)
+                                                .border_thickness(Thickness::uniform(1.0))
+                                                .content(TextBlock::new().text(*hex).opacity(0.0)),
+                                        ),
+                                )
+                                .into()
+                        })
+                        .collect::<Vec<View>>();
+                    editor.push(
+                        StackPanel::new()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(4.0)
+                            .horizontal_alignment(HorizontalAlignment::Left)
+                            .keyed_children(
+                                buttons
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(n, view)| KeyedView::new(format!("{line}:{n}"), view)),
+                            )
+                            .into(),
+                    );
+                }
+                editor.push(
+                    Grid::new()
+                        .columns([GridLength::STAR, GridLength::Auto])
+                        .min_height(36.0)
+                        .horizontal_alignment(HorizontalAlignment::Stretch)
+                        .children((
+                            TextBlock::new()
+                                .grid_column(0)
+                                .vertical_alignment(VerticalAlignment::Center)
+                                .text("Custom colour"),
+                            Button::new()
+                                .grid_column(1)
+                                .automation_id(format!("custom:{id}"))
+                                .is_enabled(r.enabled)
+                                .on_click(ctx.callback({
+                                    let section = r.section.clone();
+                                    let key = r.key.clone();
+                                    move |_| Message::DialogOpen(section.clone(), key.clone())
+                                }))
+                                .content("View colours"),
+                        ))
+                        .into(),
+                );
+                let dialog_matches = self
+                    .color_dialog
+                    .as_ref()
+                    .is_some_and(|(s, k, _)| s == &r.section && k == &r.key);
+                let dialog_color = self
+                    .color_dialog
+                    .as_ref()
+                    .filter(|(s, k, _)| s == &r.section && k == &r.key)
+                    .map(|(_, _, c)| c.as_str())
+                    .unwrap_or(current);
+                let dialog_color = if dialog_color.is_empty() {
+                    "0078D4"
+                } else {
+                    dialog_color
+                };
+                editor.push(
+                    ContentDialog::new()
+                        .title("Pick a custom colour")
+                        .primary_button_text("Done")
+                        .default_button(ContentDialogButton::Primary)
+                        .close_button_text("Cancel")
+                        .is_open(dialog_matches)
+                        .on_closed(ctx.callback(Message::DialogClosed))
+                        .content(
+                            ColorPicker::new()
+                                .color(parse_swatch(dialog_color))
+                                .is_hex_input_visible(false)
+                                .is_color_channel_text_input_visible(false)
+                                .is_alpha_enabled(false)
+                                .is_color_slider_visible(true)
+                                .on_color_changed(ctx.callback(|color: Color| {
+                                    Message::DialogColor(format!(
+                                        "{:02X}{:02X}{:02X}",
+                                        color.r, color.g, color.b
+                                    ))
+                                })),
+                        )
+                        .into(),
+                );
+                Expander::new()
+                    .horizontal_content_alignment(HorizontalAlignment::Stretch)
+                    .horizontal_alignment(HorizontalAlignment::Stretch)
+                    .is_expanded(self.expanded.get(&expanded_id).copied().unwrap_or(false))
+                    .on_is_expanded_changed(ctx.callback({
+                        let id = expanded_id.clone();
+                        move |open| Message::Expand(id.clone(), open)
+                    }))
+                    .automation_id(expanded_id)
+                    .slots([
+                        SlotView::new(ExpanderSlot::Header, row),
+                        SlotView::new(
+                            ExpanderSlot::Content,
+                            Border::new()
+                                .padding(Thickness::xy(16.0, 12.0))
+                                .horizontal_alignment(HorizontalAlignment::Stretch)
+                                .content(
+                                    StackPanel::new()
+                                        .spacing(8.0)
+                                        .horizontal_alignment(HorizontalAlignment::Stretch)
+                                        .keyed_children(
+                                            editor.into_iter().enumerate().map(|(i, view)| {
+                                                KeyedView::new(i.to_string(), view)
+                                            }),
+                                        ),
+                                ),
+                        ),
+                    ])
+                    .into()
+            } else {
+                row
+            };
+            cards.push(if matches!(r.setting.kind, Kind::Color { .. }) {
+                row.into()
+            } else {
                 Border::new()
                     .padding(Thickness::xy(16.0, 10.0))
                     .min_height(68.0)
@@ -2094,8 +2462,8 @@ impl Model {
                     .border_brush(ThemeBrush::CardStroke)
                     .border_thickness(Thickness::uniform(1.0))
                     .content(row)
-                    .into(),
-            );
+                    .into()
+            });
         }
         let _ = section;
         StackPanel::new().spacing(4.0).keyed_children(
@@ -2228,11 +2596,10 @@ impl Model {
                 .spacing(10.0)
                 .children((
                     FontIcon::new().glyph(icon),
-                    TextBlock::new()
-                        .text(title)
-                        .font_size(14.0),
+                    TextBlock::new().text(title).font_size(14.0),
                 ));
             let mut expander = Expander::new()
+                .horizontal_content_alignment(HorizontalAlignment::Stretch)
                 .horizontal_alignment(HorizontalAlignment::Stretch)
                 .is_expanded(self.expanded.get(&expander_id).copied().unwrap_or(false))
                 .on_is_expanded_changed(ctx.callback({
@@ -2253,8 +2620,11 @@ impl Model {
         for item in registered {
             let name = item.name.clone();
             let detail = match item.error {
-                Some(error) => format!("{}
-{error}", item.exe),
+                Some(error) => format!(
+                    "{}
+{error}",
+                    item.exe
+                ),
                 None => item.exe.to_string(),
             };
             let summary = StackPanel::new().spacing(2.0).children((
@@ -2382,6 +2752,7 @@ impl Model {
         let diag_id = "expander:diagnostics".to_string();
         sections.push(
             Expander::new()
+                .horizontal_content_alignment(HorizontalAlignment::Stretch)
                 .horizontal_alignment(HorizontalAlignment::Stretch)
                 .automation_id(diag_id.clone())
                 .is_expanded(self.expanded.get(&diag_id).copied().unwrap_or(false))
@@ -2397,9 +2768,7 @@ impl Model {
                             .spacing(10.0)
                             .children((
                                 FontIcon::new().glyph("\u{E9D9}"),
-                                TextBlock::new()
-                                    .text("Diagnostics")
-                                    .font_size(14.0),
+                                TextBlock::new().text("Diagnostics").font_size(14.0),
                             )),
                     ),
                     SlotView::new(
@@ -2572,7 +2941,14 @@ fn hook_resize() {
     }
 }
 
-unsafe extern "system" fn on_resize(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
+unsafe extern "system" fn on_resize(
+    h: HWND,
+    msg: u32,
+    wp: WPARAM,
+    lp: LPARAM,
+    _id: usize,
+    _data: usize,
+) -> LRESULT {
     if msg == WM_SIZE {
         report_width(h);
     }
@@ -2584,7 +2960,8 @@ fn report_width(hwnd: HWND) {
     if unsafe { GetClientRect(hwnd, &mut r) } == 0 {
         return;
     }
-    let scale = (unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForWindow(hwnd) } as f64 / 96.0).max(1.0);
+    let scale =
+        (unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForWindow(hwnd) } as f64 / 96.0).max(1.0);
     send(Message::Width((r.right - r.left) as f64 / scale));
 }
 
@@ -2920,6 +3297,43 @@ fn parse_swatch(text: &str) -> Option<Color> {
     Some(Color::rgb((raw >> 16) as u8, (raw >> 8) as u8, raw as u8))
 }
 
+/// Windows Settings accent palette, kept in the specified row-major order.
+fn color_palette() -> &'static [&'static str] {
+    &[
+        "FFB900", "FF8C00", "F7630C", "CA5010", "DA3B01", "EF6950", "D13438", "FF4343", "E74856",
+        "E81123", "EA005E", "C30052", "E3008C", "BF0077", "C239B3", "9A0089", "0078D4", "0063B1",
+        "8E8CD8", "6B69D6", "8764B8", "744DA9", "B146C2", "881798", "0099BC", "2D7D9A", "00B7C3",
+        "038387", "00B294", "018574", "00CC6A", "10893E", "7A7574", "5D5A58", "68768A", "515C6B",
+        "567C73", "486860", "498205", "107C10", "767676", "4C4A48", "69797E", "4A5459", "647C64",
+        "525E54", "847545", "7E735F",
+    ]
+}
+
+fn set_json_path(root: &mut Value, key: &str, value: Value) {
+    let parts = key.split('.').collect::<Vec<_>>();
+    let Some((leaf, parents)) = parts.split_last() else {
+        return;
+    };
+    let mut current = root;
+    for part in parents {
+        if !current.is_object() {
+            *current = json!({});
+        }
+        current = current
+            .as_object_mut()
+            .unwrap()
+            .entry(*part)
+            .or_insert_with(|| json!({}));
+    }
+    if !current.is_object() {
+        *current = json!({});
+    }
+    current
+        .as_object_mut()
+        .unwrap()
+        .insert((*leaf).to_string(), value);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2928,18 +3342,31 @@ mod tests {
     fn wide_pages_centre_on_the_window_not_the_pane() {
         assert_eq!(page_shift(880.0), 0.0, "normal window: no room to spare");
         assert_eq!(page_shift(1500.0), 132.0, "some room: part of the shift");
-        assert_eq!(page_shift(1920.0), NAV_PANE, "full screen: middle of the window");
+        assert_eq!(
+            page_shift(1920.0),
+            NAV_PANE,
+            "full screen: middle of the window"
+        );
     }
 
     #[test]
     fn widget_pages_slide_in_sideways_other_pages_rise() {
         let w = Page::Widget("weather".into());
         let into = entrance_for(&Page::Widgets, &w);
-        assert_eq!((into.from_horizontal_offset, into.from_vertical_offset), (PAGE_DRILL_OFFSET, 0.0));
+        assert_eq!(
+            (into.from_horizontal_offset, into.from_vertical_offset),
+            (PAGE_DRILL_OFFSET, 0.0)
+        );
         let back = entrance_for(&w, &Page::Widgets);
-        assert_eq!((back.from_horizontal_offset, back.from_vertical_offset), (-PAGE_DRILL_OFFSET, 0.0));
+        assert_eq!(
+            (back.from_horizontal_offset, back.from_vertical_offset),
+            (-PAGE_DRILL_OFFSET, 0.0)
+        );
         let dock = entrance_for(&w, &Page::Dock);
-        assert_eq!((dock.from_horizontal_offset, dock.from_vertical_offset), (0.0, PAGE_ENTRANCE_OFFSET));
+        assert_eq!(
+            (dock.from_horizontal_offset, dock.from_vertical_offset),
+            (0.0, PAGE_ENTRANCE_OFFSET)
+        );
     }
 
     #[test]

@@ -192,26 +192,40 @@ pub fn describe(
         "Compact mode",
         crate::describe::Kind::Switch,
     ));
-    settings.push(crate::describe::Setting::new(
-        "highlight",
-        "Mode",
-        crate::describe::Kind::Choice {
-            options: vec![
-                (serde_json::json!("auto"), "Automatic".into()),
-                (serde_json::json!("custom"), "Chosen colour".into()),
-                (serde_json::json!("off"), "Off".into()),
-            ],
-            other: false,
-        },
-    ).group("Highlight box").help("Automatic: the colour of what the widget shows. Off: the plain grey box."));
-    settings.push(crate::describe::Setting::new(
-        "highlight_color",
-        "Colour",
-        crate::describe::Kind::Color { hash: true, empty_ok: false },
-    ).group("Highlight box").help("The colour used when the mode is Chosen colour."));
-    settings.push(crate::describe::Setting::number(
-        "highlight_strength", "Strength", 0.0, 3.0, 0.05,
-    ).group("Highlight box").help("How strong the box is: 1 is the usual, 0 none, 3 the strongest."));
+    settings.push(
+        crate::describe::Setting::new(
+            "highlight",
+            "Mode",
+            crate::describe::Kind::Choice {
+                options: vec![
+                    (serde_json::json!("auto"), "Automatic".into()),
+                    (serde_json::json!("custom"), "Chosen colour".into()),
+                    (serde_json::json!("off"), "Off".into()),
+                ],
+                other: false,
+            },
+        )
+        .group("Highlight box")
+        .help("Automatic: the colour of what the widget shows. Off: the plain grey box."),
+    );
+    settings.push(
+        crate::describe::Setting::new(
+            "highlight_color",
+            "Colour",
+            crate::describe::Kind::Color {
+                hash: true,
+                empty_ok: false,
+            },
+        )
+        .group("Highlight box")
+        .help("The box's colour.")
+        .shown_when("highlight", serde_json::json!("custom")),
+    );
+    settings.push(
+        crate::describe::Setting::number("highlight_strength", "Strength", 0.0, 3.0, 0.05)
+            .group("Highlight box")
+            .help("How strong the box is: 1 is the usual, 0 none, 3 the strongest."),
+    );
 
     Describe {
         section: section.into(),
@@ -863,6 +877,12 @@ pub trait Content: 'static {
     /// on `false` fetch at once. Content timers are paused by Block, don't stop them yourself.
     /// A widget started switched off gets `idle(true)` before [`Content::start`].
     fn idle(&mut self, _idle: bool, _ctx: &mut Ctx) {}
+
+    /// True when the widget's data stays live while idle (it keeps a cheap watch, e.g. Discord's
+    /// call, media's sessions): its tray tooltip then stays its own instead of Block's "paused".
+    fn live_while_idle(&self) -> bool {
+        false
+    }
 
     /// A content timer ([`Ctx::every`]).
     fn timer(&mut self, _id: usize, _ctx: &mut Ctx) {}

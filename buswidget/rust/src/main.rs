@@ -310,7 +310,7 @@ fn describe() -> block::Describe {
         WIDGET_DESCRIPTION,
         Some(data::settings),
         Some(defaults),
-        Some(worker::data_dir_path().join("buswidget.log")),
+        Some(taskbar_dock::log::path("buswidget")),
     )
 }
 
@@ -322,7 +322,7 @@ fn main() {
     spec.mutex = "Local\\BusWidgetRhonedreef".into();
     // no taskbar to join: a topmost strip at the x it was last dropped at
     spec.float = Float::Fallback(FloatAt::Saved(|| data_dir().join("pos.txt")));
-    spec.log_file = Some(worker::data_dir_path().join("buswidget.log"));
+    spec.log_file = Some(taskbar_dock::log::path("buswidget"));
     spec.defaults = Some(defaults);
     block::run(spec, App { look: Look::current(), shown: String::new(), logo: String::new(), picker: picker::Picker::default() });
 }

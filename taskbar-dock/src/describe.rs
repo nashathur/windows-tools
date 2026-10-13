@@ -17,6 +17,8 @@ pub struct Setting {
     pub kind: Kind,
     /// Whether this setting belongs in the Developer tab.
     pub advanced: bool,
+    /// Optional sibling key/value condition that controls whether this row is shown.
+    pub shown_when: Option<(String, Value)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -72,6 +74,7 @@ impl Setting {
             group: String::new(),
             kind,
             advanced: false,
+            shown_when: None,
         }
     }
     /// Creates a floating-point number setting.
@@ -107,6 +110,11 @@ impl Setting {
     /// Marks this setting as advanced.
     pub fn advanced(mut self) -> Self {
         self.advanced = true;
+        self
+    }
+    /// Shows this setting only while a sibling setting has the specified value.
+    pub fn shown_when(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.shown_when = Some((key.into(), value));
         self
     }
     /// Requires a numeric value to be an integer.
@@ -331,14 +339,18 @@ pub fn to_json(list: &[Setting]) -> Value {
 }
 /// Converts one setting description to JSON.
 fn setting_json(s: &Setting) -> Value {
-    json!({
+    let mut value = json!({
         "key": s.key,
         "label": s.label,
         "help": s.help,
         "group": s.group,
         "advanced": s.advanced,
         "kind": kind_json(&s.kind),
-    })
+    });
+    if let Some((key, expected)) = &s.shown_when {
+        value["shown_when"] = json!([key, expected]);
+    }
+    value
 }
 /// Converts one setting kind to JSON.
 fn kind_json(k: &Kind) -> Value {
@@ -400,6 +412,20 @@ pub fn from_json(v: &Value) -> Result<Vec<Setting>, String> {
         .ok_or_else(|| "settings must be an array".to_string())?;
     arr.iter()
         .map(|x| {
+            let shown_when = match x.get("shown_when") {
+                None | Some(Value::Null) => None,
+                Some(value) => {
+                    let pair = value.as_array().ok_or("shown_when must be [key, value]")?;
+                    if pair.len() != 2 {
+                        return Err("shown_when must be [key, value]".into());
+                    }
+                    let key = pair[0]
+                        .as_str()
+                        .ok_or("shown_when key must be text")?
+                        .to_string();
+                    Some((key, pair[1].clone()))
+                }
+            };
             Ok(Setting {
                 key: field(x, "key")?,
                 label: field(x, "label")?,
@@ -410,6 +436,7 @@ pub fn from_json(v: &Value) -> Result<Vec<Setting>, String> {
                     .and_then(Value::as_bool)
                     .ok_or("advanced must be a boolean")?,
                 kind: parse_kind_json(x.get("kind").ok_or("missing kind")?)?,
+                shown_when,
             })
         })
         .collect()
@@ -768,6 +795,21 @@ mod tests {
                 vec![setting]
             );
         }
+    }
+
+    #[test]
+    fn shown_when_round_trips_and_old_descriptions_default_to_none() {
+        let setting =
+            Setting::new("color", "Colour", Kind::Switch).shown_when("mode", json!("custom"));
+        let json = to_json(&[setting.clone()]);
+        assert_eq!(json[0]["shown_when"], json!(["mode", "custom"]));
+        assert_eq!(from_json(&json).unwrap(), vec![setting]);
+        let mut legacy = to_json(&[Setting::new("old", "Old", Kind::Switch)]);
+        legacy[0].as_object_mut().unwrap().remove("shown_when");
+        assert_eq!(from_json(&legacy).unwrap()[0].shown_when, None);
+        assert!(to_json(&from_json(&legacy).unwrap())[0]
+            .get("shown_when")
+            .is_none());
     }
 
     #[test]

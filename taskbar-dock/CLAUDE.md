@@ -89,6 +89,8 @@ fetches it runs outside content timers.
    `drag_probe.ps1`, `shot_strip.ps1`; `_tmp\real.ps1` for a widget not on Block).
 4. Screenshots: `local_widget_check` (click / rightclick go through dockctl for Block widgets:
    no mouse moved), only where pixels matter.
+5. End-to-end, before calling a Block or settings-app change done: `scripts\live\run.ps1`
+   (one report with screenshots; README.md "Live checks").
 
 Bug fix: first make the bug go red at the lowest rung above that reaches it (a failing unit test,
 else a dockctl or log/geometry check), then fix it and watch it pass; keep the test. If no rung

@@ -67,17 +67,12 @@ pub(crate) struct Places {
 }
 
 fn log_file() -> std::path::PathBuf {
-    taskbar_dock::settings::dir().join("taskbar-weather.log")
+    taskbar_dock::log::path("taskbar-weather")
 }
 
 /// Appends a line to taskbar-weather.log in the settings folder.
 pub(crate) fn log(line: &str) {
-    use std::io::Write;
-    let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
-    let path = log_file();
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "{:04}-{:02}-{:02} {:02}:{:02}:{:02} {line}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
-    }
+    taskbar_dock::log::append(&log_file(), line);
 }
 
 pub(crate) fn hwnd(h: isize) -> HWND {

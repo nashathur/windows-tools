@@ -779,13 +779,14 @@ fn state() -> Value {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs());
     let menu = crate::menu_panel::rows().map(|(h, _)| h).unwrap_or(0);
-    let (tray_on, tip, title, section, idle) = st(|s| {
+    let (tray_on, tip, title, section, idle, live) = st(|s| {
         (
             s.tray_on,
             s.tray_tip.clone(),
             s.spec.title,
             s.spec.section,
             s.idle,
+            s.content.live_while_idle(),
         )
     })
     .unwrap_or_default();
@@ -799,7 +800,7 @@ fn state() -> Value {
         "strip": strip_state(),
         "panel": panel_state(),
         "menu": { "open": menu != 0, "focused": menu != 0 && unsafe { GetForegroundWindow() } == menu, "rect": rect_of(menu) },
-        "tray": { "shown": tray_on, "tip": tip },
+        "tray": { "shown": tray_on, "tip": tip, "live_while_idle": live },
         "look": look_state(),
     })
 }

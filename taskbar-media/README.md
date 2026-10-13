@@ -38,7 +38,7 @@ Windows' media controls should work. Discord doesn't report to Windows, so it is
 | | |
 |---|---|
 | `taskbar-media.exe` | the copy that runs (dev.ps1 replaces it), started at sign-in when Start with Windows is on |
-| `taskbar-media.log` | events and errors, also crashes ("crashed: …") |
+| `%APPDATA%\TaskbarDock\taskbar-media.log` | events and errors, also crashes ("crashed: …"); rotates above 256 KB to `.log.old` |
 | `media_brands.txt` | brand colours and logos for apps and sites; edits apply within a second (format in its header) |
 | `progress.txt` | learned per app: does it report its position while playing? |
 | `logos\` | downloaded site logos (refreshed after 30 days) |

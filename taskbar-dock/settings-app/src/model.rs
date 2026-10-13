@@ -61,6 +61,8 @@ pub struct Row {
     pub error: Option<String>,
     /// Whether user interaction is allowed.
     pub enabled: bool,
+    /// Whether the described sibling-value condition currently allows this row to be shown.
+    pub shown: bool,
 }
 
 impl Row {
@@ -79,6 +81,7 @@ impl Row {
             submitted: None,
             error: None,
             enabled: true,
+            shown: true,
         }
     }
     /// Reports whether this row should show a Reset action.
@@ -210,7 +213,9 @@ pub fn widget_rows(
         let default = taskbar_dock::describe::value_at(defaults, &setting.key)
             .cloned()
             .unwrap_or(Value::Null);
-        rows.push(Row::new(section, setting.clone(), value, default));
+        let mut row = Row::new(section, setting.clone(), value, default);
+        row.shown = shown_when_matches(setting, current);
+        rows.push(row);
     }
     rows
 }
@@ -260,11 +265,20 @@ pub fn advanced_rows(entries: &[crate::work::LoadedEntry], settings: &Value) -> 
                     let default = taskbar_dock::describe::value_at(&desc.defaults, &setting.key)
                         .cloned()
                         .unwrap_or(Value::Null);
-                    Row::new(&item.entry.name, setting, value, default)
+                    let mut row = Row::new(&item.entry.name, setting.clone(), value, default);
+                    row.shown = shown_when_matches(&setting, &current);
+                    row
                 })
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// Evaluates a row's optional visibility rule against its own settings section.
+pub fn shown_when_matches(setting: &Setting, section: &Value) -> bool {
+    setting.shown_when.as_ref().is_none_or(|(key, expected)| {
+        taskbar_dock::describe::value_at(section, key) == Some(expected)
+    })
 }
 
 /// Returns the fixed dockctl command examples displayed on the Developer page.
@@ -452,8 +466,16 @@ mod tests {
     /// itself is cleared.
     #[test]
     fn a_draft_typed_during_a_write_survives_its_result() {
-        let text = Kind::Text { placeholder: String::new(), empty_ok: true };
-        let mut row = Row::new("bus", Setting::new("dest", "Destination", text), json!(""), json!(""));
+        let text = Kind::Text {
+            placeholder: String::new(),
+            empty_ok: true,
+        };
+        let mut row = Row::new(
+            "bus",
+            Setting::new("dest", "Destination", text),
+            json!(""),
+            json!(""),
+        );
         row.pending = Some(1);
         row.submitted = Some("Centraal".into());
         row.draft = Some("Centraal Station".into());
@@ -503,6 +525,17 @@ mod tests {
             ["startup", "show_on_taskbar", "compact", "one", "two"]
         );
         assert_eq!(rows[0].value, json!(true));
+    }
+
+    #[test]
+    fn shown_when_matches_sibling_value_in_same_section() {
+        let setting =
+            Setting::new("color", "Colour", Kind::Switch).shown_when("highlight", json!("custom"));
+        assert!(shown_when_matches(&setting, &json!({"highlight":"custom"})));
+        assert!(!shown_when_matches(&setting, &json!({"highlight":"auto"})));
+        assert!(!shown_when_matches(&setting, &json!({})));
+        let legacy = Setting::new("always", "Always", Kind::Switch);
+        assert!(shown_when_matches(&legacy, &json!({})));
     }
 
     /// Checks stale write results, reload protection and reset visibility.

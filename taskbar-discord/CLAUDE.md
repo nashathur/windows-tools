@@ -5,7 +5,7 @@
 Rust, `windows` crate. README.md has setup and settings.
 Runs straight from `target\release\taskbar-discord.exe` (dev.ps1 stops it before building).
 Settings section `discord`; start with Windows via the shared `startup` list (name "discord").
-Log: `%APPDATA%\TaskbarDock\taskbar-discord.log` (never tokens or the secret).
+Log: `%APPDATA%\TaskbarDock\taskbar-discord.log` (never tokens or the secret; rotates above 256 KB to `.log.old`).
 
 Data: Discord's official local RPC (`\\.\pipe\discord-ipc-N`), with the user's own Discord app
 (client_id/secret), not TaskbarWidgets' way (UI Automation of Discord's window

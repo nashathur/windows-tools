@@ -120,17 +120,26 @@ The user asked for these after trying the 12a app. 12a is committed and pushed (
 Built, checked live and committed 2026-10-13 (`c56eda6`, after one Codex Sol review: four
 findings, all fixed).
 
-## Still open (the next session: `step12c-session.md`)
-- Edit settings… from each widget's right-click menu, and the Dock time format followed by bus
-  and weather: re-check live on the WinUI app.
-- 125% / 150% scaling: needs a display-scale change (ask the user).
-- The user signs out and in; then check every widget on `startup` runs, and that a widget with
-  Show on taskbar off starts idle (no fetch until its tray panel opens).
-- 12b checked live only through dockctl and scripts so far: the Idle wake from a real tray click,
-  the Highlight box rows changed in the app itself (Chosen colour, Strength slider, Off), and the
-  page slide-ins and centring clicked by the user.
-- Media: a site's colour from its tab icon only when the tab title shows the address; reading the
-  tab's address through UI Automation would cover every site (an idea; ask).
-- The Highlight box Colour row shows in every mode; hiding it unless "Chosen colour" needs a
-  "shown when" rule in the settings description (an idea; ask).
-- Optional Gemini Flash rating of the screenshots; delete `tools\winui-test\` (ask).
+## 12c: open checks (2026-10-13)
+Checked live, all passed: Edit settings… from every widget's menu (app closed and open, one
+process); the Dock time format reaching every panel; sign-out / sign-in (every widget on `startup`
+runs, a widget switched off starts idle and fetches nothing); the Idle wake from the user's real
+tray click; 125% and 150% display scale (strips, panels, menus, app); the user clicking through the
+app (Highlight box rows, slide-ins, centring when maximised). These checks are now scripts:
+`scripts\live\run.ps1` (README "Live checks"), covering every running widget, so new widgets too.
+
+Decided by the user and built:
+- An idle widget's tray tooltip says "<title>: paused. Click to update." (it would otherwise
+  show "Loading…" or old departures); a widget whose data stays live while idle keeps its own
+  (`Content::live_while_idle`: Discord, media). BLOCK.md "Idle".
+- Colour rows: Windows' 48 accent swatches + "View colours" (WinUI's ColorPicker in a dialog, no
+  hex anywhere on the page); the Highlight box Colour row shows only in Chosen colour mode
+  (`Setting::shown_when`).
+- One shared log writer (`taskbar_dock::log`): every widget logs to the settings folder with
+  local times.
+- `tools\winui-test\` deleted; no Gemini rating.
+
+## Still open
+- Media's site colour: the site is known only when the tab title shows its address (else the
+  brand file's colour, else the browser's). The idea, kept for later: find the site for every tab
+  (e.g. from the browser's address) and take the main colour of the tab's icon.

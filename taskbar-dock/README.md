@@ -20,6 +20,7 @@ A widget is a `Spec` + a `Content` given to `block::run` (see "Building a new wi
 | `badge` | A coloured, rounded badge with short text (e.g. a bus line number): tray-icon tall, as wide as its text, text centred, shared corners and font, automatic black/white text. |
 | `anim` | Easing and animation progress (0 ms when animations are off). `pulse`: a slow, smooth 0 → 1 → 0 every 2.4 s for "alive, nothing else to show"; `pulse_settle`: gliding down to 0 from wherever a pulse stopped. |
 | `marquee` | Scrolling text for a line too long for its fixed-width box: still if it fits; otherwise wait 1.5 s, then scroll left at 30 px/s in a loop (the start follows 40 px after the end) until it's back where it began, and repeat. `fade_edges` softens the cut-off edges. Still (cut with "…") when animations are off. |
+| `log` | Timestamped widget logs in `%APPDATA%\TaskbarDock`, with rotation above 256 KB. |
 | `theme` | The design code: every colour, font, font size and spacing, light and dark; the `brand` allow-list for brand and data colours. Widgets take all of them from here (`tests\theme_lint.rs` checks it). |
 | `emoji` | Colour emoji through Direct2D + DirectWrite (GDI draws emoji in one colour). |
 | `window` | `raise`: bring another app's window to the front; `exe_path`, `is_exe`. |
@@ -56,10 +57,10 @@ Launch with no arguments for Widgets, `--widget <name>` for a widget page, `--do
 
 | Command | Does |
 |---|---|
-| `state` | Read page, rows, window and app status. Row kinds are `switch`, `dropdown`, `slider`, `numberbox`, `text`, `color`, `secret`, and `auto`. Developer `cards` contains `advanced`, `details`, `registered`, `raw`, and `commands`; `focused` is null. |
+| `state` | Read page, rows, window and app status. Row kinds are `switch`, `dropdown`, `slider`, `numberbox`, `text`, `color`, `secret`, and `auto`; rows include `shown: true|false` and hidden rows remain editable with `row <id> set|reset`. Developer `cards` contains `advanced`, `details`, `registered`, `raw`, and `commands`; `focused` is null. |
 | `page <widgets\|dock\|developer\|name>` | Navigate to a page. |
 | `row <id> set <text>`, `row <id> reset`, `row <id> toggle` | Edit or reset a setting row. |
-| `click <id>` | Activate actions such as `open:<name>`, `restore:<section>:<group>`, `start:<name>`, `quit:<name>`, `restart:<name>`, `remove:<name>`, `copy:<n>`, `refresh-log:<name>`, or `notepad`. |
+| `click <id>` | Activate actions such as `open:<name>`, `restore:<section>:<group>`, `start:<name>`, `quit:<name>`, `restart:<name>`, `remove:<name>`, `copy:<n>`, `refresh-log:<name>`, or `notepad`; colour rows also support `swatch:<row id>:<RRGGBB>`, `automatic:<row id>`, `custom:<row id>`, `dialog:done`, and `dialog:cancel`. While its dialog is open, `state` includes `dialog: {row, color}`. |
 | `key <name>`, `type <text>` | Bring the app to the front, then send supported keyboard input. |
 | `quit` | Close the settings app. |
 
@@ -178,7 +179,7 @@ Supply `Content::tint`'s automatic colour for the Highlight box, or None when th
 5. **Settings**: reads are pure; fill defaults on start with `settings::fill_missing` and write
    only changed keys with `settings::set_key` or a focused `settings::update`. Block owns the
    section's `compact` and `show_on_taskbar`. Reload on
-   `Content::settings_changed` (an edit of the file applies live). Secrets (API keys) stay in the
+   `Content::settings_changed` (an edit of the file applies live). `Setting::shown_when(key, value)` hides a row until that sibling setting in the same section equals the value. Secrets (API keys) stay in the
    section but are never shown in full in logs, menus or panels; mask them. A data file the user
    may edit (bus's `line_colors.txt`): check its mtime from a content timer.
 6. **Data and network**: fetch on a worker thread, never the UI thread; the worker posts a
@@ -306,6 +307,31 @@ dockctl media do pause --app spotify
 `scripts\restart_explorer.ps1` restarts Explorer without keystrokes (the taskbar's own Exit
 Explorer message, then explorer.exe started through a one-off scheduled task). Use it with
 `dockctl … state` / `log` to check the Explorer-restart path for real.
+
+### Live checks (`scripts\live\`)
+
+`scripts\live\run.ps1` runs the end-to-end checks against the running widgets and the installed
+settings app and writes `_tmp\live\<time>\report.md` (PASS / FAIL / NOTE lines, then the
+screenshots beside it). Each check puts back every setting it changes; no mouse is used.
+`run.ps1` runs all but `scale`; `run.ps1 idle,highlight` chosen checks; `-Widgets bus` narrows;
+`run.ps1 scale -Tag 125` after the user changes the display scale.
+
+| Check | Covers |
+|---|---|
+| `edit_settings` | Edit settings… opens the app on the widget's page, app closed and already open, one process |
+| `idle` | Show on taskbar off → idle with the paused tooltip; tray click wakes; panel close idles again |
+| `time_format` | Dock Time format 12h / 24h reaches every panel (screenshots) |
+| `highlight` | Highlight box Mode / swatch / Strength / Off through the app, Colour row shown only in Chosen colour, custom-colour dialog |
+| `colour_rows` | every colour row expanded and captured |
+| `pages` | every app page answers, with a screenshot |
+| `scale` | strip heights and scale at the current display scale; taskbar, panels, menu, app shots |
+
+Every check covers each running widget (`dockctl all ping`) through Block's shared parts, so a new
+widget needs nothing here. A widget's own content checks go in `scripts\live\extra\<widget>.ps1`,
+called with `-Check idle-awake` (panel open after a tray wake) or `-Check scale`
+(`extra\weather.ps1` checks the weather is fetched at once). Helpers (dockctl as objects, starting
+the app as at sign-in, screenshots of strips, panels, menus and the app, `Scroll-App`, `Size-App`):
+`scripts\live\common.ps1`.
 
 ### Other rules (the test order and mouse rules are in CLAUDE.md "Testing", "Hard rules")
 

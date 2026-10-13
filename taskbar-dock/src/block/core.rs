@@ -46,6 +46,18 @@ pub(crate) fn idle(switch: bool, has_tray: bool, panel_open: bool) -> bool {
     has_tray && !switch && !panel_open
 }
 
+/// The tray tooltip: an idle widget hasn't fetched, so its own tip would show old or no data;
+/// one whose data stays live while idle (`Content::live_while_idle`) keeps its own.
+pub(crate) fn tray_tip(content_tip: String, title: &str, idle: bool, live_while_idle: bool) -> String {
+    if idle && !live_while_idle {
+        format!("{title}: paused. Click to update.")
+    } else if content_tip.is_empty() {
+        title.to_string()
+    } else {
+        content_tip
+    }
+}
+
 pub(crate) fn first_run_startup(section_existed: bool) -> bool {
     !section_existed
 }
@@ -1166,6 +1178,20 @@ mod tests {
         assert!(!idle(false, false, false));
         assert!(!idle(true, true, false));
         assert!(!idle(false, true, true));
+    }
+
+    #[test]
+    fn an_idle_tray_tip_says_paused_instead_of_old_data() {
+        let tip = |c: &str, idle| tray_tip(c.to_string(), "Weather", idle, false);
+        assert_eq!(tip("Loading weather…", true), "Weather: paused. Click to update.");
+        assert_eq!(tip("14°C Cloudy", false), "14°C Cloudy");
+        assert_eq!(tip("", false), "Weather");
+    }
+
+    #[test]
+    fn a_widget_live_while_idle_keeps_its_own_tray_tip() {
+        assert_eq!(tray_tip("DOTA · 3 in call".into(), "Discord voice", true, true), "DOTA · 3 in call");
+        assert_eq!(tray_tip(String::new(), "Discord voice", true, true), "Discord voice");
     }
 
     #[test]
