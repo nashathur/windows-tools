@@ -8,7 +8,14 @@ sysmon supplies the `Content`.
 
 Status: built 2026-10-13 (strip, panels, temperature helper); live checks, 10-minute soak and a
 comparison with Windows' counters passed. Visual reference: `mockup.html` (agreed look).
-Measured: private memory ~22 MB (over the 8–12 MB target: PDH and NVML libraries), CPU 0.0 %.
+Measured: private memory ~22 MB (over the 8–12 MB target), CPU 0.0 %. Sign-in start of widget
+and helper checked 2026-10-13.
+
+Open (user to decide): NVML costs ~15 MB private once `nvmlInit_v2` runs (measured in a fresh
+process: load nvml.dll, then `nvmlInit_v2`; `nvmlShutdown` returns none of it); without it sysmon would be
+~7 MB. Alternative, as Task Manager does: `D3DKMTQueryAdapterInfo` (KMTQAITYPE_ADAPTERPERFDATA:
+temperature, fan RPM, power as ‰ of the limit; NODEPERFDATA: engine clock) plus PDH `GPU Adapter
+Memory` for VRAM; any GPU vendor. Panel changes: power as % of limit instead of W, fan in RPM.
 
 ## 1. Decisions
 

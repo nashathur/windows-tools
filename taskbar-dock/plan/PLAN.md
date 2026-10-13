@@ -25,4 +25,6 @@ Spec and measurements: `..\taskbar-sysmon\PLAN.md`. It added the choice row to `
 
 The per-widget tray icons merge into one, owned by the launcher (`taskbar-dock-start.exe`,
 always running): open the settings app, and a way back to a widget whose Show on taskbar is off.
-Starts only once the settings app (step 12) has proven robust.
+Starts only once the settings app (step 12) has proven robust. Session prompt: `step13-session.md`.
+
+Also open: sysmon's GPU readings without NVML (memory), prompt `..\taskbar-sysmon\gpu-session.md`.
