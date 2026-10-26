@@ -16,6 +16,8 @@ import glob
 import json
 import os
 import re
+import sys
+from pathlib import Path
 
 import pypdfium2 as pdfium
 from rapidfuzz import fuzz
@@ -23,6 +25,9 @@ from rapidfuzz import fuzz
 import qa
 from fix import pattern
 from postprocess import tag_label
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+import clierr
 
 CHARS_PER_TOKEN = 3.3  # rough: English prose ~3.5-4, LaTeX-heavy text ~3
 MATH = re.compile(r"\$\$(.+?)\$\$|\$([^$\n]+)\$", re.S)
@@ -164,11 +169,17 @@ def main():
     ap.add_argument("--title", help="source name for the note at the top of each file (default: PDF title or file name)")
     ap.add_argument("--skip", default="index", help="comma-separated words; chapters whose name contains one are skipped")
     args = ap.parse_args()
+    if not os.path.isdir(args.folder):
+        raise clierr.Fail("NOT_FOUND", f"folder not found: {args.folder}", "check the converted book or document folder")
+    chapter_rows = chapters(args.folder)
+    if not chapter_rows:
+        raise clierr.Fail("BAD_INPUT", f"no converted chapters found in {args.folder}",
+                          "use a folder containing .blocks.json files and Markdown chapters")
     skip = [s.strip().lower() for s in args.skip.split(",") if s.strip()]
     os.makedirs(args.out, exist_ok=True)
 
     rows, total = [], 0
-    for md_path, title, first, last, pdf in chapters(args.folder):
+    for md_path, title, first, last, pdf in chapter_rows:
         if any(s in title.lower() for s in skip):
             print(f"  skipped: {title}")
             continue
@@ -202,4 +213,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    clierr.run("export", main)

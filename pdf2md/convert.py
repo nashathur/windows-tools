@@ -12,7 +12,9 @@ import argparse
 import json
 import os
 import re
+import sys
 import time
+from pathlib import Path
 
 os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
 os.environ.setdefault("GLOG_minloglevel", "2")
@@ -27,6 +29,9 @@ from marker.processors.equation import EquationProcessor
 from marker.schema import BlockTypes
 from marker.renderers.json import JSONRenderer
 from marker.renderers.markdown import MarkdownRenderer
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+import clierr
 
 import verify
 from postprocess import clean_markdown, fix_equation_tables
@@ -168,6 +173,8 @@ def block_to_dict(block):
 def convert(pdf, out_dir, page_range=None, name=None, models=None, verify_pdf=True):
     """Convert one PDF (or page range) into out_dir/<name>/. Pass `models` (from create_model_dict()) to reuse
     loaded models across calls, as book.py does. Returns the output folder."""
+    if not os.path.isfile(pdf):
+        raise clierr.Fail("NOT_FOUND", f"{pdf} not found", "check the PDF path")
     name = name or os.path.splitext(os.path.basename(pdf))[0]
     out_folder = os.path.join(out_dir, name)
     os.makedirs(out_folder, exist_ok=True)
@@ -227,4 +234,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    clierr.run("convert", main)

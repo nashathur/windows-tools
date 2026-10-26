@@ -1,8 +1,10 @@
+. "$PSScriptRoot\..\..\common\clierr.ps1"
 $ErrorActionPreference = 'Stop'
+trap { Exit-Cli 'uninstall' $_ }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw 'Run uninstall.ps1 from an elevated PowerShell window.'
+    Stop-Cli NOT_ELEVATED 'Run uninstall.ps1 from an elevated PowerShell window.' 'rerun from an elevated PowerShell'
 }
 
 $taskName = 'Taskbar sysmon temp'

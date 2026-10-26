@@ -15,9 +15,14 @@ import json
 import logging
 import os
 import re
+import sys
 import time
+from pathlib import Path
 
 import pypdfium2 as pdfium
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+import clierr
 
 SECONDS_PER_PAGE = 5  # measured on the RTX 3070 (Chapter 2 of Cushman-Roisin & Beckers: 32 pages in 153 s)
 TARGET_PAGES = 25  # typical chapter length, used to pick the outline level that holds the chapters
@@ -41,7 +46,8 @@ def plan_chapters(pdf, level=None, chunk=None):
                 for s in range(0, n_pages, chunk)]
     items = outline(pdf)
     if not items:
-        raise SystemExit("This PDF has no outline. Use --chunk N (e.g. --chunk 30) to split it into N-page pieces.")
+        raise clierr.Fail("BAD_INPUT", "This PDF has no outline. Use --chunk N (e.g. --chunk 30) to split it into N-page pieces.",
+                          "pass --chunk N (e.g. --chunk 30) to split the PDF into pieces")
     def chapters_at(level):
         out = []
         for i, (lvl, title, start) in enumerate(items):
@@ -161,6 +167,8 @@ def main():
     ap.add_argument("--no-mineru", action="store_true", help="skip the MinerU second opinion on flagged equations")
     args = ap.parse_args()
 
+    if not os.path.isfile(args.pdf):
+        raise clierr.Fail("NOT_FOUND", f"{args.pdf} not found", "check the PDF path")
     pdf = pdfium.PdfDocument(args.pdf)
     chapters = plan_chapters(pdf, args.level, args.chunk)
     # Front matter is number 0, so chapter numbers match the book.
@@ -204,6 +212,7 @@ def main():
                 convert(args.pdf, args.out_dir, f"{start}-{end}", names[n], models)
             except Exception as e:  # keep going; report at the end
                 failures.append((n, title, repr(e)))
+                clierr.fail("book", e)
                 print(f"  FAILED: {e!r}")
                 continue
         if os.path.exists(blocks):
@@ -229,7 +238,9 @@ def main():
     print(f"\nDone in {(time.time() - t0) / 60:.1f} min. Index: {os.path.join(args.out_dir, '00_index.md')}")
     for n, title, err in failures:
         print(f"  Chapter {n} ({title}) failed: {err}")
+    if failures:
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    clierr.run("book", main)

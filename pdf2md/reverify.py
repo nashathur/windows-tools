@@ -15,13 +15,18 @@ import glob
 import json
 import os
 import re
+import sys
 import time
+from pathlib import Path
 
 import convert  # noqa: F401  (applies the Windows fix for Surya's process handling)
 import qa
 import verify
 from fix import pattern
 from postprocess import tag_label, validate_math  # noqa: F401
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+import clierr
 
 SPAN = re.compile(r'<span id="[^"]*"></span>')
 DISPLAY = re.compile(r"\$\$(.+?)\$\$", re.S)
@@ -140,7 +145,15 @@ def main():
     args = ap.parse_args()
     folders = args.folders
     if args.all:
+        if not os.path.isdir(folders[0]):
+            raise clierr.Fail("NOT_FOUND", f"book folder not found: {folders[0]}", "check the book folder path")
         folders = sorted(f for f in glob.glob(os.path.join(folders[0], "[0-9][0-9]_*")) if os.path.isdir(f))
+        if not folders:
+            raise clierr.Fail("BAD_INPUT", f"no chapter folders found in {args.folders[0]}",
+                              "use a book folder containing numbered chapter folders")
+    missing = [folder for folder in folders if not os.path.isdir(folder)]
+    if missing:
+        raise clierr.Fail("NOT_FOUND", f"chapter folder not found: {missing[0]}", "check the chapter folder path")
     from marker.models import create_model_dict
     from marker.processors.equation import EquationProcessor
     models = create_model_dict()
@@ -154,4 +167,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    clierr.run("reverify", main)

@@ -37,6 +37,7 @@
 pub mod anim;
 pub mod badge;
 pub mod block;
+pub mod clierr;
 pub mod client;
 pub mod control;
 pub mod crash;

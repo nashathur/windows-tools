@@ -1,21 +1,26 @@
 # Read-only smoke check for the installed settings app and its dockctl contract.
 # Starts the app through a one-off scheduled task so it reads the user's real settings.
+. "$PSScriptRoot\..\..\common\clierr.ps1"
 $ErrorActionPreference = 'Stop'
+trap { Exit-Cli 'settings_smoke' $_ }
 $app = Join-Path $PSScriptRoot '..\taskbar-dock-settings.exe'
 $dockctl = Join-Path $PSScriptRoot '..\dockctl.exe'
 $task = "TaskbarDockSettingsSmoke_$PID"
 $processName = [IO.Path]::GetFileNameWithoutExtension($app)
 $started = $false
 
-function Fail([string]$why) {
-    throw $why
+function Fail([string]$why, [string]$code = 'BAD_INPUT') {
+    Stop-Cli $code $why 'check the installed settings app and dockctl contract, then rerun settings_smoke'
 }
 
 function Invoke-Dockctl([string[]]$arguments) {
-    $output = & $dockctl @arguments 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) {
-        Fail "dockctl $($arguments -join ' '): exit $LASTEXITCODE; $($output.Trim())"
+    try { $run = Invoke-CliTool $dockctl $arguments -Name dockctl -Fix 'check dockctl output in the log, then rerun settings_smoke' }
+    catch {
+        $run = $_.Exception.Data['clierr'].ToolRun
+        $detail = "$($run.StdErr)`n$($run.StdOut)"
+        Stop-Cli TOOL_FAILED "dockctl $($arguments -join ' '): exit $($run.ExitCode); $(Get-RelevantLine $detail)" 'fix the dockctl error in the log, then rerun settings_smoke' -Detail $detail
     }
+    $output = $run.StdOut
     try {
         return $output | ConvertFrom-Json -ErrorAction Stop
     } catch {
@@ -54,8 +59,8 @@ function Get-AdvancedRows($state) {
 }
 
 try {
-    if (-not (Test-Path -LiteralPath $app)) { Fail "installed settings app is missing: $app" }
-    if (-not (Test-Path -LiteralPath $dockctl)) { Fail "installed dockctl is missing: $dockctl" }
+    if (-not (Test-Path -LiteralPath $app)) { Fail "installed settings app is missing: $app" NOT_FOUND }
+    if (-not (Test-Path -LiteralPath $dockctl)) { Fail "installed dockctl is missing: $dockctl" NOT_FOUND }
     if (Get-Process -Name $processName -ErrorAction SilentlyContinue) {
         Fail 'settings app is already running; close it before the smoke check'
     }
@@ -170,11 +175,13 @@ try {
     Write-Output 'PASS settings process exits after quit'
     Write-Output 'SETTINGS SMOKE OK'
 } catch {
-    Write-Output "SETTINGS SMOKE FAILED: $($_.Exception.Message)"
+    $failure = $_
     if ($started) {
         try { & $dockctl settings quit | Out-Null } catch { }
     }
-    exit 1
+    $cliFailure = $failure.Exception.Data['clierr']
+    if ($cliFailure) { Stop-Cli $cliFailure.Code $cliFailure.What $cliFailure.Fix -Detail $cliFailure.Detail -ToolRun $cliFailure.ToolRun }
+    Stop-Cli INTERNAL "settings_smoke failed: $($failure.Exception.Message)" 'read the log traceback, fix the cause, then rerun settings_smoke' -Detail $failure.ToString()
 } finally {
     Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
 }

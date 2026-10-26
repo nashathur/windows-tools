@@ -1,5 +1,8 @@
 #![windows_subsystem = "windows"]
 
+#[allow(dead_code)]
+mod clierr;
+
 use std::ffi::{c_void, CStr};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -457,18 +460,28 @@ fn status_name(status: u32) -> &'static str {
 
 fn once(cpu: &CpuInfo, supported: bool) -> i32 {
     if !supported {
-        println!(
-            "status=2 (unsupported CPU), vendor={}, family={}",
-            cpu.vendor, cpu.family
+        clierr::exit(
+            "sysmon-temp",
+            clierr::Fail::new(
+                "UNSUPPORTED_CPU",
+                format!(
+                    "unsupported CPU: vendor={}, family={}",
+                    cpu.vendor, cpu.family
+                ),
+                "use a supported AMD CPU (family 17h-1Ah)",
+            ),
         );
-        return 1;
     }
     let pawn = match PawnIo::open() {
         Ok(p) => p,
-        Err(e) => {
-            println!("status=1 (PawnIO missing), {}", e);
-            return 1;
-        }
+        Err(e) => clierr::exit(
+            "sysmon-temp",
+            clierr::Fail::new(
+                "PAWNIO_FAILED",
+                format!("PawnIO open failed: {e}"),
+                "install PawnIO and rerun elevated",
+            ),
+        ),
     };
     match pawn.read_raw() {
         Ok(raw) => {
@@ -476,10 +489,14 @@ fn once(cpu: &CpuInfo, supported: bool) -> i32 {
             println!("status=0, {:.2} °C", c);
             0
         }
-        Err(hr) => {
-            println!("status=3 (read error), HRESULT 0x{:08X}", hr as u32);
-            1
-        }
+        Err(hr) => clierr::exit(
+            "sysmon-temp",
+            clierr::Fail::new(
+                "PAWNIO_FAILED",
+                format!("PawnIO read failed, HRESULT 0x{:08X}", hr as u32),
+                "check PawnIO and rerun elevated",
+            ),
+        ),
     }
 }
 

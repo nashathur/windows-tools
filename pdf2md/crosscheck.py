@@ -31,7 +31,10 @@ import sys
 import tempfile
 import time
 import zipfile
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+import clierr
 import qa
 
 MINERU_ENV = os.environ.get("PDF2MD_MINERU_ENV", "mineru")
@@ -86,7 +89,13 @@ def run_mineru(pdf_path, pages, log_path):
     t0 = time.time()
     try:
         with open(log_path, "w", encoding="utf-8", errors="replace") as log:
-            subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+            result = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        if result.returncode != 0:  # a second opinion only: flags stay as they are
+            with open(log_path, encoding="utf-8", errors="replace") as log:
+                line = clierr.relevant_line(log.read())
+            clierr.warn("crosscheck", "MINERU_FAILED", f"MinerU exit {result.returncode}: {line}; flags left as they are",
+                        f"read {log_path}, check the {MINERU_ENV} env")
+            return None
         zips = glob.glob(os.path.join(out, "*.zip"))
         if not zips:
             print(f"  MinerU produced no output (see {log_path}); flags left as they are")
@@ -314,9 +323,17 @@ def main():
     args = ap.parse_args()
     folders = args.folders
     if args.all:
+        if not os.path.isdir(folders[0]):
+            raise clierr.Fail("NOT_FOUND", f"book folder not found: {folders[0]}", "check the book folder path")
         folders = sorted(f for f in glob.glob(os.path.join(folders[0], "[0-9][0-9]_*")) if os.path.isdir(f))
+        if not folders:
+            raise clierr.Fail("BAD_INPUT", f"no chapter folders found in {args.folders[0]}",
+                              "use a book folder containing numbered chapter folders")
+    missing = [folder for folder in folders if not os.path.isdir(folder)]
+    if missing:
+        raise clierr.Fail("NOT_FOUND", f"chapter folder not found: {missing[0]}", "check the chapter folder path")
     run(folders)
 
 
 if __name__ == "__main__":
-    main()
+    clierr.run("crosscheck", main)

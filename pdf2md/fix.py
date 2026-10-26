@@ -26,6 +26,11 @@ import datetime
 import glob
 import os
 import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+import clierr
 
 from postprocess import tag_label
 
@@ -42,7 +47,8 @@ def parse(text):
         ok = header.lower().startswith("ok ")
         m = re.match(r"(?:ok\s+)?p(\d+)\s*(.*)", header, re.I)
         if not m:
-            raise SystemExit(f"Bad header (expected 'pNN note' or 'ok pNN note'): {header}")
+            raise clierr.Fail("BAD_INPUT", f"Bad header (expected 'pNN note' or 'ok pNN note'): {header}",
+                              "start each fixes block with a header like 'p12 note' or 'ok p12 note'")
         edits, i = [], 1
         while i < len(lines):
             line = lines[i]
@@ -55,7 +61,8 @@ def parse(text):
                 edits.append(("replace", line[2:], ""))
                 i += 1
             else:
-                raise SystemExit(f"Bad edit line under '{header}': {line}")
+                raise clierr.Fail("BAD_INPUT", f"Bad edit line under '{header}': {line}",
+                                  "write edits as '- old' followed by '+ new', or delete a line with '-- old'")
             i += 1
         blocks.append({"page": int(m.group(1)), "note": m.group(2).strip(), "ok": ok, "edits": edits})
     return blocks
@@ -126,8 +133,15 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="check that every edit matches, change nothing")
     args = ap.parse_args()
 
-    md_path = [p for p in glob.glob(os.path.join(args.folder, "*.md"))
-               if os.path.basename(p) not in ("qa_report.md", "review_notes.md")][0]
+    if not os.path.isdir(args.folder):
+        raise clierr.Fail("NOT_FOUND", f"chapter folder not found: {args.folder}", "check the chapter folder path")
+    if not os.path.isfile(args.fixes):
+        raise clierr.Fail("NOT_FOUND", f"fixes file not found: {args.fixes}", "check the fixes file path")
+    md_files = [p for p in glob.glob(os.path.join(args.folder, "*.md"))
+                if os.path.basename(p) not in ("qa_report.md", "review_notes.md")]
+    if not md_files:
+        raise clierr.Fail("NOT_FOUND", f"Markdown file not found in {args.folder}", "use a chapter folder containing one .md file")
+    md_path = md_files[0]
     with open(md_path, encoding="utf-8") as f:
         md = f.read()
     with open(args.fixes, encoding="utf-8-sig") as f:  # -sig: Notepad/PowerShell may add a byte-order mark
@@ -152,7 +166,14 @@ def main():
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(md)
         log_notes(args.folder, applied, checked, failed)
+    if failed:
+        first, err = failed[0]
+        total = len(applied) + len(failed)
+        raise clierr.Fail("FIX_FAILED",
+                          f"{len(failed)} of {total} fix block(s) did not match, first: p{first['page']} {first['note']}",
+                          "copy the old text exactly from the .md (see the FAILED lines above), then rerun",
+                          detail=err)
 
 
 if __name__ == "__main__":
-    main()
+    clierr.run("fix", main)

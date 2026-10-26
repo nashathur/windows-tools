@@ -3,7 +3,9 @@
 # Example: .\status.ps1 -Since 30
 param([double]$Since = 60)
 
+. "$PSScriptRoot\..\..\common\clierr.ps1"
 $ErrorActionPreference = 'Continue'
+trap { Exit-Cli 'status' $_ }
 $dock = Split-Path $PSScriptRoot
 $repo = Split-Path $dock
 $dockctl = Join-Path $dock 'dockctl.exe'

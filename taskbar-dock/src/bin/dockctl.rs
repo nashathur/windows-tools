@@ -47,6 +47,7 @@ struct TargetExe {
 }
 /// Parses arguments, runs the requested commands and prints their replies.
 fn main() {
+    taskbar_dock::clierr::install_panic_hook("dockctl");
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let (args, timeout) = match parse_timeout(&raw) {
         Ok(x) => x,
@@ -578,11 +579,15 @@ fn widgets_command(args: &[String]) {
 }
 /// Prints a usage message and exits with the usage status.
 fn usage(msg: &str) -> ! {
-    if !msg.is_empty() {
-        eprintln!("dockctl: {msg}");
-    }
-    eprintln!("{}", ctl::USAGE);
-    std::process::exit(2)
+    let what = if msg.is_empty() {
+        "expected a widget and command"
+    } else {
+        msg
+    };
+    taskbar_dock::clierr::exit(
+        "dockctl",
+        taskbar_dock::clierr::Fail::new("BAD_ARG", what, "run dockctl <widget|all> state"),
+    )
 }
 /// Returns dockctl's documented success, failure, or usage exit code.
 fn exit_code(failed: bool, usage_failed: bool) -> i32 {

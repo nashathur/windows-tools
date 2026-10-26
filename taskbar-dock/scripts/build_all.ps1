@@ -10,9 +10,11 @@ param(
     # this would silently drop the rest)
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$MoreOnly = @()
 )
+. "$PSScriptRoot\..\..\common\clierr.ps1"
 $Only = @(@($Only) + @($MoreOnly) | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 
 $ErrorActionPreference = 'Continue'
+trap { Exit-Cli 'build_all' $_ }
 $dock = Split-Path $PSScriptRoot
 $repo = Split-Path $dock
 $startedAt = [Diagnostics.Stopwatch]::StartNew()
@@ -23,19 +25,20 @@ $runApp = $allStages -or ($Only -contains 'app')
 $runWidgets = $allStages -or @($Only | Where-Object { $_ -notin @('lib','tools','app') }).Count -gt 0
 $selectedWidgets = @($Only | Where-Object { $_ -notin @('lib','tools','app') })
 
-function Failed([string]$step, [string]$detail) {
-    if ($detail) { Write-Output "FAILED: $step - $detail" } else { Write-Output "FAILED: $step" }
-    exit 1
+function Failed([string]$step, [string]$detail, [string]$code = 'TOOL_FAILED', [string]$logDetail = '', $toolRun = $null) {
+    Stop-Cli $code $(if ($detail) { "$step - $detail" } else { $step }) 'read the error log, fix the reported issue, then rerun build_all' -Detail $logDetail -ToolRun $toolRun
 }
 
 function Invoke-Cargo([string]$folder, [string[]]$arguments, [string]$step) {
-    Push-Location $folder
-    try {
-        $output = @(& cargo @arguments 2>&1 | ForEach-Object { "$_" })
-        $code = $LASTEXITCODE
-    } finally { Pop-Location }
-    $output | Where-Object { $_ -match '^(error|warning)(:|\[)' } | Select-Object -First 12 | ForEach-Object { Write-Output $_ }
-    if ($code -ne 0) { Failed $step (($output | Select-Object -Last 8) -join ' | ') }
+    try { $run = Invoke-CliTool cargo $arguments -Name cargo -Fix 'fix the first compiler or test error and rerun' -WorkingDirectory $folder }
+    catch { $run = $_.Exception.Data['clierr'].ToolRun; if (-not $run) { throw } }
+    $output = @($run.StdOut -split "`r?`n") + @($run.StdErr -split "`r?`n")
+    if ($run.ExitCode -ne 0) {   # only the ERROR line; the full output goes to the log
+        $cargoError = Get-CargoError ($output -join "`n")
+        if (-not $cargoError) { $cargoError = Get-RelevantLine ($output -join "`n") }
+        Failed $step $cargoError 'BUILD_FAILED' ($output -join "`n") $run
+    }
+    $output | Where-Object { $_ -match '^warning(:|\[)' } | Select-Object -First 12 | ForEach-Object { Write-Output $_ }
     Write-Output "$step ok"
 }
 
@@ -47,25 +50,29 @@ function Copy-InstalledExe([string]$built, [string]$installed, [string]$label) {
     } catch {
         $procName = [IO.Path]::GetFileNameWithoutExtension($installed)
         $running = Get-Process -Name $procName -ErrorAction SilentlyContinue
-        if (-not $running) { Failed "$label copy" $_.Exception.Message }
+        if (-not $running) { Failed "$label copy" $_.Exception.Message 'LOCKED' }
         $old = Join-Path (Split-Path $installed) (([IO.Path]::GetFileNameWithoutExtension($installed)) + '.old.exe')
         Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
         try {
             Move-Item -LiteralPath $installed -Destination $old -Force -ErrorAction Stop
             Copy-Item -LiteralPath $built -Destination $installed -Force -ErrorAction Stop
             Write-Output "$label replaced while running"
-        } catch { Failed "$label replace while running" $_.Exception.Message }
+        } catch { Failed "$label replace while running" $_.Exception.Message 'LOCKED' }
     }
 }
 
 function Invoke-ChildScript([string]$path, [string[]]$arguments, [string]$step) {
-    $output = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $path @arguments 2>&1 | ForEach-Object { "$_" })
-    $code = $LASTEXITCODE
-    if ($code -ne 0) {
-        $output | ForEach-Object { Write-Output $_ }
-        Failed $step "exit $code"
+    try { $run = Invoke-CliTool powershell.exe (@('-NoProfile','-ExecutionPolicy','Bypass','-File',$path) + $arguments) -Name powershell -Fix "read the $step error and fix it before rerunning build_all" }
+    catch {
+        # the child's own ERROR line becomes build_all's one line, keeping its code, fix and log
+        $run = $_.Exception.Data['clierr'].ToolRun
+        $childError = @("$($run.StdErr)`n$($run.StdOut)" -split "`r?`n") | Where-Object { $_ -match '^ERROR ' } | Select-Object -First 1
+        if ($childError -match '^ERROR \S+ (\S+): (.*) \| fix: (.*) \| log: (.*)$') {
+            Stop-Cli $Matches[1] "${step}: $($Matches[2]) (log: $($Matches[4]))" $Matches[3] -ToolRun $run
+        }
+        throw
     }
-    return ,$output
+    return ,@(("$($run.StdOut)`n$($run.StdErr)" -split "`r?`n") | Where-Object { $_ })
 }
 
 $validOnly = @('lib','tools','app')
@@ -75,12 +82,12 @@ $widgetDirs = @(Get-ChildItem -LiteralPath $repo -Directory | Where-Object {
 })
 $widgetNames = @($widgetDirs | ForEach-Object Name)
 foreach ($name in $Only) {
-    if (($name -notin $validOnly) -and ($name -notin $widgetNames)) { Failed 'arguments' "unknown -Only name '$name'; valid: $((@($validOnly) + $widgetNames) -join ', ')" }
+    if (($name -notin $validOnly) -and ($name -notin $widgetNames)) { Failed 'arguments' "unknown -Only name '$name'; valid: $((@($validOnly) + $widgetNames) -join ', ')" 'BAD_ARG' }
 }
 if (-not $Only) { $selectedWidgets = $widgetNames }
 elseif ($runWidgets) {
     $unknownWidget = @($selectedWidgets | Where-Object { $_ -notin $widgetNames })
-    if ($unknownWidget) { Failed 'arguments' "unknown widget folder '$($unknownWidget[0])'" }
+    if ($unknownWidget) { Failed 'arguments' "unknown widget folder '$($unknownWidget[0])'" 'BAD_ARG' }
 }
 
 if ($runLib) { Invoke-Cargo $dock @('test','--profile','fast','--quiet') 'library tests' }
@@ -95,9 +102,8 @@ if ($runApp) {
     $appName = 'taskbar-dock-settings'
     if (Get-Process -Name $appName -ErrorAction SilentlyContinue) {
         $ctl = Join-Path $dock 'dockctl.exe'
-        if (-not (Test-Path -LiteralPath $ctl)) { Failed 'settings app close' 'dockctl.exe is missing; build tools first' }
-        $replyText = (& $ctl settings quit 2>&1 | Out-String)
-        if ($LASTEXITCODE -ne 0) { Failed 'settings app close' $replyText.Trim() }
+        if (-not (Test-Path -LiteralPath $ctl)) { Failed 'settings app close' 'dockctl.exe is missing; build tools first' 'NOT_FOUND' }
+        Invoke-CliTool $ctl @('settings','quit') -Name dockctl -Fix 'close the settings app and rerun build_all' | Out-Null
         $wait = [Diagnostics.Stopwatch]::StartNew()
         while ($wait.Elapsed.TotalSeconds -lt 5 -and (Get-Process -Name $appName -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 100 }
         if (Get-Process -Name $appName -ErrorAction SilentlyContinue) { Failed 'settings app close' 'process did not exit within 5 seconds' }

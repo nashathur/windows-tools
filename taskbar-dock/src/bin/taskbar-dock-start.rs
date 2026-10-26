@@ -53,6 +53,7 @@ struct Watched {
 }
 
 fn main() {
+    taskbar_dock::clierr::install_panic_hook("taskbar-dock-start");
     let started_at = Instant::now();
     let mut watched = Vec::new();
     for e in startup::list() {

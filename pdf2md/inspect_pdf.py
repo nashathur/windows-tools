@@ -6,8 +6,14 @@ Run in the pdfmath env:
 
 import argparse
 import logging
+import os
+import sys
+from pathlib import Path
 
 import pypdfium2 as pdfium
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+import clierr
 
 
 def main():
@@ -16,6 +22,8 @@ def main():
     ap.add_argument("--toc-depth", type=int, default=2)
     args = ap.parse_args()
 
+    if not os.path.isfile(args.pdf):
+        raise clierr.Fail("NOT_FOUND", f"{args.pdf} not found", "check the PDF path")
     pdf = pdfium.PdfDocument(args.pdf)
     n = len(pdf)
     print(f"pages: {n}")
@@ -44,4 +52,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    clierr.run("inspect_pdf", main)

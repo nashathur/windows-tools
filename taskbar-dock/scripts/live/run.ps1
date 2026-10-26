@@ -14,6 +14,8 @@
 # (see extra\weather.ps1).
 [CmdletBinding()]
 param([string[]]$Checks = @('edit_settings', 'idle', 'time_format', 'highlight', 'colour_rows', 'pages'), [string]$Tag = '', [string[]]$Widgets = @(), [double]$Minutes = 10, [switch]$Baseline, [switch]$Compare)
+. "$PSScriptRoot\..\..\..\common\clierr.ps1"
+trap { Exit-Cli 'run' $_ }
 $global:Live = $null
 if ($Widgets) { $global:Live = @{ Out = "C:\Tools\_tmp\live\$(Get-Date -Format 'yyyyMMdd-HHmmss')"; Results = New-Object System.Collections.ArrayList; Widgets = $Widgets } }
 . "$PSScriptRoot\common.ps1"
@@ -31,6 +33,9 @@ foreach ($c in $Checks) {
 }
 $res = $Live.Results
 $fails = @($res | Where-Object R -eq 'FAIL').Count
+foreach ($failure in @($res | Where-Object R -eq 'FAIL')) {
+    Write-CliWarn run CHECK_FAILED "$($failure.Name)$(if ($failure.Detail) { ": $($failure.Detail)" })" 'read the live report and fix the failed check'
+}
 $lines = @("# Live checks $(Get-Date -Format 'yyyy-MM-dd HH:mm')", '',
     "$(@($res | Where-Object R -eq 'PASS').Count) passed, $fails failed, $([int]((Get-Date) - $t0).TotalSeconds) s. Checks: $($Checks -join ', ')", '')
 $lines += $res | ForEach-Object { "- **$($_.R)** $($_.Name)$(if ($_.Detail) { ": $($_.Detail)" })" }

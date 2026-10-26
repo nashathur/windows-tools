@@ -30,13 +30,18 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unicodedata
+from pathlib import Path
 
 import numpy as np
 import pypdfium2 as pdfium
 import pypdfium2.raw as pdfium_c
 from rapidfuzz import fuzz
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+import clierr
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MATH = re.compile(r"<math\b([^>]*)>(.*?)</math>", re.S)
@@ -219,8 +224,8 @@ def validate_math(items):
         json.dump(items, f)
         path = f.name
     try:
-        out = subprocess.run([node, os.path.join(HERE, "validate_math.js"), path],
-                             capture_output=True, text=True, encoding="utf-8", check=True).stdout
+        out = clierr.run_tool([node, os.path.join(HERE, "validate_math.js"), path], name="node",
+                              fix="install Node.js and rerun QA", encoding="utf-8").stdout
     finally:
         os.remove(path)
     return {r["id"]: r["error"] for r in json.loads(out)}
@@ -865,8 +870,13 @@ def main():
     ap.add_argument("--no-mineru", action="store_true",
                     help="don't run MinerU on flagged equations (readings already cached are still used)")
     a = ap.parse_args()
+    if not os.path.isdir(a.folder):
+        raise clierr.Fail("NOT_FOUND", f"chapter folder not found: {a.folder}", "check the converted chapter folder path")
+    if not glob.glob(os.path.join(a.folder, "*.blocks.json")):
+        raise clierr.Fail("NOT_FOUND", f"block JSON not found in {a.folder}",
+                          "use a convert.py output folder containing .blocks.json")
     run(a.folder, a.threshold, a.max_dropped, a.max_symbol_diff, a.dpi, mineru=not a.no_mineru)
 
 
 if __name__ == "__main__":
-    main()
+    clierr.run("qa", main)

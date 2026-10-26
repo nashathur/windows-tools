@@ -17,10 +17,14 @@ convert.py runs this automatically. To run it on an existing file (edits in plac
 import html
 import re
 import sys
+from pathlib import Path
 
 from rapidfuzz import fuzz
 
 from qa import validate_math
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+import clierr
 
 COMMENT = re.compile(r"<!--.*?-->")
 TABLE_LINE = re.compile(r"^\s*\|.*\|\s*(<!--.*?-->\s*)*$")
@@ -394,4 +398,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    clierr.run("postprocess", main)

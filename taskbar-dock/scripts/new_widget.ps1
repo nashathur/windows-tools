@@ -8,13 +8,16 @@ param(
     [switch]$NoRegister
 )
 
+. "$PSScriptRoot\..\..\common\clierr.ps1"
 $ErrorActionPreference = 'Stop'
+$hasSection = $PSBoundParameters.ContainsKey('Section')
+trap { Exit-Cli 'new_widget' $_ }
 $expectedSection = $Name -replace '^taskbar-', ''
-if (-not $PSBoundParameters.ContainsKey('Section')) { $Section = $expectedSection }
-if ($Section -cne $expectedSection) { throw "Section must equal Name without the taskbar- prefix: $expectedSection" }
-if ($Section -in @('dock','startup','widgets','settings')) { throw "Section is reserved: $Section" }
+if (-not $hasSection) { $Section = $expectedSection }
+if ($Section -cne $expectedSection) { Stop-Cli BAD_ARG "Section must equal Name without the taskbar- prefix: $expectedSection" 'set -Section to the name suffix' }
+if ($Section -in @('dock','startup','widgets','settings')) { Stop-Cli BAD_ARG "Section is reserved: $Section" 'choose a non-reserved widget section' }
 foreach ($field in @(@('Title',$Title),@('Description',$Description))) {
-    if ($field[1] -match '["\\\r\n\x00-\x1F\x7F]') { throw "$($field[0]) must use plain text (no quotes, backslashes, newlines or control characters)" }
+    if ($field[1] -match '["\\\r\n\x00-\x1F\x7F]') { Stop-Cli BAD_ARG "$($field[0]) must use plain text (no quotes, backslashes, newlines or control characters)" "remove quotes, backslashes and control characters from -$($field[0])" }
 }
 $dock = Split-Path -Parent $PSScriptRoot
 $root = Split-Path -Parent $dock
@@ -23,17 +26,17 @@ $destination = Join-Path $root $Name
 $extraDir = Join-Path $PSScriptRoot 'live\extra'
 $extra = Join-Path $extraDir "$Section.ps1"
 
-if (-not (Test-Path -LiteralPath $template -PathType Container)) { throw "Template not found: $template" }
+if (-not (Test-Path -LiteralPath $template -PathType Container)) { Stop-Cli NOT_FOUND "Template not found: $template" 'restore taskbar-dock/template' }
 # A folder holding only plan notes written ahead (PLAN.md, a mockup) is kept; the template's
 # files must not be there yet.
 $templateFiles = @(Get-ChildItem -LiteralPath $template -File -Recurse | ForEach-Object { $_.FullName.Substring($template.Length + 1) })
 if (Test-Path -LiteralPath $destination) {
     $clash = @($templateFiles | Where-Object { Test-Path -LiteralPath (Join-Path $destination $_) })
     if ($clash.Count -gt 0 -or (Test-Path -LiteralPath (Join-Path $destination 'Cargo.toml'))) {
-        throw "Widget folder already has a crate: $destination ($($clash -join ', '))"
+        Stop-Cli BAD_ARG "Widget folder already has a crate: $destination ($($clash -join ', '))" 'choose a new widget name or remove the existing crate'
     }
 }
-if (Test-Path -LiteralPath $extra) { throw "Live extra already exists: $extra" }
+if (Test-Path -LiteralPath $extra) { Stop-Cli BAD_ARG "Live extra already exists: $extra" 'choose a different section or resolve the existing live check' }
 
 # Section names are unique across widget Specs. Check both the current source forms:
 # named WIDGET_SECTION constants and literal Spec::new(class, section, ...).
@@ -50,14 +53,22 @@ foreach ($crate in Get-ChildItem -LiteralPath $root -Directory) {
         }
     }
 }
-if ($sections.Contains($Section)) { throw "Settings section is already used by a sibling widget: $Section" }
+if ($sections.Contains($Section)) { Stop-Cli BAD_ARG "Settings section is already used by a sibling widget: $Section" 'choose an unused -Section value' }
 
-# cargo writes progress to stderr; under 'Stop' PS 5.1 turns that into a terminating error when
-# the caller captures output (2>&1), so native calls run with 'Continue' and are judged by exit code.
+# cargo writes progress to stderr, so keep it captured through the helper and replay it on success.
 function Invoke-Cargo([string[]]$CargoArgs) {
-    $ErrorActionPreference = 'Continue'
-    & cargo @CargoArgs 2>&1 | ForEach-Object { "$_" }
-    if ($LASTEXITCODE -ne 0) { throw "cargo $($CargoArgs -join ' ') failed with exit code $LASTEXITCODE" }
+    try {
+        $run = Invoke-CliTool cargo $CargoArgs -Name cargo -Fix 'fix the reported cargo error and rerun new_widget'
+        if ($run.StdOut) { Write-Output $run.StdOut }
+        if ($run.StdErr) { Write-Output $run.StdErr }
+    }
+    catch {
+        $run = $_.Exception.Data['clierr'].ToolRun
+        $detail = "$($run.StdOut)`n$($run.StdErr)"
+        $line = Get-CargoError $detail
+        if (-not $line) { $line = Get-RelevantLine $detail }
+        Stop-Cli TOOL_FAILED "cargo $($CargoArgs -join ' ') failed: $line" 'fix the cargo error shown in the log and rerun new_widget' -Detail $detail -ToolRun $run
+    }
 }
 
 $utf8NoBom = [Text.UTF8Encoding]::new($false)
@@ -106,6 +117,7 @@ try {
         Pop-Location
     }
 } catch {
+    $failure = $_
     # Leave the folder as it was so the starter can simply be run again: remove only the files this
     # run copied, the build output it made, and the folders it created once they are empty.
     foreach ($relative in $templateFiles) {
@@ -119,7 +131,9 @@ try {
         if (($dir -notin $preexisting) -and -not (Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) { Remove-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue }
     }
     Remove-Item -LiteralPath $extra -Force -ErrorAction SilentlyContinue
-    throw
+    $cliFailure = $failure.Exception.Data['clierr']
+    if ($cliFailure) { Stop-Cli $cliFailure.Code $cliFailure.What $cliFailure.Fix -Detail $cliFailure.Detail -ToolRun $cliFailure.ToolRun }
+    Stop-Cli INTERNAL "new_widget failed: $($failure.Exception.Message)" 'read the log traceback, fix the cause, then rerun new_widget' -Detail $failure.ToString()
 }
 
 Write-Output "Created $destination"
@@ -154,14 +168,14 @@ try {
         Start-ScheduledTask -TaskName $taskName
         $watch = [Diagnostics.Stopwatch]::StartNew()
         while ($watch.Elapsed.TotalSeconds -lt 15 -and -not (Test-Path -LiteralPath $outputFile)) { Start-Sleep -Milliseconds 100 }
-        if (-not (Test-Path -LiteralPath $outputFile)) { throw 'Widget registration timed out after 15 seconds' }
+        if (-not (Test-Path -LiteralPath $outputFile)) { Stop-Cli TIMEOUT 'Widget registration timed out after 15 seconds' 'check Task Scheduler and rerun registration' }
         while ($watch.Elapsed.TotalSeconds -lt 15) {
             $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
             if (-not $task -or $task.State -ne 'Running') { break }
             Start-Sleep -Milliseconds 100
         }
         $code = [int][IO.File]::ReadAllText($outputFile).Trim()
-        if ($code -ne 0) { throw "dockctl widgets register failed with exit code $code" }
+        if ($code -ne 0) { Stop-Cli TOOL_FAILED "dockctl widgets register failed with exit code $code" 'check dockctl output and rerun registration' }
     } finally {
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $taskScript,$outputFile -Force -ErrorAction SilentlyContinue
