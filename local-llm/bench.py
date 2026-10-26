@@ -4,7 +4,7 @@ import sys
 import httpx
 
 ctx = int(sys.argv[1]) if len(sys.argv) > 1 else 32768
-text = open(r"C:\Users\thurs\tools\pdf2md\README.md", encoding="utf-8").read()
+text = open(r"C:\Tools\pdf2md\README.md", encoding="utf-8").read()
 text = (text * (ctx * 3 // len(text) + 1))[: int(ctx * 2.5)]  # ~ctx*0.7 tokens
 r = httpx.post("http://127.0.0.1:11434/api/chat", timeout=900, json={
     "model": "qwen3.5:9b", "stream": False, "think": False,

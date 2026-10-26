@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import code_tools as ct  # noqa: E402
 
-ROOT = Path(r"C:\Users\thurs\tools")
+ROOT = Path(r"C:\Tools")
 HERE = Path(__file__).resolve().parent
 ct.SCRATCH = Path(r"D:\lp\bench")  # own worktree/target, so it never collides with live local_patch
 

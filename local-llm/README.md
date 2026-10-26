@@ -14,7 +14,7 @@ model does the grunt work.
   ffmpeg, faster-whisper + CUDA 12 cuBLAS/cuDNN wheels (video tools, added 2026-10-10),
   tree-sitter + tree-sitter-rust (code tools, pip).
 - **Registered** for all projects (user scope, `~/.claude.json`):
-  `conda.exe run --no-capture-output -n llm python C:\Users\thurs\tools\local-llm\server.py`
+  `conda.exe run --no-capture-output -n llm python C:\Tools\local-llm\server.py`
 
 Measured speed (RTX 3070, 8 GB):
 
@@ -75,7 +75,7 @@ PDF input works in every tool that takes a path (text layer via PyMuPDF; scanned
 
 ### Code tools notes (`code_tools.py`, added 2026-10-10)
 
-- `C:\Users\thurs\tools` is one git repo (widgets, taskbar-dock, local-llm, pdf2md), so the
+- `C:\Tools` is one git repo (widgets, taskbar-dock, local-llm, pdf2md), so the
   widgets' `../taskbar-dock` path dependencies also work in a worktree. `.gitignore` skips
   `target\`, `src_backup*`, `*.bak*`, exes, logs.
 - **local_patch** uses `qwen3.5:9b` (16k context, 24k when the files need it; `LOCAL_LLM_CODE_MODEL`).

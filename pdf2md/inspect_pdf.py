@@ -1,7 +1,7 @@
 """Quick look at a PDF before converting: page count, text layer per sample page, and the outline (TOC).
 
 Run in the pdfmath env:
-    conda run -n pdfmath python C:\\Users\\thurs\\tools\\pdf2md\\inspect_pdf.py book.pdf [--toc-depth 2]
+    conda run -n pdfmath python C:\\Tools\\pdf2md\\inspect_pdf.py book.pdf [--toc-depth 2]
 """
 
 import argparse

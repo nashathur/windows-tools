@@ -2,7 +2,7 @@
 //!
 //! Hover or left-click: next departures · drag: reorder in the dock · right-click: menu.
 //! The strip window, docking, panels, right-click panel, tray icon and floating fallback are the
-//! shared library's Block (C:\Users\thurs\tools\taskbar-dock\src\block); this file is its Content.
+//! shared library's Block (C:\Tools\taskbar-dock\src\block); this file is its Content.
 //! Settings: the "bus" section of %APPDATA%\TaskbarDock\settings.json.
 //! Data lives in .\data next to the exe (schedule cache, timetable, line colours, pos.txt, log).
 #![windows_subsystem = "windows"]

@@ -1,7 +1,7 @@
 """Apply review corrections to a chapter's Markdown from a short fixes file, and log them in review_notes.md.
 
 Run in the pdfmath env:
-    conda run -n pdfmath python C:\\Users\\thurs\\tools\\pdf2md\\fix.py out\\ch02 fixes.txt [--dry-run]
+    conda run -n pdfmath python C:\\Tools\\pdf2md\\fix.py out\\ch02 fixes.txt [--dry-run]
 
 Fixes file: blocks separated by blank lines. Each block starts with a header line, then edit lines:
 

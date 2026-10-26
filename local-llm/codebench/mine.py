@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(r"C:\Users\thurs\tools")
+ROOT = Path(r"C:\Tools")
 OUT = Path(__file__).parent / "candidates.json"
 CRATES = {"taskbar-dock": "taskbar-dock", "taskbar-weather": "taskbar-weather",
           "taskbar-media": "taskbar-media", "taskbar-discord": "taskbar-discord",

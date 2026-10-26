@@ -1,6 +1,6 @@
 # taskbar-dock
 
-A shared Rust library for the taskbar widgets: the bus widget (`C:\Users\thurs\tools\buswidget`), taskbar-weather (`C:\Users\thurs\tools\taskbar-weather`), taskbar-media (`C:\Users\thurs\tools\taskbar-media`), taskbar-discord (`C:\Users\thurs\tools\taskbar-discord`), and any new one. A widget built on it docks into the Windows 11 taskbar next to the others. It looks and behaves the same way and follows Windows settings live.
+A shared Rust library for the taskbar widgets: the bus widget (`C:\Tools\buswidget`), taskbar-weather (`C:\Tools\taskbar-weather`), taskbar-media (`C:\Tools\taskbar-media`), taskbar-discord (`C:\Tools\taskbar-discord`), and any new one. A widget built on it docks into the Windows 11 taskbar next to the others. It looks and behaves the same way and follows Windows settings live.
 
 ## What's in it
 

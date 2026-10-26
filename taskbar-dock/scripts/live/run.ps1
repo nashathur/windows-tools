@@ -15,7 +15,7 @@
 [CmdletBinding()]
 param([string[]]$Checks = @('edit_settings', 'idle', 'time_format', 'highlight', 'colour_rows', 'pages'), [string]$Tag = '', [string[]]$Widgets = @(), [double]$Minutes = 10, [switch]$Baseline, [switch]$Compare)
 $global:Live = $null
-if ($Widgets) { $global:Live = @{ Out = "C:\Users\thurs\tools\_tmp\live\$(Get-Date -Format 'yyyyMMdd-HHmmss')"; Results = New-Object System.Collections.ArrayList; Widgets = $Widgets } }
+if ($Widgets) { $global:Live = @{ Out = "C:\Tools\_tmp\live\$(Get-Date -Format 'yyyyMMdd-HHmmss')"; Results = New-Object System.Collections.ArrayList; Widgets = $Widgets } }
 . "$PSScriptRoot\common.ps1"
 . "$PSScriptRoot\compare_images.ps1"
 $Live.Comparisons = New-Object System.Collections.ArrayList
@@ -37,7 +37,7 @@ $lines += $res | ForEach-Object { "- **$($_.R)** $($_.Name)$(if ($_.Detail) { ":
 $lines += '', '## Screenshots', ''
 $lines += Get-ChildItem $Live.Out -Filter *.png | Sort-Object Name | ForEach-Object { "- $($_.Name)" }
 if ($Compare) {
-    $baselineDir = 'C:\Users\thurs\tools\_tmp\live\baseline'
+    $baselineDir = 'C:\Tools\_tmp\live\baseline'
     $comparison = Compare-LiveImages -CurrentDirectory $Live.Out -BaselineDirectory $baselineDir
     foreach ($item in $comparison) { [void]$Live.Comparisons.Add($item) }
     $lines += '', '## Compared with baseline', ''
@@ -46,7 +46,7 @@ if ($Compare) {
     $lines += $Live.Comparisons | Where-Object { $same -notcontains $_ } | Sort-Object @{ Expression = { if ($null -eq $_.Percent) { -1 } else { $_.Percent } }; Descending = $true }, Name | ForEach-Object { "- **NOTE** $($_.Name): $($_.Detail)" }
 }
 if ($Baseline) {
-    $baselineDir = 'C:\Users\thurs\tools\_tmp\live\baseline'
+    $baselineDir = 'C:\Tools\_tmp\live\baseline'
     if (Test-Path $baselineDir) { Remove-Item $baselineDir -Recurse -Force }
     New-Item -ItemType Directory -Force $baselineDir | Out-Null
     Get-ChildItem $Live.Out -Filter *.png | Copy-Item -Destination $baselineDir -Force

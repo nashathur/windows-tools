@@ -1,7 +1,7 @@
 """Find the parts of a Marker conversion that need review, so only those get looked at.
 
 Run in the pdfmath env, on a folder made by convert.py:
-    conda run -n pdfmath python C:\\Users\\thurs\\tools\\pdf2md\\qa.py out_dir\\<name>
+    conda run -n pdfmath python C:\\Tools\\pdf2md\\qa.py out_dir\\<name>
 
 Checks:
   1. LaTeX: every inline and display equation is rendered with KaTeX; parse failures are flagged.

@@ -60,7 +60,7 @@ function Test-ExeFresh([string]$exe, [string[]]$sourcePaths, [switch]$ExcludeBin
 # they never mix into the returned value.
 function Get-RealSettingsStatus($widgetEntries) {
     $taskName = "TaskbarDockStatusReal_$PID"
-    $dir = "C:\Users\thurs\tools\_tmp\tdstatus_$PID"
+    $dir = "C:\Tools\_tmp\tdstatus_$PID"
     $done = Join-Path $dir 'done.txt'
     try {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null

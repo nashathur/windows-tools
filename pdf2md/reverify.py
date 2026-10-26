@@ -3,8 +3,8 @@ were converted earlier, without converting again (Marker's OCR varies between ru
 also change everything else). Updates <name>.blocks.json and <name>.md in place, then re-runs qa.py.
 
 Run in the pdfmath env:
-    conda run -n pdfmath python C:\\Users\\thurs\\tools\\pdf2md\\reverify.py out\\ch02 [out\\ch05 ...]
-    conda run -n pdfmath python C:\\Users\\thurs\\tools\\pdf2md\\reverify.py out --all
+    conda run -n pdfmath python C:\\Tools\\pdf2md\\reverify.py out\\ch02 [out\\ch05 ...]
+    conda run -n pdfmath python C:\\Tools\\pdf2md\\reverify.py out --all
 
 An equation is changed in the Markdown where its old LaTeX (or its equation number) can be found there exactly
 once; others are listed as not applied (blocks.json and the Markdown then still agree: both keep the old form).

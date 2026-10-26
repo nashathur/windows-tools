@@ -20,6 +20,12 @@ _tmp/
 thread.txt
 local-llm/shots/
 
+# reverse-engineering add-ons kept at the top of C:\Tools (not part of the repo)
+/ghidra_*/
+/jadx/
+/kuna/
+/kuna-test/
+
 # settings app runtime copy (taken from Windows at start) and the throwaway WinUI test
 taskbar-dock/resources.pri
 winui-test/

@@ -1,7 +1,7 @@
 # A Claude desktop session has a private APPDATA copy, so dockctl there cannot see newly
 # registered widgets until the real settings registry is copied into that session's copy.
 $ErrorActionPreference = 'Stop'
-$tempRoot = 'C:\Users\thurs\tools\_tmp'
+$tempRoot = 'C:\Tools\_tmp'
 $tempFile = Join-Path $tempRoot ("settings_$PID.json")
 $taskName = "TaskbarDockSyncSettings_$PID"
 $taskScript = Join-Path $tempRoot "sync_settings_$PID.ps1"

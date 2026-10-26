@@ -1,7 +1,7 @@
 ﻿"""MCP server that lets Claude Code hand bulk work to a local Ollama model.
 
 Run (Claude Code starts it automatically once registered):
-    conda run --no-capture-output -n llm python C:\\Users\\thurs\\tools\\local-llm\\server.py
+    conda run --no-capture-output -n llm python C:\\Tools\\local-llm\\server.py
 
 Settings (environment variables, all optional):
     LOCAL_LLM_MODEL  model tag in Ollama        (default: see DEFAULT_MODEL)

@@ -62,7 +62,7 @@ fetches it runs outside content timers.
   `scripts\status.ps1` then must report nothing OUT OF DATE (README.md "Building").
 - Big files: a widget's `main.rs` holds its `App` (the `Content`), the `Spec` and `main`; features
   live in modules. `scripts\split.sh` moves a line range into a module.
-- Version control: `C:\Users\thurs\tools` is one git repo. Before changing the library, make
+- Version control: `C:\Tools` is one git repo. Before changing the library, make
   sure the last good state is committed (ask before committing), and keep all widgets building.
 - Start with Windows (README "Building a new widget", step 7): the launcher `taskbar-dock-start.exe`
   and its watchdog. After rebuilding the launcher, copy `target\release\taskbar-dock-start.exe`

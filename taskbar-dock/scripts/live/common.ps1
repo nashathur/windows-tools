@@ -21,7 +21,7 @@ $Dock = Split-Path $PSScriptRoot -Parent | Split-Path -Parent
 $Ctl = Join-Path $Dock 'dockctl.exe'
 if (-not $global:Live) {
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $global:Live = @{ Out = "C:\Users\thurs\tools\_tmp\live\$stamp"; Results = New-Object System.Collections.ArrayList }
+    $global:Live = @{ Out = "C:\Tools\_tmp\live\$stamp"; Results = New-Object System.Collections.ArrayList }
 }
 New-Item -ItemType Directory -Force $Live.Out | Out-Null
 

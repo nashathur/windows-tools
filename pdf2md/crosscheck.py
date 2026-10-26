@@ -14,8 +14,8 @@ only changes Marker's output) doesn't run MinerU again. MinerU needs the GPU tha
 loaded Marker, call release_gpu() first (book.py and reverify.py do this after their last chapter).
 
 Run in the pdfmath env, on chapters QA has already checked:
-    conda run -n pdfmath python C:\\Users\\thurs\\tools\\pdf2md\\crosscheck.py out_dir\\<chapter> [...]
-    conda run -n pdfmath python C:\\Users\\thurs\\tools\\pdf2md\\crosscheck.py out_dir --all
+    conda run -n pdfmath python C:\\Tools\\pdf2md\\crosscheck.py out_dir\\<chapter> [...]
+    conda run -n pdfmath python C:\\Tools\\pdf2md\\crosscheck.py out_dir --all
 """
 
 import argparse

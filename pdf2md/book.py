@@ -1,8 +1,8 @@
 """Convert a whole book chapter by chapter: outline -> convert (models loaded once) -> QA -> 00_index.md.
 
 Run in the pdfmath env:
-    conda run -n pdfmath python C:\\Users\\thurs\\tools\\pdf2md\\book.py book.pdf out_dir --list
-    conda run -n pdfmath python C:\\Users\\thurs\\tools\\pdf2md\\book.py book.pdf out_dir [--chapters 2,5-7]
+    conda run -n pdfmath python C:\\Tools\\pdf2md\\book.py book.pdf out_dir --list
+    conda run -n pdfmath python C:\\Tools\\pdf2md\\book.py book.pdf out_dir [--chapters 2,5-7]
 
 Chapters come from the PDF outline: the level whose entries are closest to ~25 pages long (override with --level). A chapter
 ends where the next entry at that level or above starts, so part-title pages are skipped. Without an outline,

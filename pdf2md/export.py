@@ -1,7 +1,7 @@
 """Export converted Markdown as lean source files for a Claude project (the only use of these files).
 
 Run in the pdfmath env:
-    conda run -n pdfmath python C:\\Users\\thurs\\tools\\pdf2md\\export.py <book or document folder> <export folder>
+    conda run -n pdfmath python C:\\Tools\\pdf2md\\export.py <book or document folder> <export folder>
         [--title "Cushman-Roisin & Beckers, Introduction to GFD"] [--skip index,references]
 
 For each chapter (or the single document): drops image links (Claude can't see them; captions stay), HTML

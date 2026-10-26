@@ -1,6 +1,6 @@
 # Next session (optional): sysmon GPU readings without NVML
 
-Paste the block below into a new Claude Code session (working folder `C:\Users\thurs\tools`).
+Paste the block below into a new Claude Code session (working folder `C:\Tools`).
 
 ```
 taskbar-sysmon uses ~22 MB private memory; NVML (NVIDIA's library) costs ~15 MB of that once

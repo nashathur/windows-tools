@@ -4,7 +4,7 @@ Local PDF → Markdown conversion with math, plus automatic QA so only problem s
 
 ## Usage
 
-All scripts run in the `pdfmath` env: `conda run -n pdfmath python C:\Users\thurs\tools\pdf2md\<script> …`
+All scripts run in the `pdfmath` env: `conda run -n pdfmath python C:\Tools\pdf2md\<script> …`
 
 ```powershell
 # Look at the PDF: page count, text layer, outline

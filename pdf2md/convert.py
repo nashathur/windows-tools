@@ -1,7 +1,7 @@
 """Convert a PDF with Marker in one pass, saving both Markdown (to read) and JSON (block positions, for qa.py).
 
 Run in the pdfmath env:
-    conda run -n pdfmath python C:\\Users\\thurs\\tools\\pdf2md\\convert.py book.pdf out_dir [--page-range 0-24] [--name ch01]
+    conda run -n pdfmath python C:\\Tools\\pdf2md\\convert.py book.pdf out_dir [--page-range 0-24] [--name ch01]
 
 Writes to out_dir/<name>/:
     <name>.md, images, <name>_meta.json   (same as marker_single, plus equation tables -> display math)
