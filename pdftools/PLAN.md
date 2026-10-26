@@ -4,7 +4,7 @@ Local PDF toolkit that Claude runs on request: the pdfjar.com tool set plus fold
 
 ## Deliverables
 
-- `C:\Tools\pdftools\pdf.py`: the single entry point. Internals in a package `C:\Tools\pdftools\pdftools\`: `cli.py` (parsers, job loader, output protocol), `registry.py` (one entry per command: name, phase, input/output kinds, output suffix, writer, check policy, whether it rewrites a PDF), `io.py` (staging, publishing, naming, temp folders, disk budget), `secrets.py`, `crypt.py` (encryption matrix), `coords.py`, `check.py` (provenance diff), `tools.py` (external tool runner: timeouts, process trees, stderr capture), `errors.py`, and one module per command group.
+- `C:\Tools\pdftools\pdf.py`: the single entry point. Internals in a package `C:\Tools\pdftools\pdftools\`: `cli.py` (parsers, job loader, output protocol), `registry.py`, `io.py` (staging, publishing, naming, temp folders, disk budget), `secrets.py`, `crypt.py` (encryption matrix), `coords.py`, `pages.py` (page-range parsing), `textmatch.py` (literal and regex matches → per-line quads, used by `annotate` and `redact`), `check.py` (provenance diff), `tools.py` (external tool runner: timeouts, process trees, stderr capture), `errors.py`, and `commands\` with one module per phase or group.
 - `C:\Tools\pdftools\pdf.cmd`: launcher (see Launcher).
 - `C:\Tools\pdftools\tests\`: tests, `make_fixtures.py`, fixtures (see Tests).
 - `C:\Users\thurs\.claude\skills\pdftools\SKILL.md`: request → command map, written per the `writing-for-agents` skill; grows with each phase.
@@ -16,7 +16,7 @@ Each phase is its own build, Claude diff read, Codex phase review and commit. A 
 | Phase | Contents | Done when |
 |---|---|---|
 | 1 | Contracts below in code: launcher, parsers, job loader, output protocol, exit codes, errors/logs, secrets, encryption matrix, naming, staging/publishing, temp/disk budget, coordinates, tool runner. One command, `info FILE`, drives them end to end | contract unit tests pass; launcher tests pass from PowerShell 5.1 |
-| 2 | Registry, provenance + check engine, `thumb`, `selftest`, capability report (`selftest --caps`), `make_fixtures.py` with all fixtures incl. calibration fixtures | check engine fixture tests pass; thresholds calibrated and written into Measurements |
+| 2 | Self-registering command registry, provenance + check engine, `textmatch.py`, `pages.py` (if not already in phase 1), `tools\build_skill.py`, `thumb`, `selftest`, capability report (`selftest --caps`), `make_fixtures.py` with discovery plus the shared and calibration fixtures | check engine fixture tests pass; thresholds calibrated and written into Measurements |
 | 3a | Read and report: `info FOLDER`, `pages`, `text`, `count`, `json`, `html`, `size`, `check`, `open` | phase tests pass; 500-page benchmark fixture: `info`, `pages`, `text` each under 30 s wall time (excluding conda start-up), peak RAM under 1.5 GB |
 | 3b | `organize` and its wrappers, `merge`, `split`, `interleave` | phase tests pass, incl. feature preservation |
 | 3c | `toimg` (PNG, JPEG), `zip`, `dupes`, `compare` | phase tests pass |
@@ -24,6 +24,21 @@ Each phase is its own build, Claude diff read, Codex phase review and commit. A 
 | 5 | `compress`, `ocr`, `batch` (serial, PDF→PDF steps) | phase tests pass |
 | 6 | `office2pdf`, `toword` (layout), `md2pdf`, `txt2pdf`, `img2pdf`, `toimg` other formats, `images`, `imgtext`, `imginfo`, `imgdiff` | phase tests pass; integration tests run (not skipped) for every tool installed on this PC |
 | 7 | `sanitize`, `redact` | adversarial fixtures pass; security tests are never skippable |
+
+### Parallel builds
+
+| Wave | Phases | Runs |
+|---|---|---|
+| 1 | 1 | alone |
+| 2 | 2 | alone |
+| 3 | 3a, 3b, 3c, 4, 6 | in parallel, 2–3 at a time (review is the bottleneck) |
+| 4 | 5, 7 | in parallel, after 3b and 4 are merged |
+
+So that parallel builds never edit the same file:
+- Commands self-register: each module in `pdftools\commands\` declares its commands with a decorator (`@command(name, phase, input_kind, output_kind, suffix, rewrites_pdf, check_policy)` plus an argument-builder function); `registry.py` imports every module in `pdftools\commands\` (pkgutil) and `cli.py` builds parsers from the registry. Adding a command never edits `registry.py` or `cli.py`.
+- Each phase owns: `pdftools\commands\p<phase>_*.py`, `tests\test_p<phase>_*.py`, `tests\fixtures\p<phase>.py` (fixture builders; `make_fixtures.py` discovers them), `skill_parts\p<phase>.md` (its SKILL.md section). `tools\build_skill.py` (phase 2) assembles `SKILL.md` from `skill_parts\` in phase order.
+- Shared code (phases 1–2: everything outside `commands\`, `tests\test_p*`, `tests\fixtures\p*`, `skill_parts\`) is frozen for wave 3 and 4 builders: a builder that needs a change there stops and reports it; Claude makes the change on main and the builders rebase.
+- Phase 2 also delivers `textmatch.py` and `pages.py`, so phase 7 does not depend on phase 4's code.
 
 Backlog (not a phase; each item needs its own spec first): `toword --mode math` (pdf2md + pandoc, GPU), a GPU lock shared with pdf2md, `batch --jobs N`, composed batch checks, `img2pdf --scan`, animated GIF/WebP export, HEIC lossless export (`quality=-1`, `chroma=444`, after a round-trip test), `open --page` viewer arguments, `imgtext --surya`, PDF version conversion, PDF/A output, hidden-text and hidden-layer removal in `sanitize`.
 
