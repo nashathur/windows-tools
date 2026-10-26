@@ -115,24 +115,41 @@ def _tool_sections(run):
     code = getattr(run, "returncode", "timeout")
     stderr = clean(run.stderr if isinstance(run.stderr, str) else (run.stderr or b"").decode("utf-8", "replace"))
     tail = "\n".join(stderr.splitlines()[-TAIL:])
-    return (_section("tool", f"{subprocess.list2cmdline(map(str, cmd)) if isinstance(cmd, (list, tuple)) else cmd}\nexit {code}")
+    if isinstance(cmd, (list, tuple)):
+        cmd = subprocess.list2cmdline(map(str, cmd))
+    return (_section("tool", f"{cmd}\nexit {code}")
             + _section(f"tool stderr (last {TAIL})", tail or "(empty)"))
 
 
-def write_log(tool, code, what, fix, exc=None):
+def write_log(tool, code, what, fix, exc=None, *, secrets=(), sections=None, log_name=None):
     """Write one log and keep the newest KEEP for this tool; returns its path (or a note if the
     log can't be written, so the ERROR line still prints)."""
     folder = LOG_ROOT / tool
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    path = folder / f"{stamp}-{os.getpid()}.log"
-    text = (_section("command", subprocess.list2cmdline(sys.argv) + f"\ncwd {os.getcwd()}")
+    suffix = f"-{log_name}" if log_name else ""
+    path = folder / f"{stamp}-{os.getpid()}{suffix}.log"
+    safe_argv = [redact(str(arg), secrets) for arg in sys.argv] if secrets else sys.argv
+    text = (_section("command", subprocess.list2cmdline(safe_argv) + f"\ncwd {os.getcwd()}")
             + _section("error", f"{code}: {what}\nfix: {fix}"))
     if isinstance(exc, Fail) and exc.detail:
         text += _section("detail", clean(str(exc.detail)))
-    text += _tool_sections(getattr(exc, "tool_run", None) if isinstance(exc, Fail) else
-                           exc if isinstance(exc, (subprocess.CalledProcessError, subprocess.TimeoutExpired)) else None)
+    tool_run = (getattr(exc, "tool_run", None) if isinstance(exc, Fail) else
+                exc if isinstance(exc, (subprocess.CalledProcessError, subprocess.TimeoutExpired)) else None)
+    if tool_run is not None and secrets:
+        cmd = tool_run.cmd if hasattr(tool_run, "cmd") else tool_run.args
+        safe_cmd = [redact(str(arg), secrets) for arg in cmd] if isinstance(cmd, (list, tuple)) else redact(str(cmd), secrets)
+        try:
+            tool_run = type("RedactedToolRun", (), {"cmd": safe_cmd, "returncode": getattr(tool_run, "returncode", "timeout"),
+                                                     "stderr": getattr(tool_run, "stderr", None)})()
+        except Exception:
+            pass
+    text += _tool_sections(tool_run)
     if exc is not None and not isinstance(exc, (Fail, KeyboardInterrupt)):
         text += _section("traceback", "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+    for title, body in (sections or {}).items():
+        text += _section(title, str(body))
+    if secrets:
+        text = redact(text, secrets)
     if len(text) > MAX_LOG:
         half = MAX_LOG // 2
         text = text[:half] + f"\n... {len(text) - MAX_LOG} characters cut ...\n" + text[-half:]
@@ -144,7 +161,7 @@ def write_log(tool, code, what, fix, exc=None):
                     f.write(text)
                 break
             except FileExistsError:
-                path = folder / f"{stamp}-{os.getpid()}-{n}.log"
+                path = folder / f"{stamp}-{os.getpid()}{suffix}-{n}.log"
     except OSError as e:
         return f"(log not written: {e})"
     for old in sorted(folder.glob("*.log"))[:-KEEP]:
@@ -155,14 +172,33 @@ def write_log(tool, code, what, fix, exc=None):
     return str(path)
 
 
-def fail(tool, exc):
+def redact(text, secrets):
+    """Redact raw, JSON-escaped and repr spellings of secrets from text."""
+    import json
+    candidates = set()
+    for secret in secrets:
+        if secret is None:
+            continue
+        value = str(secret)
+        if value:
+            for escaped in (json.dumps(value, ensure_ascii=False), json.dumps(value, ensure_ascii=True)):
+                candidates.update((escaped, escaped[1:-1]))
+            represented = repr(value)
+            candidates.update((value, represented, represented[1:-1]))
+    for value in sorted(candidates, key=len, reverse=True):
+        text = text.replace(value, "***")
+    return text
+
+
+def fail(tool, exc, *, secrets=(), sections=None, display_tool=None, log_name=None):
     """Print the ERROR line for exc, write its log, and return the exit code (2 for BAD_ARG)."""
     if isinstance(exc, Fail):
         code, what, fix = exc.code, exc.what, exc.fix
     else:
         code, what, fix = _classify(exc)
-    log = write_log(tool, code, what, fix, exc)
-    print(f"ERROR {tool} {code}: {_one_line(what)} | fix: {_one_line(fix)} | log: {log}", file=sys.stderr, flush=True)
+    safe_what, safe_fix = redact(str(what), secrets), redact(str(fix), secrets)
+    log = write_log(tool, code, safe_what, safe_fix, exc, secrets=secrets, sections=sections, log_name=log_name)
+    print(f"ERROR {display_tool or tool} {code}: {_one_line(safe_what)} | fix: {_one_line(safe_fix)} | log: {log}", file=sys.stderr, flush=True)
     return 2 if code == "BAD_ARG" else 1
 
 
@@ -170,7 +206,7 @@ def _parser_error(self, message):
     raise Fail("BAD_ARG", message, f"run {self.prog} --help")
 
 
-def run(tool, main):
+def run(tool, main, *, secrets=None, sections=None, display_tool=None):
     """Run main() so every failure ends as one ERROR line; argparse errors become BAD_ARG."""
     argparse.ArgumentParser.error = _parser_error
     try:
@@ -178,7 +214,7 @@ def run(tool, main):
     except SystemExit as e:
         if e.code is None or isinstance(e.code, int):
             raise
-        sys.exit(fail(tool, e))
+        sys.exit(fail(tool, e, secrets=secrets or (), sections=sections, display_tool=display_tool))
     except BaseException as e:  # every failure, Ctrl+C included, ends as one line
-        sys.exit(fail(tool, e))
+        sys.exit(fail(tool, e, secrets=secrets or (), sections=sections, display_tool=display_tool))
     sys.exit(result if isinstance(result, int) else 0)

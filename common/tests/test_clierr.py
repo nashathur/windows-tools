@@ -1,12 +1,18 @@
 """clierr: every failure prints exactly one ERROR line and leaves its log.
 Run: conda run -n dev python -m unittest discover -s C:\\Tools\\common\\tests"""
 import os
+import json
 import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import clierr
 
 COMMON = Path(__file__).resolve().parents[1]
 
@@ -96,6 +102,30 @@ class ClierrTest(unittest.TestCase):
         r = run_script("def main():\n    raise ValueError('x')\nclierr.run('demo', main)\n", log_root=self.root)
         self.assert_one_error(r, "INTERNAL")
         self.assertEqual(len(list(folder.glob("*.log"))), 50)
+
+    def test_secret_redaction_and_extra_sections(self):
+        secret = 'q"\\é漢\nline'
+        for spelling in (secret, repr(secret), json.dumps(secret), json.dumps(secret, ensure_ascii=False)):
+            self.assertNotIn(spelling, clierr.redact(spelling, [secret]))
+        with patch.object(clierr, "LOG_ROOT", self.root):
+            log = clierr.write_log("demo", "X", secret, "fix", secrets=[secret],
+                                   sections={"problems": secret, "library warnings": secret}, log_name="info")
+        content = Path(log).read_text(encoding="utf-8")
+        self.assertTrue(log.endswith("-info.log"), log)
+        self.assertIn("== problems ==", content)
+        self.assertIn("== library warnings ==", content)
+        self.assertNotIn(secret, content)
+
+    def test_tool_argv_is_redacted_before_windows_serialization(self):
+        secret = 'q"\\quoted'
+        run = subprocess.CalledProcessError(2, ["helper.exe", "--password", secret], stderr="")
+        with patch.object(clierr, "LOG_ROOT", self.root), patch.object(sys, "argv", ["demo.py", "--password", secret]):
+            log_path = clierr.write_log("demo", "X", "failed", "fix", exc=run, secrets=[secret])
+        log = Path(log_path).read_text(encoding="utf-8")
+        self.assertIn("== command ==", log)
+        self.assertIn("== tool ==", log)
+        self.assertNotIn(secret, log)
+        self.assertNotIn(subprocess.list2cmdline([secret]), log)
 
 
 if __name__ == "__main__":

@@ -55,9 +55,11 @@ set PYTHONIOENCODING=utf-8
 "C:\Users\thurs\miniconda3\Scripts\conda.exe" run -n dev --no-capture-output python C:\Tools\pdftools\pdf.py %*
 ```
 
-- stdout and stderr are UTF-8. The skill sets `[Console]::OutputEncoding = [Text.Encoding]::UTF8` in the PowerShell call before running the launcher.
+- stdout and stderr are UTF-8 (`pdf.py` also reconfigures them, so direct runs match). The skill sets `[Console]::OutputEncoding = [Text.Encoding]::UTF8` and, before piping a job to `--job -`, `$OutputEncoding = [Text.Encoding]::UTF8` (PowerShell 5.1 pipes to native programs as ASCII otherwise; the UTF-8 pipe adds BOMs, which the job loader strips). Prefer `--job FILE`.
+- Tests use `unittest` (pytest is not in dev): `conda run -n dev python -m unittest discover -s pdftools\tests -q`; launcher: `pdftools\tests\test_launcher.ps1`.
+- PyMuPDF messages: `PYMUPDF_MESSAGE=logging:name=pymupdf,level=30` set in `pdf.py` before importing pymupdf, captured by a logging handler.
 - cmd.exe can mangle `%`, `^`, `&`, `!` in arguments, and PowerShell 5.1 strips quotes from native arguments (memory `ps51-native-args-strip-quotes`). Rule: on the command line only the command name, the main input path and simple flags; everything else goes in a JSON job.
-- Launcher tests (phase 1, run from PowerShell 5.1): exit codes 0–4 pass through; `--job -` and `--password -` read stdin through the launcher (if `conda run` does not pass stdin, the `-` sources are removed from the contract and the skill); paths with spaces, non-ASCII, `'`, and (inside a job) `% ^ & !`.
+- Launcher tests (run from PowerShell 5.1): exit codes 0–4 pass through; `--job -` reads stdin through the launcher; `--password-file` on an encrypted fixture; paths with spaces, non-ASCII, `'`, and (inside a job) `% ^ & !`.
 
 ### Invocation and output protocol
 
@@ -134,7 +136,7 @@ The canonical agent interface; shorthand is a convenience for simple cases.
 
 ### Secrets
 
-- Sources: `--password-file FILE`, `--password-env NAME`, `--password -` (stdin; not together with `--job -`). In jobs: `password_file` / `password_env` only. `--password VALUE` is refused (`BAD_ARG ... | fix: use --password-file`), since command lines are visible to other processes. One trailing CR/LF is stripped from file and stdin values.
+- Sources: `--password-file FILE`, `--password-env NAME` (owner: `--owner-password-file`, `--owner-password-env`). In jobs: `password_file` / `password_env` / `owner_password_file` / `owner_password_env`. `--password VALUE` is refused (command lines are visible to other processes), and so is `--password -`: stdin from PowerShell 5.1 through `conda run` does not reach the program reliably. Equals forms (`--password=X`) are handled the same way. One trailing CR/LF is stripped from file values.
 - Extraction happens first: secret flags are read from argv, and secret files/env read, before job parsing or validation, so every error path can redact.
 - The log writer replaces each secret in its raw, JSON-escaped and `repr` forms with `***` in argv, job text, exception messages, tracebacks and child output, before writing. Console lines never contain secrets.
 - Secrets never go on a child process command line, and password environment variables are removed from children's environment. External tools that cannot take a secret another way get a decrypted copy (see Encryption).
