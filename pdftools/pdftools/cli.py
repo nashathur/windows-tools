@@ -137,13 +137,31 @@ def load_job(path, commands, *, cwd=None, secret_store=None):
         if job.get(key):
             p = Path(job[key])
             values[key] = str((base / p).resolve() if not p.is_absolute() else p)
+    # Every other Path-typed argument is job-relative too (check --against, insert's file, ...).
+    for action in parser._actions:
+        key = action.dest
+        if action.type is not Path or key in {"file", "password_file", "owner_password_file"} or values.get(key) is None:
+            continue
+        resolve = lambda v: (base / Path(v)).resolve() if not Path(v).is_absolute() else Path(v)
+        values[key] = [resolve(v) for v in values[key]] if isinstance(values[key], list) else resolve(values[key])
     values = {a.dest: a.default for a in parser._actions if a.dest != "help"} | values
-    values.update(command=name, verbose=False, json=False, dry_run=False, stdout=False)
+    values.update(command=name, verbose=False, json=False, dry_run=False, stdout=False,
+                  job_base=base)  # nested job paths (recipe files, merge inputs) resolve against this
     return argparse.Namespace(**values), job
 
 
 def emit(record, json_output, force_stdout=False):
     if record is None:
+        return
+    if isinstance(record, list):  # --each: one record per file plus a summary
+        for item in record:
+            emit(item, json_output, force_stdout)
+        return
+    if record.get("type") == "error":
+        if json_output:
+            print(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
+        else:
+            print(f"{record.get('input')}: {record.get('code')}: {record.get('message')} | fix: {record.get('fix')}")
         return
     if record.get("type") == "report" and not force_stdout:
         data = record.get("data")

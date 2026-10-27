@@ -1,6 +1,6 @@
 # pdftools plan
 
-Local PDF toolkit that Claude runs on request: the pdfjar.com tool set plus folder helpers, as one CLI and one skill. Only Claude runs it (no GUI, no right-click menu). The toolkit never sends file content off the PC (see Privacy). Status: phases 1 and 2 built. Plan reviews are finished; remaining issues are caught per phase in build, tests and the phase review.
+Local PDF toolkit that Claude runs on request: the pdfjar.com tool set plus folder helpers, as one CLI and one skill. Only Claude runs it (no GUI, no right-click menu). The toolkit never sends file content off the PC (see Privacy). Status: phases 1, 2, 3a, 3b, 3c and 4 built. Plan reviews are finished; remaining issues are caught per phase in build, tests and the phase review.
 
 ## Deliverables
 
@@ -23,6 +23,7 @@ Each phase is its own build, Claude diff read, Codex phase review and commit. A 
 | 4 | `meta`, `protect`, `unlock`, `bookmarks`, `labels`, `watermark`, `numbers`, `headfoot`, `annotate`, `flatten`, `crop`, `cut`, `resize`, `nup`, `booklet`, `gray`, `rename`, `repair`, `rmblank` | phase tests pass |
 | 5 | `compress`, `ocr`, `batch` (serial, PDF→PDF steps) | phase tests pass |
 | 6 | `office2pdf`, `toword` (layout), `md2pdf`, `txt2pdf`, `img2pdf`, `toimg` other formats, `images`, `imgtext`, `imginfo`, `imgdiff` | phase tests pass; integration tests run (not skipped) for every tool installed on this PC |
+| H | Hardening (see Hardening): full-tools test profile, validator attack tests, semantic feature checks, real-world corpus sweep | each item's tests pass; corpus sweep has no new or worsened failures against its baseline |
 | 7 | `sanitize`, `redact` | adversarial fixtures pass; security tests are never skippable |
 
 ### Parallel builds
@@ -32,13 +33,18 @@ Each phase is its own build, Claude diff read, Codex phase review and commit. A 
 | 1 | 1 | alone |
 | 2 | 2 | alone |
 | 3 | 3a, 3b, 3c, 4, 6 | in parallel, 2–3 at a time (review is the bottleneck) |
-| 4 | 5, 7 | in parallel, after 3b and 4 are merged |
+| 4 | 5, H | in parallel, after 3b and 4 are merged |
+| 5 | 7 | after H (7's security postconditions build on H's validator tests) |
 
 So that parallel builds never edit the same file:
 - Commands self-register: each module in `pdftools\commands\` declares its commands with a decorator (`@command(name, phase, input_kind, output_kind, suffix, rewrites_pdf, check_policy)` plus an argument-builder function); `registry.py` imports every module in `pdftools\commands\` (pkgutil) and `cli.py` builds parsers from the registry. Adding a command never edits `registry.py` or `cli.py`.
 - Each phase owns: `pdftools\commands\p<phase>_*.py`, `tests\test_p<phase>_*.py`, `tests\fixtures\p<phase>.py` (fixture builders; `make_fixtures.py` discovers them), `skill_parts\p<phase>.md` (its SKILL.md section). `tools\build_skill.py` (phase 2) assembles `SKILL.md` from `skill_parts\` in phase order.
 - Shared code (phases 1–2: everything outside `commands\`, `tests\test_p*`, `tests\fixtures\p*`, `skill_parts\`) is frozen for wave 3 and 4 builders: a builder that needs a change there stops and reports it; Claude makes the change on main and the builders rebase.
 - Phase 2 also delivers `textmatch.py` and `pages.py`, so phase 7 does not depend on phase 4's code.
+- Commands split across phases: 3a adds the folder branch of `info` in `commands\p1_info.py` (no other phase touches it). Phase 6 extends 3c's `toimg` module (other formats) and 3a's `check` module (`--source`), so phase 6 starts after 3a and 3c are committed; 3c keeps its `toimg` writers in a format → writer table so phase 6 only adds entries.
+- A module with several commands defines `add_arguments_<name>(parser)` per command (the registry prefers it over `add_arguments`); never dispatch on `parser.prog`, which job parsing does not set.
+- Pipeline hooks added for phase 4 (`pipeline.write_pdf`): `encrypt_output={"user_password", "owner_password", "permissions"}` replaces the encryption matrix (`protect`; owner defaults to user), `decrypt_output=True` publishes unencrypted (`unlock`), `opener(path, password)` replaces `open_input` for inputs and the check (`repair`), `OperationResult.baseline` names a PDF the check uses instead of the input (`--flatten-annots`), and `context.temp` is the run's temp folder for such scratch files.
+- `--each` (folders/globs, any command that offers it): one result record per file plus a `summary` record; a failing file is reported and skipped; exit 4 if any failed (as `batch --each`).
 
 Backlog (not a phase; each item needs its own spec first): `toword --mode math` (pdf2md + pandoc, GPU), a GPU lock shared with pdf2md, `batch --jobs N`, composed batch checks, `img2pdf --scan`, animated GIF/WebP export, HEIC lossless export (`quality=-1`, `chroma=444`, after a round-trip test), `open --page` viewer arguments, `imgtext --surya`, PDF version conversion, PDF/A output, hidden-text and hidden-layer removal in `sanitize`.
 
@@ -273,7 +279,7 @@ Commands without a row report `verdict: report`.
 
 ### Looking
 
-The skill rule: read the verdict and warnings first. When text cannot settle a question, look at a `thumb` crop of the flagged box; a whole page at low resolution is allowed when the question is about the whole page.
+The skill rule: the built-in check is the verification, so Claude does not re-verify by hand. On `ok`, report and stop (no thumbnails, no re-extraction, no extra `check`); on `warn`, report the warnings. `thumb` is for an `unchecked`/`failed` verdict or when the user asks to see a page: a crop of the flagged box, or a whole page at low resolution when the question is about the whole page. Robustness comes from the tests and the built-in check, not from Claude looking.
 
 `thumb` (phase 2): downscaled (`--max-side 800`) or cropped (`--crop` displayed mm on a PDF page, px on an image) copy written to the report folder as `<time>-<pid>-thumb-<stem>.png` for Claude to view; a crop is rendered so its longer side is `--max-side` (at most 600 dpi). The report folder keeps the newest 50 files of any type.
 
@@ -319,7 +325,8 @@ Shorthand: `organize report.pdf "1-3,blank=a4,5,4,6-8@90,10-"`.
 
 - Page items: `N`, `N-M`, `N-` (to end), `-M` (from 1), `M-N` with M>N (reversed), `odd`, `even`, `rev` (all, reversed). Numbers are original page numbers.
 - `rotate` / `@`: added to the current rotation (relative), mod 360; `rotate_abs` sets it.
-- `times` / `xK`: the item appears K times in total.
+- `times` / `xK`: the item appears K times in total; a range repeats as a block (`1-3x2` → 1,2,3,1,2,3).
+- Other files' passwords: `pipeline.write_pdf(..., passwords={path: password})`; nested job paths (recipe `file`, merge inputs) resolve against `args.job_base` (set by the job loader; absent → current folder).
 - `blank`: size of the previous output page; as the first item, size of input page 1; `blank=a4|letter|WxH` (mm).
 - Unlisted pages are dropped; `keep_rest` / `--keep-rest` appends never-listed pages in original order.
 - Other files: JSON only (`file`, `password_file`).
@@ -337,9 +344,9 @@ Shorthand: `organize report.pdf "1-3,blank=a4,5,4,6-8@90,10-"`.
 | `duplicate --pages 3 --times 2` | page 3 appears 2 times in total, copies right after it |
 | `blank --at 1,5 [--size a4]` | blank before the given original pages; `--at end` |
 | `rotate --pages 2-4 --by 90` / `--set 0` | relative or absolute |
-| `insert other.pdf --pages 2-4 --after 6` | pages of another PDF inserted (job form for paths with spaces) |
+| `insert other.pdf --pages 2-4 --after 6` | pages of another PDF inserted (job form for paths with spaces); `--after N` or `--to start|end` is required |
 | `merge` | inputs in order; `--toc` one top-level bookmark per input |
-| `split` | `--every N` (last part may be shorter), `--ranges` (one file per range), `--bookmarks` (one file per top-level bookmark) |
+| `split` | `--every N` (last part may be shorter), `--ranges` (one file per range), `--bookmarks` (one file per top-level bookmark; pages before the first bookmark join the first part) |
 | `interleave A B` | A1,B1,A2,B2,...; `--reverse-back` reverses B first; unequal counts are `BAD_ARG` unless `--allow-uneven` (leftover pages appended) |
 
 Workflow for Claude: `pages` → build the recipe → `organize` → read the map and verdict.
@@ -348,10 +355,10 @@ Workflow for Claude: `pages` → build the recipe → `organize` → read the ma
 
 | Command | Behaviour |
 |---|---|
-| `toimg` | PNG and JPEG (`pixmap.save(path, output=..., jpg_quality=)`); other formats in phase 6; options under PDF → images |
+| `toimg` | PNG and JPEG (`pixmap.save(path, output=..., jpg_quality=)`); `--format` picks the format (default PNG); `--stitch` / `--grid` publish `<stem>_stitch.<ext>` / `<stem>_grid.<ext>`; other formats in phase 6; options under PDF → images |
 | `zip` | files or a folder → `<name>.zip` (deflate); `--zip` on multi-file outputs zips the published folder and keeps it |
 | `dupes` | identical: same SHA-256 (authoritative); `--similar`: same normalised non-empty text and page count, reported as candidates |
-| `compare A B` | `check --against` report plus `<A>_vs_<B>.pdf`: a copy of B with changed tiles outlined by rectangle annotations, for the user |
+| `compare A B` | `check --against` report (reuses 3a's page matching in `commands\p3a_core.py` and `check.tile_differences`) plus `<A>_vs_<B>.pdf`: a copy of B with changed tiles outlined by rectangle annotations, for the user |
 
 ### Phase 4: edit and stamp
 
@@ -530,6 +537,18 @@ Failure policy for both: if the check fails, nothing is published (exit 3, verdi
   - representations the checker cannot read (text drawn as paths, text in images on pages without `--ocr`) are reported `WARN UNVERIFIED_REPRESENTATION`.
 - The result line states that `crop` is not redaction and `redact` is.
 
+## Hardening (phase H)
+
+The verdict replaces Claude looking (see Looking), so `ok` must be demonstrably trustworthy. Items, in order:
+
+1. Full-tools profile: env `PDFTOOLS_REQUIRE_TOOLS=1` turns every integration-test skip for a missing external tool into a failure and records each tool's version and the executed test count. The plain run keeps skips (`SKIP <tool>: <reason>`).
+2. Validator attack tests: hand `check.compare` / `pipeline.write_pdf` deliberately bad candidates (truncated file, blanked page, deleted minus sign or subscript, same page count with wrong pages, link to the wrong page, changed field value, extractor failure, hang) and assert the verdict is never `ok`, the exit code, and the published name. Includes the rules: an unreadable source page makes the result `unchecked`, never an empty baseline that matches; a pre-existing input defect never excuses a failed postcondition. Fix in the same item: text normalisation must not delete a spaced ASCII minus (`x - y`).
+3. Semantic feature checks: `Features` gains per-item records next to counts: bookmark title, level and target page; link target (page or URI) and rectangle; form field name, type, value and widget page. Operations declare the expected records (remapped through the page map); the checker compares them. An order-sensitive text score (per page, symbols kept) starts as a `WARN` until calibrated.
+4. Time limits: in-process command work and the check run under a wall-clock limit (child process or watchdog), so a pathological PDF ends in `TIMEOUT`, not a hang.
+5. Corpus sweep: `tests\corpus.py` runs a pinned corpus, one child process per (file, command), with a timeout and process-tree kill; records outcome category per file hash and command in a baseline JSON; fails only on new or worsened categories (matched by hash and category, not filename). Corpus = both: a public set (pdf.js test PDFs, pinned by commit and digest) and the user's own documents (BMKG reports, papers, scans; listed in a local, git-ignored manifest; files never leave the PC and are never copied into the repo). Commands swept: `info`, `text`, `organize rev`, `rotate`, `numbers`, `compress --level lossless`, plus later phases' commands as they ship.
+
+pikepdf wraps qpdf, so the two count as one opinion; independent cross-checks use pypdf or poppler where available.
+
 ## Tests
 
 - `tests\make_fixtures.py` builds every fixture deterministically with pymupdf, pikepdf, Pillow and hand-written files (no toolkit commands): rotated page with offset crop box and `/UserUnit`; optional-content layers; annotations of each kind; form fields incl. one without appearance streams; links and bookmarks; AES-256 encrypted with a known test password; restrictions-only PDF; a signed-looking PDF (a `/Sig` field with a `/V` dictionary; detection needs no cryptography); equation-heavy page; scanned page; chart with thin coloured lines, an indexed image and a shared image across pages; repeated words; pending redaction annotation; JavaScript in link, outline and field actions; `/AF` attachment; a recoverable broken xref and an unrecoverable truncation; a deterministic 500-page text PDF (seeded text, A4, Helvetica) for the benchmark; images in every input format (PSD via `pixmap.save(output="psd")`); calibration fixtures (Measurements).
@@ -544,11 +563,11 @@ Failure policy for both: if the check fails, nothing is published (exit 3, verdi
 ## Installed (2026-10-26, smoke-tested)
 
 - dev (conda): pandoc 3.12.1 (for the backlog math mode), jbig2enc 0.32, pillow-avif-plugin 1.6.0; already there: ghostscript 10.08, qpdf, pngquant, tesseract (with `ind`), ocrmypdf 17.13, img2pdf, pillow-heif, fpdf2. dev (pip): pdf2docx 0.5.13 (with opencv-python-headless, python-docx). All in `C:\Users\thurs\conda-envs\dev.yml`.
-- `C:\Tools\pdftools\node_modules`: katex 0.19.1, marked 12.0.2 (git-ignored). Phase 6 adds `puppeteer-core` (pinned, lockfile kept).
+- `C:\Tools\pdftools\node_modules`: katex 0.19.1, marked 12.0.2, puppeteer-core 25.16.0 (exact pin, `package-lock.json` kept; `node_modules` git-ignored, so worktree builds run with `NODE_PATH=C:\Tools\pdftools\node_modules`).
 - Git-ignore in `C:\Tools\pdftools\.gitignore`: `reports/`, `tests/fixtures/out/` (logs live in `C:\Tools\logs\`, handled by the shared helper).
 
 ## Build process
 
 - Per phase: Codex (role `build`) in a worktree from this plan; Claude reads the diff and reruns the tests; one Codex review (role `review`) of the phase; findings in the CLAUDE.md Building format; commit after the user's OK.
 - A builder that finds the plan wrong or silent on something stops and reports it instead of guessing; Claude settles it and updates this plan.
-- `SKILL.md` updated at the end of each phase: that phase's commands, the rules (read the verdict, JSON jobs for anything beyond simple arguments, look last, background for estimates over 90 s), common recipes; per-command options from `pdf.cmd <cmd> --help`. Form filling → `anthropic-skills:pdf`; PDF → Markdown → the `pdf2md` skill.
+- `SKILL.md` updated at the end of each phase: that phase's commands, the rules (the verdict is the verification: no hand re-checks after `ok`, JSON jobs for anything beyond simple arguments, `thumb` only for `unchecked`/`failed` or on request, background for estimates over 90 s), common recipes; per-command options from `pdf.cmd <cmd> --help`. Form filling → `anthropic-skills:pdf`; PDF → Markdown → the `pdf2md` skill.

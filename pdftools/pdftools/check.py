@@ -51,6 +51,7 @@ class OperationResult:
     ssim_floor: float | None = None
     annotation_delta: int | None = None
     cropboxes: list = field(default_factory=list)
+    baseline: str | None = None  # PDF the check compares against instead of the input (e.g. a baked copy)
 
 
 @dataclass
@@ -89,22 +90,41 @@ def tile_differences(source, output, page_no=1, tile_px=None, page=None):
         return [{"box_mm": (0, 0, 0, 0), "fraction": 1.0, "max_delta": 255}]
     a, b = source[:h, :w], output[:h, :w]
     tile_px = tile_px or max(1, round(TILE_MM * RENDER_DPI / 25.4))
+    rows = (h + tile_px - 1) // tile_px
+    cols = (w + tile_px - 1) // tile_px
+    pad_h, pad_w = rows * tile_px - h, cols * tile_px - w
+    delta = cv2.absdiff(a, b)
+    if delta.shape[2] == 3:
+        max_channel_delta = cv2.max(cv2.max(delta[:, :, 0], delta[:, :, 1]), delta[:, :, 2])
+    else:
+        max_channel_delta = np.max(delta, axis=2)
+    changed_pixels = cv2.threshold(max_channel_delta, CHANNEL_DELTA, 1, cv2.THRESH_BINARY)[1]
+    integral = cv2.integral(changed_pixels, sdepth=cv2.CV_32S)
+    y0 = np.arange(rows) * tile_px
+    y1 = np.minimum(y0 + tile_px, h)
+    x0 = np.arange(cols) * tile_px
+    x1 = np.minimum(x0 + tile_px, w)
+    counts = (integral[y1[:, None], x1[None, :]] - integral[y0[:, None], x1[None, :]] -
+              integral[y1[:, None], x0[None, :]] + integral[y0[:, None], x0[None, :]])
+    tile_heights = np.minimum(tile_px, h - np.arange(rows) * tile_px)
+    tile_widths = np.minimum(tile_px, w - np.arange(cols) * tile_px)
+    fractions = counts / (tile_heights[:, None] * tile_widths[None, :])
+    changed_rows, changed_cols = np.nonzero(fractions > TILE_CHANGED_FRACTION)
+    if not len(changed_rows):
+        return []
+    tiled_delta = np.pad(delta, ((0, pad_h), (0, pad_w), (0, 0)), constant_values=0)
+    maxima = tiled_delta.reshape(rows, tile_px, cols, tile_px, delta.shape[2]).max(axis=(1, 3, 4))
+    origin = page.cropbox if page is not None else pymupdf.Rect(0, 0, 0, 0)
     changed = []
-    for y in range(0, h, tile_px):
-        for x in range(0, w, tile_px):
-            aa, bb = a[y:y + tile_px, x:x + tile_px], b[y:y + tile_px, x:x + tile_px]
-            delta = np.abs(aa.astype(np.int16) - bb.astype(np.int16))
-            mask = np.any(delta > CHANNEL_DELTA, axis=2)
-            fraction = float(mask.mean())
-            if fraction > TILE_CHANGED_FRACTION:
-                origin = page.cropbox if page is not None else pymupdf.Rect(0, 0, 0, 0)
-                box_mm = pymupdf.Rect(origin.x0 + x * 72 / RENDER_DPI, origin.y0 + y * 72 / RENDER_DPI,
-                                      origin.x0 + min(x + tile_px, w) * 72 / RENDER_DPI,
-                                      origin.y0 + min(y + tile_px, h) * 72 / RENDER_DPI)
-                if page is not None:
-                    box_mm = coords.pymupdf_to_display(page, box_mm)
-                changed.append({"box_mm": tuple(box_mm),
-                                "fraction": fraction, "max_delta": int(delta.max())})
+    for row, col in zip(changed_rows.tolist(), changed_cols.tolist()):
+        x, y = col * tile_px, row * tile_px
+        box_mm = pymupdf.Rect(origin.x0 + x * 72 / RENDER_DPI, origin.y0 + y * 72 / RENDER_DPI,
+                              origin.x0 + min(x + tile_px, w) * 72 / RENDER_DPI,
+                              origin.y0 + min(y + tile_px, h) * 72 / RENDER_DPI)
+        if page is not None:
+            box_mm = coords.pymupdf_to_display(page, box_mm)
+        changed.append({"box_mm": tuple(box_mm), "fraction": float(fractions[row, col]),
+                        "max_delta": int(maxima[row, col])})
     return changed
 
 
@@ -149,6 +169,30 @@ def page_stats(page, renderer=render_rgb):
             "max_chroma": int(np.max(np.max(pix, axis=2).astype(np.int16) - np.min(pix, axis=2).astype(np.int16)))}
 
 
+def _tier_stats(page, renderer=render_rgb):
+    """Measurements used by _tiers, without whole-page inspection aggregates."""
+    words = page.get_text("words")
+    pix = renderer(page, 50)
+    gray = cv2.cvtColor(pix, cv2.COLOR_RGB2GRAY)
+    images = page.get_image_info(xrefs=True)
+    unit = coords._user_unit(page)
+    image_dpi = []
+    for info in images:
+        rect = pymupdf.Rect(info["bbox"])
+        dpi_x = info["width"] * 72 / max(rect.width * unit, 0.01)
+        dpi_y = info["height"] * 72 / max(rect.height * unit, 0.01)
+        image_dpi.append(round(min(dpi_x, dpi_y), 1))
+    spans = [span for block in page.get_text("dict").get("blocks", []) for line in block.get("lines", [])
+             for span in line.get("spans", [])]
+    outside = sum(not page.rect.contains(pymupdf.Rect(span["bbox"])) for span in spans)
+    return {"blank": not words and not np.any(gray < 245),
+            "mostly_black": np.count_nonzero(gray < 16) / gray.size > 0.95,
+            "replacement_char": any("\ufffd" in span.get("text", "") for span in spans),
+            "notdef": any(".notdef" in span.get("font", "") for span in spans),
+            "spans_outside_crop": outside, "image_count": len(images), "image_dpi": image_dpi,
+            "has_words": bool(words)}
+
+
 def _feature_counts(doc):
     return {"bookmarks": len(doc.get_toc()), "labels": len(doc.get_page_labels()),
             "links": sum(len(page.get_links()) for page in doc),
@@ -156,8 +200,8 @@ def _feature_counts(doc):
             "annotations": sum(sum(1 for _ in (page.annots() or [])) for page in doc)}
 
 
-def _tiers(source_page, output_page, page_no, renderer=render_rgb):
-    before, after = page_stats(source_page, renderer), page_stats(output_page, renderer)
+def _tiers(source_page, output_page, page_no, renderer=render_rgb, stats_fn=_tier_stats):
+    before, after = stats_fn(source_page), stats_fn(output_page)
     pairs = (("blank", "BLANK_PAGE"), ("mostly_black", "MOSTLY_BLACK"),
              ("replacement_char", "MISSING_GLYPH"), ("notdef", "MISSING_GLYPH"),
              ("spans_outside_crop", "TEXT_OUTSIDE_CROP"))
@@ -168,7 +212,7 @@ def _tiers(source_page, output_page, page_no, renderer=render_rgb):
             results.append(Finding("new_warning", code, f"new {key.replace('_', ' ')} finding", page_no))
         elif new and old:
             results.append(Finding("pre_existing", code, f"pre-existing {key.replace('_', ' ')} finding", page_no))
-    for dpi in after["image_dpi"] if not page_words(output_page) and after["image_count"] == 1 else ():
+    for dpi in after["image_dpi"] if not after["has_words"] and after["image_count"] == 1 else ():
         if dpi and dpi < 150:
             tier = "pre_existing" if any(v and v < 150 for v in before["image_dpi"]) else "new_warning"
             results.append(Finding(tier, "LOW_DPI", "image effective dpi is below 150", page_no, {"dpi": dpi}))
@@ -285,6 +329,13 @@ def _placement_canvas(placements, default_doc, source_docs, output_page, output_
         source_rgb = renderer(source_page, unrotated=True)
         source_rect = source_page.cropbox
         a, b, c, d, e, f = placement.transform
+        if (len(placements) == 1 and not placement.dest_rect and
+                placement.transform == (1, 0, 0, 1, 0, 0) and
+                CHANNEL_DELTA >= 5 and source_rect == output_rect and
+                source_rgb.shape == output_rgb.shape and np.array_equal(source_rgb, output_rgb)):
+            # The old mask drops pixels whose channels are all >=250, replacing them
+            # with white. That can change a channel by at most 5, below the tile delta.
+            return output_rgb
         affine = np.array([[a, c, (a * source_rect.x0 + c * source_rect.y0 + e - output_rect.x0) * scale],
                            [b, d, (b * source_rect.x0 + d * source_rect.y0 + f - output_rect.y0) * scale]], dtype=np.float64)
         warped = cv2.warpAffine(source_rgb, affine, (width, height), flags=cv2.INTER_LINEAR,
@@ -316,6 +367,20 @@ def compare(source, output, policy="placements", operation=None, *, source_docs=
         if key not in render_cache:
             render_cache[key]=render_rgb(page, dpi, clip, annots=annots, unrotated=unrotated)
         return render_cache[key]
+    stats_cache = {}
+
+    def stats(page):
+        key = (id(page.parent), page.number, page.xref)
+        if key not in stats_cache:
+            stats_cache[key] = page_stats(page, rendered)
+        return stats_cache[key]
+    tier_stats_cache = {}
+
+    def tier_stats(page):
+        key = (id(page.parent), page.number, page.xref)
+        if key not in tier_stats_cache:
+            tier_stats_cache[key] = _tier_stats(page, rendered)
+        return tier_stats_cache[key]
     if policy == "report":
         return findings
     expected_pages = len(operation.pages) if operation and operation.pages else len(source)
@@ -323,6 +388,8 @@ def compare(source, output, policy="placements", operation=None, *, source_docs=
         findings.append(Finding("invariant", "PAGE_COUNT", "page count differs from the page map",
                                 details={"expected": expected_pages, "output": len(output)}))
     for i in range(len(output)):
+        # Rendered RGB arrays are large; retain only those needed for this page.
+        render_cache.clear()
         b = output[i]
         raw_placements = operation.pages[i] if operation and i < len(operation.pages) else [Placement(None, i)]
         if not isinstance(raw_placements, (list, tuple)):
@@ -343,8 +410,8 @@ def compare(source, output, policy="placements", operation=None, *, source_docs=
                 findings.append(Finding("invariant", "CROPBOX_CHANGED", "output crop box differs from the operation",
                                         i + 1, {"expected": tuple(expected_box), "actual": tuple(b.cropbox)}))
         if not page_sources and placements and all(p.source_page == "blank" for p in placements):
-            stats = page_stats(b)
-            if not stats["blank"]:
+            page_measurements = stats(b)
+            if not page_measurements["blank"]:
                 findings.append(Finding("invariant", "BLANK_PLACEMENT_NOT_BLANK", "blank output page contains words or ink", i + 1))
             continue
         wa = tuple(word for placement, page in zip(placements, page_sources)
@@ -390,7 +457,7 @@ def compare(source, output, policy="placements", operation=None, *, source_docs=
                 findings.append(Finding("invariant", "TILES_CHANGED", "page tiles changed outside expected regions", i + 1,
                                         {"changed_tiles": len(unexpected), "boxes_mm": [c["box_mm"] for c in unexpected]}))
         if policy == "gray":
-            chroma = page_stats(b)["max_chroma"]
+            chroma = stats(b)["max_chroma"]
             if chroma > GRAY_CHROMA_MAX:
                 findings.append(Finding("invariant", "COLOR_REMAINS", "page is not grayscale", i + 1, {"chroma": chroma}))
             source_rgb = _placement_canvas(placements, source, source_docs, b, rendered(b, unrotated=True), rendered)
@@ -429,7 +496,7 @@ def compare(source, output, policy="placements", operation=None, *, source_docs=
                 findings.append(Finding("invariant", "SSIM_LOW", "image-region SSIM is below the configured floor",
                                         i + 1, {"ssim": score, "scores": scores, "floor": floor}))
         for source_page in page_sources:
-            findings.extend(_tiers(source_page, b, i + 1, rendered))
+            findings.extend(_tiers(source_page, b, i + 1, rendered, tier_stats))
     if operation and operation.features.must_survive:
         expected = operation.features.must_survive
         actual = _feature_counts(output)
@@ -462,6 +529,9 @@ def compare(source, output, policy="placements", operation=None, *, source_docs=
     return findings
 
 
-def inspect(path):
-    with pymupdf.open(path) as doc:
+def inspect(path_or_doc):
+    """Whole-file measurements; pass an authenticated Document for encrypted files."""
+    if isinstance(path_or_doc, pymupdf.Document):
+        return {"pages": [page_stats(page) for page in path_or_doc]}
+    with pymupdf.open(path_or_doc) as doc:
         return {"pages": [page_stats(page) for page in doc]}

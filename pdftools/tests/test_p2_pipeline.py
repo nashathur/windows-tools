@@ -196,5 +196,27 @@ class PipelineTest(unittest.TestCase):
         self.assertNotIn("NAME_TAKEN", err)
 
 
+class RunEachTest(unittest.TestCase):
+    def test_failing_file_is_recorded_and_sets_exit_4(self):
+        from pdftools.errors import PdfError
+        from pdftools.pipeline import run_each
+
+        def one(path):
+            if path.name == "bad.pdf":
+                raise PdfError("BAD_INPUT", "cannot read", "fix it")
+            return {"type": "result", "command": "meta", "path": str(path)}
+
+        context = cli.Context(None, False, [], None)
+        records = run_each(["a.pdf", "bad.pdf", "c.pdf"], one, "meta", context)
+        self.assertEqual([r["type"] for r in records], ["result", "error", "result", "summary"])
+        self.assertEqual(records[1]["code"], "BAD_INPUT")
+        self.assertEqual((records[-1]["files"], records[-1]["ok"], records[-1]["failed"]), (3, 2, 1))
+        self.assertEqual(context.exit_code, 4)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cli.emit(records, True)
+        self.assertEqual(len([json.loads(line) for line in out.getvalue().splitlines()]), 4)
+
+
 if __name__ == "__main__":
     unittest.main()

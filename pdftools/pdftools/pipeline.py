@@ -90,22 +90,47 @@ def measure_seconds_per_page(path, render=True):
     return (time.perf_counter() - start) / max(1, count)
 
 
+def run_each(paths, run_one, command, context):
+    """--each: run_one(path) per file; a failing file becomes an error record and is skipped; exit 4 if any failed."""
+    records, failed = [], 0
+    for path in paths:
+        try:
+            records.append(run_one(Path(path)))
+        except clierr.Fail as exc:
+            failed += 1
+            records.append({"type": "error", "command": command, "input": str(path), "code": exc.code,
+                            "message": exc.what, "fix": exc.fix})
+    if failed:
+        context.exit_code = 4
+    records.append({"type": "summary", "command": command, "files": len(records), "ok": len(records) - failed,
+                    "failed": failed})
+    return records
+
+
 def _warn(code, detail, fix="review the output"):
     clierr.warn("pdf", code, detail, fix)
 
 
 def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=None, can_modify=True,
-              can_assemble=True, security=False):
+              can_assemble=True, security=False, encrypt_output=None, decrypt_output=False, opener=None,
+              passwords=None):
     """Run a registered PDF writer under the shared open/check/stage/publish contract.
 
     writer(source_doc, staged_path) writes the candidate. It may also return an OperationResult.
+    encrypt_output: {"user_password", "owner_password", "permissions"} replaces the encryption matrix (protect).
+    decrypt_output: publish without encryption (unlock).
+    opener(path, password) -> pymupdf.Document replaces open_input for inputs that need recovery (repair).
+    passwords: {input path: password} for inputs whose password differs from the command's (organize/merge files).
     """
     source = Path(source).resolve()
     inputs = [Path(p).resolve() for p in (inputs or [source])]
     password = context.owner_password or context.password
     source_pdf = spec.input_kind == "pdf" or source.suffix.lower() == ".pdf"
+    open_source = opener or open_input
+    passwords = {str(Path(k).resolve()): v for k, v in (passwords or {}).items()}
+    pw = lambda path: passwords.get(str(path), password)
     try:
-        docs = [open_input(path, password) for path in inputs] if source_pdf else []
+        docs = [open_source(path, pw(path)) for path in inputs] if source_pdf else []
     except PdfError as exc:
         if context.owner_password:
             raise PdfError("WRONG_PASSWORD", "owner password did not authenticate",
@@ -116,12 +141,16 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
     warnings = []
     try:
         try:
-            states = [_encryption_state(path, password, item) for path, item in zip(inputs, docs)]
+            states = [_encryption_state(path, pw(path), item) for path, item in zip(inputs, docs)]
         except Exception as exc:
-            if context.owner_password:
+            if opener and not any(item.is_encrypted for item in docs):
+                states = [(crypt.Encryption(), {"modify": True, "assemble": True, "owner_matched": False})
+                          for _ in inputs]
+            elif context.owner_password:
                 raise PdfError("WRONG_PASSWORD", "owner password did not authenticate",
                                "supply a valid --owner-password-file") from exc
-            raise
+            else:
+                raise
         encryptions = [state[0] for state in states]
         combined = crypt.combine_decision(encryptions) if encryptions else {"encryption": crypt.Encryption(), "warnings": []}
         encrypted_input = combined["encryption"]
@@ -138,7 +167,7 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
                                "supply a valid --owner-password-file")
         if restricted_inputs and not getattr(args, "ignore_restrictions", False):
             raise PdfError("ENCRYPTED", "PDF restrictions prohibit modification", "give --owner-password-file, or --ignore-restrictions")
-        if source_pdf and spec.rewrites_pdf and any(_signed(path, password) for path in inputs):
+        if source_pdf and spec.rewrites_pdf and any(_signed(path, pw(path)) for path in inputs):
             if not getattr(args, "break_signature", False):
                 raise PdfError("SIGNED", "input contains a signed signature field", "add --break-signature if a modified copy is fine")
             warnings.append("SIGNATURE_INVALIDATED")
@@ -152,6 +181,7 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
         io.sweep_temp()
         estimate = sum(path.stat().st_size for path in inputs) * 3
         with io.temp_folder() as temp:
+            context.temp = Path(temp)  # run temp folder for writer scratch files such as OperationResult.baseline
             io.disk_budget(inputs, output, temp, multiplier=3, estimate=estimate)
             op = operation or OperationResult()
             if getattr(args, "dry_run", False):
@@ -165,7 +195,7 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
                         clear_input = Path(temp) / f"input-{index + 1}.pdf"
                         input_doc.close()
                         import pikepdf
-                        with pikepdf.open(inputs[index], password=password or "") as encrypted_pdf:
+                        with pikepdf.open(inputs[index], password=pw(inputs[index]) or "") as encrypted_pdf:
                             encrypted_pdf.save(clear_input)
                         docs[index] = open_input(clear_input)
                     context.input_docs = {str(path): item for path, item in zip(inputs, docs)}
@@ -175,7 +205,23 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
                     op = candidate_op
                 for item in docs:
                     item.close()
-                if encrypted:
+                check_password = password
+                if decrypt_output:
+                    check_password = None
+                elif encrypt_output:
+                    user_pw = encrypt_output.get("user_password") or ""
+                    owner_pw = encrypt_output.get("owner_password") or user_pw
+                    if not owner_pw:
+                        raise PdfError("BAD_ARG", "protect needs a user or owner password", "give --password-file or --owner-password-file")
+                    encrypted_path = stage.path.with_name(stage.path.stem + ".encrypted.part.pdf")
+                    with pymupdf.open(stage.path) as candidate:
+                        candidate.save(encrypted_path, encryption=pymupdf.PDF_ENCRYPT_AES_256,
+                                       owner_pw=owner_pw, user_pw=user_pw,
+                                       permissions=encrypt_output.get("permissions", -1), garbage=3, deflate=True)
+                    stage.path.unlink(missing_ok=True)
+                    stage.path = encrypted_path
+                    check_password = owner_pw
+                elif encrypted:
                     decision = crypt.write_decision(crypt.Encryption(encrypted=True,
                         user_password=password, permissions=input_permissions,
                         restrictions_only=encrypted_input.restrictions_only), can_modify=can_modify,
@@ -198,8 +244,10 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
                     stage.path.unlink(missing_ok=True)
                     stage.path = encrypted_path
                 with ExitStack() as stack:
-                    check_docs = {str(path): stack.enter_context(open_input(path, password)) for path in inputs} if source_pdf else {}
-                    outdoc = stack.enter_context(open_input(stage.path, password))
+                    check_docs = {str(path): stack.enter_context(open_source(path, pw(path))) for path in inputs} if source_pdf else {}
+                    if source_pdf and op.baseline:
+                        check_docs[str(source)] = stack.enter_context(open_input(Path(op.baseline)))
+                    outdoc = stack.enter_context(open_input(stage.path, check_password))
                     result_pages = outdoc.page_count
                     if source_pdf:
                         findings = compare(check_docs[str(source)], outdoc, spec.check_policy, op,

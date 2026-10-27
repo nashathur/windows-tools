@@ -47,7 +47,9 @@ def command(name, phase, input_kind, output_kind, suffix, rewrites_pdf, check_po
         if name in _COMMANDS:
             raise ValueError(f"duplicate command: {name}")
         import sys
-        add_arguments = getattr(sys.modules[func.__module__], "add_arguments")
+        module = sys.modules[func.__module__]
+        # A module holding several commands gives each its own add_arguments_<name>; else the shared add_arguments.
+        add_arguments = getattr(module, f"add_arguments_{name}", None) or getattr(module, "add_arguments")
         _COMMANDS[name] = Command(name, phase, input_kind, output_kind, suffix,
                                   rewrites_pdf, check_policy, add_arguments, func)
         return func

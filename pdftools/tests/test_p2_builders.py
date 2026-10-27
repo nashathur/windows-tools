@@ -37,7 +37,7 @@ class BuilderTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             first = make.build_all(Path(temp) / "first")
             second = make.build_all(Path(temp) / "second")
-            self.assertEqual(set(first), {"p1", "p2"})
+            self.assertLessEqual({"p1", "p2"}, set(first))
             self.assertNotIn("benchmark", first["p2"])
             with pymupdf.open(first["p2"]["equation"]) as first_doc, \
                     pymupdf.open(second["p2"]["equation"]) as second_doc:
