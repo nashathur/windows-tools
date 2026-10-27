@@ -18,6 +18,14 @@ def add_arguments(parser):
 @command("info", 1, "pdf", "report", "", False, "report")
 def info(args, context):
     path = args.file
+    if path.is_dir():
+        try:
+            return _folder_info(path, context)
+        except Exception as e:
+            from ..errors import PdfError
+            if isinstance(e, PdfError):
+                raise
+            raise PdfError("BAD_INPUT", f"cannot scan PDF folder: {path}", "check that the folder is readable", detail=str(e))
     try:
         doc = pymupdf.open(path)
     except (FileNotFoundError, pymupdf.FileNotFoundError):
@@ -206,3 +214,31 @@ def info(args, context):
         return {"type": "report", "command": "info", "input": str(path), "verdict": "report", "data": result}
     finally:
         doc.close()
+
+
+def _folder_info(folder, context):
+    rows = []
+    for path in sorted(folder.glob("*.pdf"), key=lambda item: item.name.casefold()):
+        try:
+            doc = pymupdf.open(path)
+        except Exception as e:
+            from ..errors import PdfError
+            raise PdfError("BAD_INPUT", f"cannot read PDF: {path}", "check that the PDF is valid", detail=str(e))
+        try:
+            password = context.password or context.owner_password
+            import pikepdf
+            with pikepdf.open(path, password=password or "") as pdf:
+                encrypted = bool(pdf.is_encrypted)
+            if doc.needs_pass and not doc.authenticate(password or ""):
+                from ..errors import PdfError
+                raise PdfError("WRONG_PASSWORD", f"PDF requires a valid password: {path}",
+                               "supply --password-file or --password-env")
+            has_text = any(bool(page.get_text("text").strip()) for page in doc)
+            title = (doc.metadata or {}).get("title") or ""
+            rows.append(f"{path.name}: {doc.page_count} pages, {path.stat().st_size} bytes; "
+                        f"title={title!r}; encrypted={'yes' if encrypted else 'no'}; "
+                        f"text layer={'yes' if has_text else 'no'}")
+        finally:
+            doc.close()
+    data = "\n".join(rows) if rows else "No PDF files found."
+    return {"type": "report", "command": "info", "input": str(folder), "verdict": "report", "data": data}
