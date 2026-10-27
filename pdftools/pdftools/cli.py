@@ -29,6 +29,8 @@ class Context:
         self.owner_password = owner_password
         self.json_output = json_output
         self.secret_env = tuple(secret_env)
+        self.secret_store = None
+        self.exit_code = 0
 
 
 def build_parser(commands=None):
@@ -135,15 +137,67 @@ def load_job(path, commands, *, cwd=None, secret_store=None):
         if job.get(key):
             p = Path(job[key])
             values[key] = str((base / p).resolve() if not p.is_absolute() else p)
+    values = {a.dest: a.default for a in parser._actions if a.dest != "help"} | values
     values.update(command=name, verbose=False, json=False, dry_run=False, stdout=False)
     return argparse.Namespace(**values), job
 
 
-def emit(record, json_output):
+def emit(record, json_output, force_stdout=False):
+    if record is None:
+        return
+    if record.get("type") == "report" and not force_stdout:
+        data = record.get("data")
+        lines = data.splitlines() if isinstance(data, str) else json.dumps(data, ensure_ascii=False, indent=2).splitlines()
+        if len(lines) > 200:
+            import datetime
+            import os
+            root = Path(__file__).resolve().parents[1] / "reports"
+            root.mkdir(parents=True, exist_ok=True)
+            path = report_path(root, record.get("command", "report"), Path(record.get("input", "report")).stem, ".txt")
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            prune_reports(root)
+            words = sum(len(line.split()) for line in lines)
+            if json_output:
+                record.pop("data", None)
+                record.update(path=str(path), lines=len(lines), words=words, preview="\n".join(lines[:20]))
+                print(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
+            else:
+                print(f"{path} ({len(lines)} lines, {words} words)\n" + "\n".join(lines[:20]))
+            return
     if json_output:
         print(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
     elif record.get("type") == "report":
-        print(f"{record['input']}: {record['data']['pages']} pages, {record['data']['bytes']} bytes; verdict {record['verdict']}")
+        data = record.get("data")
+        if record.get("command") == "info" and isinstance(data, dict):
+            print(f"{record['input']}: {data['pages']} pages, {data['bytes']} bytes; verdict {record['verdict']}")
+            return
+        if isinstance(data, str):
+            lines = data.splitlines()
+        else:
+            lines = json.dumps(data, ensure_ascii=False, indent=2).splitlines()
+        print("\n".join(lines))
+    elif record.get("type") == "result":
+        path = record.get("path") or "(nothing published)"
+        if record.get("pages") is None:
+            print(f"{path}: {record.get('bytes', 0)} bytes; verdict {record.get('verdict')}")
+        else:
+            print(f"{path}: {record.get('pages')} pages, {record.get('bytes', 0)} bytes; verdict {record.get('verdict')}")
+    elif record.get("type") == "summary":
+        print(json.dumps(record, ensure_ascii=False))
+
+
+def report_path(root, command, stem, suffix):
+    import datetime
+    import os
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    return Path(root) / f"{stamp}-{os.getpid()}-{command}-{stem}{suffix}"
+
+
+def prune_reports(root, keep=50):
+    root = Path(root)
+    files = sorted((p for p in root.iterdir() if p.is_file()), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in files[keep:]:
+        old.unlink(missing_ok=True)
 
 
 def main(argv=None):
@@ -196,13 +250,15 @@ def main(argv=None):
             if store.owner_password is None and getattr(args, "owner_password_env", None):
                 store.env_names.append(args.owner_password_env)
                 store.add(os.environ.get(args.owner_password_env), owner=True)
-        record = commands[args.command].run(args, Context(password, args.json, store.env_names, store.owner_password))
+        context = Context(password, args.json, store.env_names, store.owner_password)
+        context.secret_store = store
+        record = commands[args.command].run(args, context)
         if library_warnings:
             clierr.write_log("pdftools", "INFO", "PDF library warnings", "review the warning section",
                              secrets=secrets, sections={"library warnings": "\n".join(library_warnings)},
                              log_name=args.command)
-        emit(record, args.json)
-        return 0
+        emit(record, args.json, getattr(args, "stdout", False))
+        return context.exit_code
     except BaseException as e:
         if isinstance(e, SystemExit):
             raise

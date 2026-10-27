@@ -1,10 +1,10 @@
 # pdftools plan
 
-Local PDF toolkit that Claude runs on request: the pdfjar.com tool set plus folder helpers, as one CLI and one skill. Only Claude runs it (no GUI, no right-click menu). The toolkit never sends file content off the PC (see Privacy). Status: planned, not built. Plan reviews are finished; remaining issues are caught per phase in build, tests and the phase review.
+Local PDF toolkit that Claude runs on request: the pdfjar.com tool set plus folder helpers, as one CLI and one skill. Only Claude runs it (no GUI, no right-click menu). The toolkit never sends file content off the PC (see Privacy). Status: phases 1 and 2 built. Plan reviews are finished; remaining issues are caught per phase in build, tests and the phase review.
 
 ## Deliverables
 
-- `C:\Tools\pdftools\pdf.py`: the single entry point. Internals in a package `C:\Tools\pdftools\pdftools\`: `cli.py` (parsers, job loader, output protocol), `registry.py`, `io.py` (staging, publishing, naming, temp folders, disk budget), `secrets.py`, `crypt.py` (encryption matrix), `coords.py`, `pages.py` (page-range parsing), `textmatch.py` (literal and regex matches → per-line quads, used by `annotate` and `redact`), `check.py` (provenance diff), `tools.py` (external tool runner: timeouts, process trees, stderr capture), `errors.py`, and `commands\` with one module per phase or group.
+- `C:\Tools\pdftools\pdf.py`: the single entry point. Internals in a package `C:\Tools\pdftools\pdftools\`: `cli.py` (parsers, job loader, output protocol), `registry.py`, `io.py` (staging, publishing, naming, temp folders, disk budget), `pipeline.py` (shared writer open/check/stage/publish contract), `secrets.py`, `crypt.py` (encryption matrix), `coords.py`, `pages.py` (page-range parsing), `textmatch.py` (literal and regex matches → per-line quads, used by `annotate` and `redact`), `check.py` (provenance diff), `tools.py` (external tool runner: timeouts, process trees, stderr capture), `errors.py`, and `commands\` with one module per phase or group.
 - `C:\Tools\pdftools\pdf.cmd`: launcher (see Launcher).
 - `C:\Tools\pdftools\tests\`: tests, `make_fixtures.py`, fixtures (see Tests).
 - `C:\Users\thurs\.claude\skills\pdftools\SKILL.md`: request → command map, written per the `writing-for-agents` skill; grows with each phase.
@@ -212,6 +212,17 @@ Every writing command returns an operation result:
 
 The checker compares each placement with its source region after the transform; never by position.
 
+Writing commands run through `pipeline.write_pdf` / `write_non_pdf` (input opening per the encryption matrix, signature and restrictions gates, naming, staging, check, publish or `_UNCHECKED`, `--dry-run`, result record with `findings`); long jobs call `pipeline.announce_estimate`. Commands declare `check_policy` as a built-in policy name (`registry.BUILTIN_POLICIES`, one per row of the invariant table) or their own callable.
+
+Operation result fields (`check.py`):
+- `Placement.source_doc` is a path key into the opened inputs; `source_page` is zero-based; `transform` is PyMuPDF `(a, b, c, d, e, f)` from source space 2 to output space 2; `dest_rect`, when present, is in output space 2 and scopes source words and pixels by inverse-mapping its bounds.
+- `Placement.rotation`, when set, is the expected output `/Rotate` value in degrees. Placement policies check it and report `ROTATION_CHANGED` on mismatch.
+- `OperationResult.ssim_floor` is the explicit minimum grayscale SSIM for each mapped source image region during lossy compression. The source image bbox from `get_image_info` is transformed into output space before scoring.
+- `OperationResult.annotation_delta` is the signed output-minus-source annotation count for `annot_add`/`annot_remove`.
+- `OperationResult.cropboxes` contains each expected output crop box expressed in unrotated source space 2 points; crop text comparison is scoped to that box and a mismatch reports `CROPBOX_CHANGED`.
+- `ExpectedChanges.regions` are displayed millimetre rectangles on output pages. A changed tile is allowed when it overlaps one; changed-tile boxes use the same displayed-mm space.
+- `Features.must_survive` stores exact expected output counts. `Features.dropped` stores counts intentionally removed from the source; successful removals report `WARN FEATURES_DROPPED` with source, removed, expected and actual counts.
+
 ### Tiers
 
 - Invariant (per command, table below). Violation → exit 3 (`_UNCHECKED`, or nothing for security commands).
@@ -222,10 +233,19 @@ The checker compares each placement with its source region after the transform; 
 
 - Text: `get_text("words")`, normalised (whitespace, ligatures, end-of-line hyphenation), compared as an ordered sequence per placement.
 - Visual: render source region and output region at 100 dpi RGB, 10 mm tiles; a tile changed = more than 1 % of its pixels differ by more than 8/255 in any channel. Changed tiles reported as mm boxes.
-- Image quality for lossy steps: per image region, SSIM on grayscale ≥ floor (start: 0.90 `med`, 0.85 `high`, 0.75 `max`); effective dpi of images that carry text (scans) ≥ 150 at `med`/`high`, `max` warns `LOW_DPI` below 150.
+- Image quality for lossy steps: per image region, SSIM on grayscale ≥ floor (0.90 `med`, 0.85 `high`, 0.78 `max`; the operation passes its floor in `ssim_floor`); effective dpi of images that carry text (scans) ≥ 150 at `med`/`high`, `max` warns `LOW_DPI` below 150.
 - Colour: max chroma (max−min of R,G,B) per page.
 - Whole-page stats for `check`: blank, mostly black, ink coverage, smallest font size, `U+FFFD`/`.notdef`, spans outside the crop box, image effective dpi, image count.
-- All thresholds are starting values; phase 2 calibrates them on fixtures made by `make_fixtures.py` with pymupdf directly (not with toolkit commands): a photo page recompressed at JPEG q80 must pass a lossy-image check; a table with one digit changed must fail an unchanged-region check; a page with its image removed must fail a copy check. Final numbers are written here.
+- Calibrated thresholds (constants at the top of `check.py`; `test_calibration_margins` asserts the margins on fixtures from `tests\fixtures\p2.py`, built with pymupdf directly):
+
+| Threshold | Value | Passing case (measured) | Failing case (measured) |
+|---|---|---|---|
+| Changed tile | > 1 % of pixels differ by > 8/255 in any channel | tiles outside a recompressed photo: 0 % | table with one digit changed: 2.56 %, delta 255 |
+| Image-region SSIM `med`/`high`/`max` | 0.90 / 0.85 / 0.78 | textured photo at JPEG q80/q65/q50: 0.993 / 0.988 / 0.982 | small image replaced by grey: 0.739; photo removed: 0.637 |
+| Gray: max chroma | ≤ 2/255 | grayscale page: 0 | colour photo: 167 |
+| Gray: luminance delta | ≤ 24/255 | photo converted to gray: 5 | photo removed: 254 |
+
+SSIM is scored per image region because whole-page SSIM hides a destroyed image (photo removed: 0.910 whole-page). Changed tiles inside declared image regions (up to 37 % at q50) are allowed only for lossy policies.
 
 ### Invariants per command
 
@@ -255,7 +275,7 @@ Commands without a row report `verdict: report`.
 
 The skill rule: read the verdict and warnings first. When text cannot settle a question, look at a `thumb` crop of the flagged box; a whole page at low resolution is allowed when the question is about the whole page.
 
-`thumb` (phase 2): downscaled (`--max-side 800`) or cropped (`--crop` displayed mm on a PDF page, px on an image) copy written to the run's report folder for Claude to view.
+`thumb` (phase 2): downscaled (`--max-side 800`) or cropped (`--crop` displayed mm on a PDF page, px on an image) copy written to the report folder as `<time>-<pid>-thumb-<stem>.png` for Claude to view; a crop is rendered so its longer side is `--max-side` (at most 600 dpi). The report folder keeps the newest 50 files of any type.
 
 ## Commands
 
@@ -513,9 +533,10 @@ Failure policy for both: if the check fails, nothing is published (exit 3, verdi
 ## Tests
 
 - `tests\make_fixtures.py` builds every fixture deterministically with pymupdf, pikepdf, Pillow and hand-written files (no toolkit commands): rotated page with offset crop box and `/UserUnit`; optional-content layers; annotations of each kind; form fields incl. one without appearance streams; links and bookmarks; AES-256 encrypted with a known test password; restrictions-only PDF; a signed-looking PDF (a `/Sig` field with a `/V` dictionary; detection needs no cryptography); equation-heavy page; scanned page; chart with thin coloured lines, an indexed image and a shared image across pages; repeated words; pending redaction annotation; JavaScript in link, outline and field actions; `/AF` attachment; a recoverable broken xref and an unrecoverable truncation; a deterministic 500-page text PDF (seeded text, A4, Helvetica) for the benchmark; images in every input format (PSD via `pixmap.save(output="psd")`); calibration fixtures (Measurements).
-- `tests\unit\` (no external tools, under 30 s): contracts, parsers, job loader, naming, staging/publishing (two processes racing for one name; locked target retry), secrets redaction, encryption matrix, coordinates, recipe parsing, check measurements.
+- Layout: `tests\test_p<phase>_*.py` (unittest, discovered by `unittest discover -s pdftools\tests`); fixtures from `tests\fixtures\p<phase>.py`, built into a temp folder or `tests\fixtures\out\` (`make_fixtures.py [folder] [--bench]`; the 500-page fixture only with `--bench`).
+- Unit cases (no external tools, whole suite under 60 s): contracts, parsers, job loader, naming, staging/publishing (two processes racing for one name; locked target retry), secrets redaction, encryption matrix, coordinates, recipe parsing, check measurements.
 - Independent assertions: outputs are inspected with a different engine where possible (pikepdf/pypdf for pages, rotation, boxes, metadata, encryption, bookmarks; Pillow for images), not only through `check`.
-- `tests\integration\` (LibreOffice, Edge/puppeteer, Ghostscript, ocrmypdf, tesseract): on this PC they must run; a skip is allowed only when the tool is absent and prints `SKIP <tool>: <reason>`.
+- Integration cases (LibreOffice, Edge/puppeteer, Ghostscript, ocrmypdf, tesseract): on this PC they must run; a skip is allowed only when the tool is absent and prints `SKIP <tool>: <reason>`.
 - Security tests (secrets, encryption, signatures, sanitize, redact) are never skippable.
 - Each phase adds its cases; standing cases: collision `_2`, inputs unchanged by hash, one ERROR line per code, quiet output, JSON Lines parse with a damaged fixture, bounded output, `--dry-run` creates no output, path with spaces and non-ASCII.
 - `selftest`: imports, one render, one write per shipped format, presence and version of each external tool; under 45 s; prints only failures.
@@ -524,7 +545,7 @@ Failure policy for both: if the check fails, nothing is published (exit 3, verdi
 
 - dev (conda): pandoc 3.12.1 (for the backlog math mode), jbig2enc 0.32, pillow-avif-plugin 1.6.0; already there: ghostscript 10.08, qpdf, pngquant, tesseract (with `ind`), ocrmypdf 17.13, img2pdf, pillow-heif, fpdf2. dev (pip): pdf2docx 0.5.13 (with opencv-python-headless, python-docx). All in `C:\Users\thurs\conda-envs\dev.yml`.
 - `C:\Tools\pdftools\node_modules`: katex 0.19.1, marked 12.0.2 (git-ignored). Phase 6 adds `puppeteer-core` (pinned, lockfile kept).
-- Git-ignore in `C:\Tools\.gitignore`: `pdftools/reports/` (logs live in `C:\Tools\logs\`, handled by the shared helper).
+- Git-ignore in `C:\Tools\pdftools\.gitignore`: `reports/`, `tests/fixtures/out/` (logs live in `C:\Tools\logs\`, handled by the shared helper).
 
 ## Build process
 
