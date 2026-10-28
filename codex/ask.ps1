@@ -7,35 +7,107 @@ param(
     [ValidateSet('read-only', 'workspace-write')][string]$Sandbox = 'read-only',
     [string]$Review,                          # 'uncommitted', 'base:<branch>', 'commit:<sha>', or 'custom' (-PromptFile names target and focus)
     [switch]$Search,                          # live web search; read-only ask calls only
-    [ValidateSet('build', 'review', 'quick')][string]$Role,  # model/effort/sandbox preset; inferred from the mode when omitted
+    [ValidateSet('build', 'review', 'quick', 'deep')][string]$Role,  # model/effort/sandbox preset; inferred from the mode when omitted
     [string]$Model,
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'max', 'ultra')][string]$Effort = 'high',  # CLI default is 'none'
     [switch]$Worktree,                        # write in a fresh git worktree off HEAD (implies workspace-write)
     [switch]$Keep,                            # persist the session so it can be resumed
     [string]$Resume,                          # session id to continue, in its recorded dir and sandbox
     [string]$Accept,                          # worktree path: apply its changes to the origin checkout, remove it
-    [string]$Discard                          # worktree path: remove it unapplied
+    [string]$Discard,                         # worktree path: remove it unapplied
+    [switch]$Status                           # print other Codex jobs and exit
 )
+$hasSandbox = $PSBoundParameters.ContainsKey('Sandbox')
+$hasModel = $PSBoundParameters.ContainsKey('Model')
+$hasEffort = $PSBoundParameters.ContainsKey('Effort')
+. "$PSScriptRoot\..\common\clierr.ps1"
 $ErrorActionPreference = 'Stop'
 
-# Codex syncs CLAUDE.md into its AGENTS.md, so it may read "call Codex"; stop it from calling itself.
-if ($env:CODEX_CONSULT) { throw 'Already inside a Codex consultation: answer directly.' }
-$env:CODEX_CONSULT = '1'
+trap { Exit-Cli 'ask' $_ }
+
 $runs = Join-Path $PSScriptRoot 'runs'
 New-Item -ItemType Directory -Force $runs | Out-Null   # gitignored, so absent on a fresh clone
+
+function Show-Jobs {
+    $script:jobsFound = $false
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($file in Get-ChildItem -LiteralPath $runs -Filter 'job-*.txt' -File) {
+        if ($script:jobFile -and $file.FullName -eq $script:jobFile) { continue }
+        try {
+            $record = @{}
+            foreach ($line in Get-Content -LiteralPath $file.FullName -Encoding UTF8) {
+                $parts = $line -split '=', 2
+                if ($parts.Count -ne 2 -or -not $parts[0]) { Stop-Cli BAD_INPUT 'bad field in job record' 'remove or repair the unreadable job record' }
+                $record[$parts[0]] = $parts[1]
+            }
+            foreach ($key in @('pid', 'pstart', 'started', 'role', 'model', 'name', 'answer')) {
+                if (-not $record.ContainsKey($key)) { Stop-Cli BAD_INPUT "missing $key in job record" 'remove or repair the unreadable job record' }
+            }
+            $processId = 0
+            if (-not [int]::TryParse($record.pid, [ref]$processId)) { Stop-Cli BAD_INPUT 'bad pid in job record' 'remove or repair the unreadable job record' }
+            $started = [DateTime]::Parse($record.started, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
+            $pstart = [DateTime]::Parse($record.pstart, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
+            $elapsed = [int][Math]::Floor(((Get-Date) - $started).TotalMinutes)
+            if ($record.ContainsKey('ended')) {
+                $ended = [DateTime]::Parse($record.ended, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
+                if (-not $record.ContainsKey('exit')) { Stop-Cli BAD_INPUT 'missing exit in job record' 'remove or repair the unreadable job record' }
+                $ago = [int][Math]::Floor(((Get-Date) - $ended).TotalMinutes)
+                $line = "finished $($ago)m ago, exit $($record.exit): $($record.name) -> $($record.answer)"
+                if ($record.ContainsKey('worktree')) { $line += " worktree: $($record.worktree) (review, then -Accept or -Discard)" }
+                $lines.Add($line)
+                Remove-Item -LiteralPath $file.FullName
+            } else {
+                $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+                $alive = $false
+                if ($process) {
+                    $actualStart = $process.StartTime
+                    $alive = $actualStart.ToUniversalTime().Ticks -eq $pstart.ToUniversalTime().Ticks
+                }
+                if ($alive) { $lines.Add("running $($elapsed)m: $($record.name) ($($record.role), $($record.model))") }
+                else {
+                    $lines.Add("wrapper stopped after $($elapsed)m (no result recorded): $($record.name); Codex may still be running, check $($record.answer) and its .log")
+                    Remove-Item -LiteralPath $file.FullName
+                }
+            }
+        } catch {
+            # A record seconds old may be mid-write by another call; only stale ones are reported and dropped.
+            if (((Get-Date) - $file.LastWriteTime).TotalSeconds -lt 60) { continue }
+            $lines.Add("unreadable job record $($file.Name)")
+            Remove-Item -LiteralPath $file.FullName -ErrorAction SilentlyContinue
+        }
+    }
+    if ($lines.Count -gt 0) {
+        $script:jobsFound = $true
+        '--- codex jobs ---'
+        $lines
+    }
+}
+
+# Codex syncs CLAUDE.md into its AGENTS.md, so it may read "call Codex"; stop it from calling itself.
+if ($env:CODEX_CONSULT) { Stop-Cli BAD_ARG 'Already inside a Codex consultation: answer directly.' 'run ask outside a Codex consultation' }
+$env:CODEX_CONSULT = '1'
+if ($Accept -and $Discard) { Stop-Cli BAD_ARG 'Give -Accept or -Discard, not both.' 'use only -Accept or -Discard' }
+Show-Jobs   # after the guard: a refused nested call must not use up the once-only finished notices
+if ($Status) {
+    if (-not $script:jobsFound) { 'no other codex jobs' }
+    exit 0
+}
 
 # Absolute against PowerShell's location: Codex runs in $Dir and .NET in the process dir, so relative paths would drift.
 function Abs($p) { $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p) }
 # $ErrorActionPreference doesn't stop on a failed native command in PS 5.1; check every git call.
-function Invoke-Git { git @args; if ($LASTEXITCODE -ne 0) { throw "git $args failed (exit $LASTEXITCODE)" } }
+function Invoke-Git {   # returns git's stdout
+    $run = Invoke-CliTool git -ArgumentList ([string[]]$args) -Name git -Fix 'check the git error in the log and resolve it'
+    if ($run.StdOut) { $run.StdOut.TrimEnd() }
+}
 
 # -Worktree records each worktree (path, origin checkout, start commit); -Accept/-Discard act only on recorded ones.
 function Get-WorktreeRecord($path) {
     $wt = (Resolve-Path -LiteralPath $path).Path
     $rec = Join-Path $runs "wt-$(Split-Path (Split-Path $wt -Parent) -Leaf).txt"
-    if (-not (Test-Path $rec)) { throw "$wt was not created by ask.ps1 -Worktree (no record $rec)" }
+    if (-not (Test-Path $rec)) { Stop-Cli NOT_FOUND "$wt was not created by ask.ps1 -Worktree (no record $rec)" 'use a worktree path recorded by ask.ps1' }
     $r = Get-Content -Encoding UTF8 $rec
-    if ($r[0] -ne $wt) { throw "Record $rec is for $($r[0]), not $wt" }
+    if ($r[0] -ne $wt) { Stop-Cli BAD_INPUT "Record $rec is for $($r[0]), not $wt" 'use the worktree path recorded in its record file' }
     [pscustomobject]@{ Wt = $wt; Origin = $r[1]; Base = $r[2]; File = $rec }
 }
 function Remove-Worktree($r) {
@@ -45,7 +117,6 @@ function Remove-Worktree($r) {
     Remove-Item $r.File
 }
 
-if ($Accept -and $Discard) { throw 'Give -Accept or -Discard, not both.' }
 if ($Accept) {
     $r = Get-WorktreeRecord $Accept
     # Diff from the start commit, so work Codex committed comes across too.
@@ -54,8 +125,8 @@ if ($Accept) {
     Invoke-Git -C $r.Wt diff --cached --binary $r.Base --output=$patch
     if ((Get-Item $patch).Length -eq 0) { "no changes in $($r.Wt)" }
     else {
-        git -C $r.Origin apply --whitespace=nowarn $patch
-        if ($LASTEXITCODE -ne 0) { "apply failed; worktree kept at $($r.Wt), patch at $patch"; exit 1 }
+        $null = Invoke-CliTool git @('-C', $r.Origin, 'apply', '--whitespace=nowarn', $patch) -Name git `
+            -Fix "worktree kept at $($r.Wt), patch at ${patch}: resolve the conflict, then git apply it"
         "applied to $($r.Origin) (unstaged):"
         Invoke-Git -C $r.Origin diff --stat
     }
@@ -69,52 +140,69 @@ if ($Discard) {
     exit 0
 }
 
-$exe = Get-ChildItem "$env:LOCALAPPDATA\OpenAI\Codex\bin\*\codex.exe" |
-    Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if (-not $exe) { throw 'codex.exe not found under %LOCALAPPDATA%\OpenAI\Codex\bin (is the Codex app installed?)' }
-
-if (-not ($PromptFile -or $Review)) { throw 'Give -PromptFile, -Review, or -Review with -PromptFile (focus instructions).' }
-if ($Resume -and $Review) { throw '-Review starts a fresh review: drop -Resume.' }
-# The CLI takes review instructions only without a preset: the prompt itself names what to review and the focus.
-if ($Review -eq 'custom' -and -not $PromptFile) { throw '-Review custom needs -PromptFile (what to review, and the focus).' }
-if ($Review -and $Review -ne 'custom' -and $PromptFile) {
-    throw "-Review $Review takes no instructions (CLI limit): use -Review custom -PromptFile, naming the diff or files to review."
+$exe = if ($env:ASK_CODEX_EXE) { Get-Item -LiteralPath $env:ASK_CODEX_EXE } else {   # override: tests, version pinning
+    Get-ChildItem "$env:LOCALAPPDATA\OpenAI\Codex\bin\*\codex.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 }
-if ($Resume -and -not $PromptFile) { throw '-Resume needs -PromptFile (the follow-up message).' }
-if ($Resume -and $Worktree) { throw '-Resume reruns in the session''s own dir (a worktree session keeps its worktree): drop -Worktree.' }
+if (-not $exe) { Stop-Cli NOT_FOUND 'codex.exe not found under %LOCALAPPDATA%\OpenAI\Codex\bin (is the Codex app installed?)' 'install the Codex app or repair its bin path' }
+
+if (-not ($PromptFile -or $Review)) { Stop-Cli BAD_ARG 'Give -PromptFile, -Review, or -Review with -PromptFile (focus instructions).' 'provide -PromptFile or -Review' }
+if ($Resume -and $Review) { Stop-Cli BAD_ARG '-Review starts a fresh review: drop -Resume.' 'drop -Resume or -Review' }
+# The CLI takes review instructions only without a preset: the prompt itself names what to review and the focus.
+if ($Review -eq 'custom' -and -not $PromptFile) { Stop-Cli BAD_ARG '-Review custom needs -PromptFile (what to review, and the focus).' 'add -PromptFile' }
+if ($Review -and $Review -ne 'custom' -and $PromptFile) {
+    Stop-Cli BAD_ARG "-Review $Review takes no instructions (CLI limit): use -Review custom -PromptFile, naming the diff or files to review." 'use -Review custom -PromptFile'
+}
+if ($Resume -and -not $PromptFile) { Stop-Cli BAD_ARG '-Resume needs -PromptFile (the follow-up message).' 'add -PromptFile' }
+if ($Resume -and $Worktree) { Stop-Cli BAD_ARG '-Resume reruns in the session''s own dir (a worktree session keeps its worktree): drop -Worktree.' 'drop -Worktree' }
 # `exec resume` runs in the launch dir and takes no -C/-s, so -Keep records both and -Resume restores them.
 if ($Resume) {
     $sessionFile = Join-Path $runs "session-$Resume.txt"
-    if (-not (Test-Path $sessionFile)) { throw "No record for session $Resume (was it started with -Keep?)" }
+    if (-not (Test-Path $sessionFile)) { Stop-Cli NOT_FOUND "No record for session $Resume (was it started with -Keep?)" 'use a session id recorded with -Keep' }
     $Dir, $Sandbox = Get-Content -Encoding UTF8 $sessionFile
 }
 if ($Review) { $Sandbox = 'read-only' }
 
 # Role presets (user's rule, 2026-10-11): builds get Luna and write access; reviews, critiques and second
 # opinions get Sol, read-only; quick (user, 2026-10-12) = Luna low for small bounded jobs, read-only
-# or in a -Worktree as the call says. An explicit -Model or -Effort still wins.
+# or in a -Worktree as the call says; deep (user, 2026-10-28) = Astra, the strongest model, read-only,
+# for the hardest problems and only after the user's OK per call. An explicit -Model or -Effort still wins.
 $roles = @{
     build  = @{ Model = 'gpt-6-luna';  Effort = 'high' }
     review = @{ Model = 'gpt-6.1-sol'; Effort = 'high' }
     quick  = @{ Model = 'gpt-6-luna';  Effort = 'low' }
+    deep   = @{ Model = 'gpt-6-astra'; Effort = 'high' }
 }
 if (-not $Role) { $Role = if ($Worktree -or $Sandbox -eq 'workspace-write') { 'build' } else { 'review' } }
 $resumed = if ($Resume) { " (session $Resume was saved with that sandbox; start a fresh session instead)" } else { '' }
-if ($Role -eq 'review' -and ($Worktree -or $Sandbox -ne 'read-only')) {
-    throw "-Role review is read-only, but this call has write access$resumed. Drop -Worktree / -Sandbox workspace-write, or use -Role build."
+if ($Role -in 'review', 'deep' -and ($Worktree -or $Sandbox -ne 'read-only')) {
+    Stop-Cli BAD_ARG "-Role $Role is read-only, but this call has write access$resumed. Drop -Worktree / -Sandbox workspace-write, or use -Role build." 'drop write access or use -Role build'
 }
 if ($Role -eq 'build') {
-    if ($Review) { throw '-Review is a review: use -Role review, or omit -Role.' }
+    if ($Review) { Stop-Cli BAD_ARG '-Review is a review: use -Role review, or omit -Role.' 'use -Role review or omit -Role' }
     # A build writes in a worktree unless -Sandbox workspace-write asks for the live checkout.
-    if (-not $Resume -and -not $PSBoundParameters.ContainsKey('Sandbox')) { $Worktree = [switch]$true }
-    if (-not $Worktree -and $Sandbox -eq 'read-only') { throw "-Role build needs write access, but this call is read-only$resumed." }
+    if (-not $Resume -and -not $hasSandbox) { $Worktree = [switch]$true }
+    if (-not $Worktree -and $Sandbox -eq 'read-only') { Stop-Cli BAD_ARG "-Role build needs write access, but this call is read-only$resumed." 'use -Worktree or -Sandbox workspace-write' }
 }
 # Web pages can carry instructions aimed at Codex, so search only where it can't write; never for a review.
 if ($Search -and ($Review -or $Worktree -or $Sandbox -ne 'read-only')) {
-    throw "-Search is for read-only ask calls only (no -Review, -Worktree or write access)$resumed."
+    Stop-Cli BAD_ARG "-Search is for read-only ask calls only (no -Review, -Worktree or write access)$resumed." 'remove -Review and write access options'
 }
-if (-not $PSBoundParameters.ContainsKey('Model'))  { $Model  = $roles[$Role].Model }
-if (-not $PSBoundParameters.ContainsKey('Effort')) { $Effort = $roles[$Role].Effort }
+if (-not $hasModel)  { $Model  = $roles[$Role].Model }
+if (-not $hasEffort) { $Effort = $roles[$Role].Effort }
+
+# A locked-out sandbox account fails every command, and Codex retries until the plan is spent:
+# after one lockout, refuse new runs for 30 minutes (after the argument checks, so bad calls still say why).
+# Since 2026-10-28 ~/.codex/config.toml runs `[windows] sandbox = "unelevated"` and the legacy sandbox accounts
+# are uninstalled (openai/codex#18620: parallel elevated runs lock them out); this stays as the safety net.
+$lockMarker = Join-Path $runs 'sandbox-locked.txt'
+if (Test-Path -LiteralPath $lockMarker) {
+    $until = (Get-Item -LiteralPath $lockMarker).LastWriteTime.AddMinutes(30)
+    if ((Get-Date) -lt $until) {
+        Write-CliWarn 'ask' SANDBOX_LOCKED "Codex sandbox account was locked out (1909); not starting Codex (marker $lockMarker)" "retry after $($until.ToString('HH:mm'))"
+        exit 1
+    }
+    Remove-Item -LiteralPath $lockMarker
+}
 
 $Dir = (Resolve-Path -LiteralPath $Dir).Path
 if ($PromptFile) { $PromptFile = (Resolve-Path -LiteralPath $PromptFile).Path }
@@ -146,7 +234,7 @@ if ($Resume) {
         '^base:(.+)$'   { $args_ += @('--base', $Matches[1]) }
         '^commit:(.+)$' { $args_ += @('--commit', $Matches[1]) }
         '^custom$'      { }   # the prompt (stdin) names the target
-        default         { throw "Bad -Review '$Review'" }
+        default         { Stop-Cli BAD_ARG "Bad -Review '$Review'" 'use uncommitted, base:<branch>, commit:<sha>, or custom' }
     }
 } else {
     if ($Worktree) {
@@ -173,27 +261,102 @@ if ($PromptFile) {
 
 if (Test-Path -LiteralPath $Out) { Remove-Item -LiteralPath $Out }
 $sw = [Diagnostics.Stopwatch]::StartNew()
-$p = Start-Process -FilePath $exe.FullName -ArgumentList $args_ -WorkingDirectory $Dir -NoNewWindow -Wait -PassThru `
-    -RedirectStandardInput $stdin -RedirectStandardOutput "$log.out" -RedirectStandardError $log
-Remove-Item -LiteralPath $stdin
-"codex exit $($p.ExitCode) in $([int]$sw.Elapsed.TotalSeconds)s ($Role`: $Model, $Effort); answer: $Out; log: $log"
-$head = Get-Content $log -TotalCount 15
+# Written whole via a temp file and a move, so a concurrent Show-Jobs never reads half a record.
+# Bookkeeping must never fail the run itself.
+function Write-JobRecord($lines) {
+    try {
+        $tmp = Join-Path $runs ("tmp-" + (Split-Path $jobFile -Leaf))
+        [IO.File]::WriteAllLines($tmp, [string[]]$lines, (New-Object Text.UTF8Encoding $false))
+        Move-Item -LiteralPath $tmp -Destination $jobFile -Force
+    } catch { }
+}
+$jobFile = Join-Path $runs ("job-{0}-{1}.txt" -f (Get-Date -Format 'yyyyMMdd-HHmmss'), $PID)
+$script:jobFile = $jobFile
+$procStart = (Get-Process -Id $PID).StartTime.ToString('o')
+$jobStarted = (Get-Date).ToString('o')
+$mode = if ($Resume) { 'resume' } elseif ($Review) { 'review' } elseif ($Worktree) { 'worktree' } else { 'ask' }
+$jobName = Split-Path $base -Leaf
+$job = @(
+    "pid=$PID", "pstart=$procStart", "started=$jobStarted", "role=$Role", "model=$Model",
+    "effort=$Effort", "mode=$mode", "name=$jobName", "answer=$Out"
+)
+Write-JobRecord $job
 function Get-HeadField($name) {   # a failed run may log neither field
     $m = $head | Select-String "^${name}: (.+)$" | Select-Object -First 1
     if ($m) { $m.Matches[0].Groups[1].Value }
 }
-$wd = Get-HeadField 'workdir'
-if ($Keep -or $Resume) {
-    $id = Get-HeadField 'session id'
-    if ($Keep -and $id) { Set-Content -Encoding UTF8 (Join-Path $runs "session-$id.txt") @($wd, $Sandbox) }
-    "session: $id  (continue with -Resume $id)"
+# The sandbox's spawn failure ("CreateProcessWithLogonW failed:" then the code); written with \s so this
+# file, when Codex reads it, doesn't match (a bare 1909 also turns up as a line number).
+$lockPattern = 'failed:\s1909(?!\d)|\(Windows\serror\s1909\)|account\sis\scurrently\slocked\sout'
+$script:logPos = 0L
+# Only Codex's own log line counts ("<UTC time> ERROR codex_core::... failed: 1909"), stamped during this run:
+# commands that quote the pattern or print old transcripts echo the same text (two false lockouts, 2026-10-28).
+# Command blocks are not skipped: in real lockouts this line lands between a command and its status line.
+$runStartUtc = [DateTime]::UtcNow.AddMinutes(-1)
+function Find-Lockout([switch]$Final) {   # first lockout line in the transcript written since the last call
+    if (-not (Test-Path -LiteralPath $log)) { return }
+    $fs = [IO.File]::Open($log, 'Open', 'Read', 'ReadWrite')
+    try {
+        $bytes = New-Object byte[] ([int]($fs.Length - $script:logPos))
+        $fs.Position = $script:logPos
+        $n = $fs.Read($bytes, 0, $bytes.Length)
+    } finally { $fs.Dispose() }
+    if ($n -le 0) { return }
+    $end = if ($Final) { $n } else { [Array]::LastIndexOf($bytes, [byte]10, [Math]::Max($n - 1, 0)) + 1 }   # whole lines only
+    if ($end -le 0) { return }
+    $script:logPos += $end
+    foreach ($line in [Text.Encoding]::UTF8.GetString($bytes, 0, $end) -split "`r?`n") {
+        if ($line -notmatch '^(\d{4}-\d\d-\d\dT[\d:.]+Z)\s+ERROR\s+codex_core' -or $line -notmatch $lockPattern) { continue }
+        $stamp = [DateTime]::Parse(($line -split '\s')[0], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal)
+        if ($stamp -ge $runStartUtc) { return $line }
+    }
 }
-if ($Worktree -and $wd) {
-    Set-Content -Encoding UTF8 (Join-Path $runs "wt-$(Split-Path (Split-Path $wd -Parent) -Leaf).txt") @($wd, $Dir, $startCommit)
-    "worktree: $wd  (review with git -C; then -Accept or -Discard it)"
+$jobExit = 'interrupted'
+$lockLine = $null
+try {
+    $p = Start-Process -FilePath $exe.FullName -ArgumentList $args_ -WorkingDirectory $Dir -NoNewWindow -PassThru `
+        -RedirectStandardInput $stdin -RedirectStandardOutput "$log.out" -RedirectStandardError $log
+    $null = $p.Handle   # keeps ExitCode readable after exit (PS 5.1)
+    while (-not $p.WaitForExit(1000)) {
+        $lockLine = Find-Lockout
+        if ($lockLine) {
+            # Only the process this call started, with its own children (the sandboxed commands).
+            & taskkill.exe /PID $p.Id /T /F 2>&1 | Out-Null
+            $p.WaitForExit()
+            break
+        }
+    }
+    if (-not $lockLine) { $lockLine = Find-Lockout -Final }
+    Remove-Item -LiteralPath $stdin
+    if ($lockLine) {
+        [IO.File]::WriteAllText($lockMarker, (Get-Date).ToString('o'))
+        $jobExit = 'sandbox locked'
+        Stop-Cli SANDBOX_LOCKED 'Codex sandbox account is locked out (1909); Codex stopped' 'wait for the lockout to clear, then rerun' `
+            -Detail "Codex transcript: $log`nmatched: $lockLine`nnew runs refused until $((Get-Date).AddMinutes(30).ToString('HH:mm')) (marker $lockMarker)"
+    }
+    "codex exit $($p.ExitCode) in $([int]$sw.Elapsed.TotalSeconds)s ($Role`: $Model, $Effort); answer: $Out; log: $log"
+    $head = Get-Content $log -TotalCount 15
+    $wd = Get-HeadField 'workdir'
+    if ($Keep -or $Resume) {
+        $id = Get-HeadField 'session id'
+        if ($Keep -and $id) { Set-Content -Encoding UTF8 (Join-Path $runs "session-$id.txt") @($wd, $Sandbox) }
+        "session: $id  (continue with -Resume $id)"
+    }
+    if ($Worktree -and $wd) {
+        Set-Content -Encoding UTF8 (Join-Path $runs "wt-$(Split-Path (Split-Path $wd -Parent) -Leaf).txt") @($wd, $Dir, $startCommit)
+        "worktree: $wd  (review with git -C; then -Accept or -Discard it)"
+    }
+    $jobExit = if ($p.ExitCode -ne 0) { $p.ExitCode } elseif (-not (Test-Path -LiteralPath $Out)) { 'no answer' } else { 0 }
+} finally {
+    # Last, so a "finished" notice never precedes the worktree/session records it points to.
+    $end = $job + @("ended=$((Get-Date).ToString('o'))", "exit=$jobExit")
+    if ($Worktree -and $wd) { $end += "worktree=$wd" }
+    Write-JobRecord $end
 }
 if ($p.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $Out)) {
-    '--- log tail ---'
-    Get-Content $log -Tail 25
-    exit 1
+    $tail = @(Get-Content $log -Tail 30)
+    $relevant = Get-RelevantLine ($tail -join "`n")
+    Stop-Cli TOOL_FAILED "Codex exit $($p.ExitCode): $relevant" 'read the Codex transcript and rerun after fixing the reported issue' `
+        -Detail "Codex transcript: $log`n$($tail -join "`n")" `
+        -ToolRun @{ Command = "$($exe.FullName) $($args_ -join ' ')"; ExitCode = $p.ExitCode; StdOut = ''; StdErr = ($tail -join "`n") }
 }
