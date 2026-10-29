@@ -1,7 +1,7 @@
 """Export converted Markdown as lean source files for a Claude project (the only use of these files).
 
-Run in the pdfmath env:
-    conda run -n pdfmath python C:\\Tools\\pdf2md\\export.py <book or document folder> <export folder>
+Run in the dev env:
+    conda run -n dev python C:\\Tools\\pdf2md\\export.py <book or document folder> <export folder>
         [--title "Cushman-Roisin & Beckers, Introduction to GFD"] [--skip index,references]
 
 For each chapter (or the single document): drops image links (Claude can't see them; captions stay), HTML
@@ -149,10 +149,13 @@ def clean(md):
 def chapters(folder):
     """[(md path, title, first page, last page)] from a book folder (00_index.md) or a single document folder."""
     out = []
-    for sub in sorted(f for f in glob.glob(os.path.join(folder, "*")) if os.path.isdir(f)) or [folder]:
-        mds = [p for p in glob.glob(os.path.join(sub, "*.md")) if os.path.basename(p) not in ("qa_report.md", "review_notes.md")]
+    # a document folder from convert.py has subfolders too (crops/), so check the folder itself first
+    single = glob.glob(os.path.join(folder, "*.blocks.json"))
+    for sub in [folder] if single else sorted(f for f in glob.glob(os.path.join(folder, "*")) if os.path.isdir(f)):
         blocks = glob.glob(os.path.join(sub, "*.blocks.json"))
-        if not mds or not blocks:
+        # <name>.md beside <name>.blocks.json (the folder also holds <name>.src.md, qa_report.md, ...)
+        mds = [blocks[0][: -len(".blocks.json")] + ".md"] if blocks else []
+        if not mds or not os.path.isfile(mds[0]):
             continue
         data = json.load(open(blocks[0], encoding="utf-8"))
         pages = [int(p["id"].split("/")[2]) + 1 for p in data["pages"]]

@@ -1,8 +1,8 @@
-"""Convert a whole book chapter by chapter: outline -> convert (models loaded once) -> QA -> 00_index.md.
+"""Convert a whole book chapter by chapter: outline -> convert.py (CPU) -> eqread.py (Codex) -> QA -> 00_index.md.
 
-Run in the pdfmath env:
-    conda run -n pdfmath python C:\\Tools\\pdf2md\\book.py book.pdf out_dir --list
-    conda run -n pdfmath python C:\\Tools\\pdf2md\\book.py book.pdf out_dir [--chapters 2,5-7]
+Run in the dev env:
+    conda run -n dev python C:\\Tools\\pdf2md\\book.py book.pdf out_dir --list
+    conda run -n dev python C:\\Tools\\pdf2md\\book.py book.pdf out_dir [--chapters 2,5-7]
 
 Chapters come from the PDF outline: the level whose entries are closest to ~25 pages long (override with --level). A chapter
 ends where the next entry at that level or above starts, so part-title pages are skipped. Without an outline,
@@ -24,7 +24,8 @@ import pypdfium2 as pdfium
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import clierr
 
-SECONDS_PER_PAGE = 5  # measured on the RTX 3070 (Chapter 2 of Cushman-Roisin & Beckers: 32 pages in 153 s)
+SECONDS_PER_PAGE = 0.4  # extraction and crops on the CPU (Chapter 2 of Cushman-Roisin & Beckers: 32 pages in 12 s)
+SECONDS_PER_CHAPTER = 300  # Codex reading the equations, up to 3 chapters at once
 TARGET_PAGES = 25  # typical chapter length, used to pick the outline level that holds the chapters
 
 
@@ -164,7 +165,7 @@ def main():
     ap.add_argument("--chunk", type=int, help="no outline: split into pieces of this many pages")
     ap.add_argument("--force", action="store_true", help="reconvert chapters that already exist")
     ap.add_argument("--no-qa", action="store_true", help="skip qa.py")
-    ap.add_argument("--no-mineru", action="store_true", help="skip the MinerU second opinion on flagged equations")
+    ap.add_argument("--no-read", action="store_true", help="extract and crop only; equations not read by Codex yet")
     args = ap.parse_args()
 
     if not os.path.isfile(args.pdf):
@@ -178,60 +179,59 @@ def main():
     chosen = select(args.chapters, numbers)
     names = {n: f"{n:02d}_{slug(chapters[n][0])}" for n in numbers}
 
-    total_pages = 0
+    total_pages = n_new = 0
     for n in numbers:
         title, start, end = chapters[n]
         exists = os.path.exists(os.path.join(args.out_dir, names[n], f"{names[n]}.blocks.json"))
         mark = "*" if n in chosen and (args.force or not exists) else ("done" if exists else " ")
         if n in chosen and (args.force or not exists):
             total_pages += end - start + 1
+            n_new += 1
         print(f"{mark:>4} {n:3}. {title[:60]:60} PDF p{start + 1}-{end + 1} ({end - start + 1} pp)")
-    print(f"\n* = will convert: {total_pages} pages, about {total_pages * SECONDS_PER_PAGE / 60:.0f} min on the GPU")
+    minutes = (total_pages * SECONDS_PER_PAGE + n_new * SECONDS_PER_CHAPTER / 3) / 60
+    print(f"\n* = will convert: {total_pages} pages in {n_new} chapters, about {minutes:.0f} min (CPU + Codex)")
     if args.list:
         return
 
-    # Import here so --list works instantly (loading Marker takes a while).
-    from convert import convert
-    from marker.models import create_model_dict
+    from convert import convert  # here so --list works instantly
+    import eqread
     import qa
 
     os.makedirs(args.out_dir, exist_ok=True)
-    models = None
-    rows, failures, checked = [], [], []
+    failures = []
     t0 = time.time()
+    for n in chosen:
+        title, start, end = chapters[n]
+        if not args.force and os.path.exists(os.path.join(args.out_dir, names[n], f"{names[n]}.blocks.json")):
+            continue
+        print(f"\n[{n}/{len(chapters)}] {title}")
+        try:
+            convert(args.pdf, args.out_dir, f"{start}-{end}", names[n], read=False)
+        except Exception as e:  # keep going; report at the end
+            failures.append((n, title, repr(e)))
+            clierr.fail("book", e)
+            print(f"  FAILED: {e!r}")
+
+    # Codex reads the equations of all chapters at once (a few runs side by side); chapters read before are skipped
+    # inside eqread, so a rerun after an interruption only reads what is missing.
+    if not args.no_read:
+        print("\nReading equations with Codex")
+        eqread.run([os.path.join(args.out_dir, names[n]) for n in chosen])
+
+    rows = []
     for n in numbers:
         title, start, end = chapters[n]
         folder = os.path.join(args.out_dir, names[n])
         blocks = os.path.join(folder, f"{names[n]}.blocks.json")
-        counts = None
-        if n in chosen and (args.force or not os.path.exists(blocks)):
-            if models is None:
-                models = create_model_dict()
-            print(f"\n[{n}/{len(chapters)}] {title}")
-            try:
-                convert(args.pdf, args.out_dir, f"{start}-{end}", names[n], models)
-            except Exception as e:  # keep going; report at the end
-                failures.append((n, title, repr(e)))
-                clierr.fail("book", e)
-                print(f"  FAILED: {e!r}")
-                continue
-        if os.path.exists(blocks):
-            report = os.path.join(folder, "qa_report.json")
-            if n in chosen and not args.no_qa and (args.force or not os.path.exists(report) or
-                                                    os.path.getmtime(report) < os.path.getmtime(blocks)):
-                counts = qa.run(folder)
-                checked.append(folder)
-            elif os.path.exists(report):
-                counts = json.load(open(report, encoding="utf-8")).get("counts")
-            rows.append((n, title, start, end, folder, counts))
-
-    # MinerU needs the GPU Marker was using, so it runs once, after the last chapter, on every chapter's flagged pages.
-    if checked and not args.no_mineru:
-        import crosscheck
-        print(f"\nMinerU second opinion on flagged equations ({len(checked)} chapters)")
-        models = None
-        new_counts = crosscheck.run(checked, release=True)
-        rows = [(n, title, s, e, folder, new_counts.get(folder, counts)) for n, title, s, e, folder, counts in rows]
+        if not os.path.exists(blocks):
+            continue
+        counts, report = None, os.path.join(folder, "qa_report.json")
+        if n in chosen and not args.no_qa and (args.force or not os.path.exists(report) or
+                                                os.path.getmtime(report) < os.path.getmtime(blocks)):
+            counts = qa.run(folder)
+        elif os.path.exists(report):
+            counts = json.load(open(report, encoding="utf-8")).get("counts")
+        rows.append((n, title, start, end, folder, counts))
 
     meta_title = pdf.get_metadata_dict().get("Title") or os.path.splitext(os.path.basename(args.pdf))[0]
     write_index(args.out_dir, meta_title, rows)

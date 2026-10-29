@@ -1,7 +1,8 @@
-"""Find the parts of a Marker conversion that need review, so only those get looked at.
+"""Find the parts of a conversion that need review, so only those get looked at ("Marker" below means the
+converter's output: the checks were written for Marker and now run on convert.py/eqread.py output).
 
-Run in the pdfmath env, on a folder made by convert.py:
-    conda run -n pdfmath python C:\\Tools\\pdf2md\\qa.py out_dir\\<name>
+Run in the dev env, on a folder made by convert.py:
+    conda run -n dev python C:\\Tools\\pdf2md\\qa.py out_dir\\<name>
 
 Checks:
   1. LaTeX: every inline and display equation is rendered with KaTeX; parse failures are flagged.
@@ -14,7 +15,7 @@ Checks:
   5. Numbering of equations, figures and tables in reading order: duplicates, out of order, from another
      chapter, gaps.
   6. Text blocks vs the PDF text layer: words Marker added (misreads) or lost.
-  7. Letters in <sup>/<sub> (inline math misread as superscript), equation blocks without LaTeX, garbled text.
+  7. Equation blocks without LaTeX, garbled text.
 
 Each flagged block is cropped into crops/. Equations that couldn't be compared with the PDF text are cropped
 and listed under "Visual check". Writes a compact qa_report.md (one line per issue, likely errors first) and
@@ -47,7 +48,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MATH = re.compile(r"<math\b([^>]*)>(.*?)</math>", re.S)
 TAG = re.compile(r"<[^>]+>")
 GARBLED = re.compile(r"[\ufffd\ue000-\uf8ff]")
-SUPSUB = re.compile(r"<su[bp]>(.*?)</su[bp]>", re.S)  # outside <math>; digit-only footnote markers are ignored
 COMPARE_TYPES = {"Text", "SectionHeader", "ListItem", "Caption", "Footnote", "TableCell", "Table"}
 SKIP_FOR_LOST_TEXT = {"Figure", "Picture", "Diagram", "PageHeader", "PageFooter"}  # text Marker rightly leaves out
 CM_TEXT_FONTS = {"CMR", "CMTI", "CMBX", "CMSL", "CMSS", "CMTT", "CMCSC", "CMSSBX", "CMBXTI"}
@@ -138,10 +138,12 @@ def symbols(text, operators=True):
     """Letters, digits, Greek (and relations/operators), case-sensitive, sorted: order is ignored because
     fractions and sub/superscripts reorder text."""
     text = unicodedata.normalize("NFKC", text).translate(VARIANTS).replace("-", "−")
-    return sorted(c for c in text if c.isalnum() or (operators and c in OPERATORS))
+    # accent glyphs such as "ˆ" (a modifier letter, so isalnum) are checked separately by accents()
+    return sorted(c for c in text if (c.isalnum() and c not in ACCENT_CHARS) or (operators and c in OPERATORS))
 
 
 def symbols_from_latex(latex, operators=True):
+    latex = latex.replace("\\\\", " ")  # a line break, not a command: "\\y:" starts a row with y
     # environments (with an array's column spec, \begin{array}{r c l}) and \tag{} carry no symbols
     latex = re.sub(r"\\begin\s*\{(?:array|tabular)\}\s*\{[lcrp|@.\s]*\}|\\(?:begin|end)\s*\{[^{}]*\}|\\tag\*?\s*\{[^{}]*\}",
                    " ", latex)
@@ -636,7 +638,7 @@ def numbering_issues(entries, kind):
 
 # ------------------------------------------------------------------------------------------------------------ main
 
-def run(folder, threshold=70, max_dropped=3, max_symbol_diff=8, dpi=150, mineru=False):
+def run(folder, threshold=70, max_dropped=3, max_symbol_diff=8, dpi=150):
     args = argparse.Namespace(threshold=threshold, max_dropped=max_dropped, max_symbol_diff=max_symbol_diff, dpi=dpi)
     blocks_path = glob.glob(os.path.join(folder, "*.blocks.json"))[0]
     name = os.path.basename(blocks_path)[: -len(".blocks.json")]
@@ -716,10 +718,6 @@ def run(folder, threshold=70, max_dropped=3, max_symbol_diff=8, dpi=150, mineru=
                                    "text": short(plain_text(block_html))})
                     eq_numbers.append(((int(m.group(1)), int(m.group(2)), m.group(3)), f"({m.group(1)}.{m.group(2)}{m.group(3)})", ref))
 
-            sus = [html.unescape(s) for s in SUPSUB.findall(block_html) if re.search(r"[A-Za-z\u0370-\u03ff]", s)]
-            if sus:
-                issues.append({**ref, "confidence": "low", "reason": f"letters in sup/sub [{' · '.join(sus)}]: misread inline math?"})
-
             if GARBLED.search(block_html):
                 issues.append({**ref, "confidence": "high", "reason": "garbled characters", "text": short(plain_text(block_html))})
 
@@ -758,10 +756,6 @@ def run(folder, threshold=70, max_dropped=3, max_symbol_diff=8, dpi=150, mineru=
     for kind, entries in captions.items():
         issues += numbering_issues(entries, kind)
 
-    # Second opinion from MinerU on flagged display equations (cached readings; runs MinerU only with mineru=True).
-    import crosscheck  # here, not at the top: crosscheck imports qa
-    crosscheck.annotate(folder, data, pdf, issues, fetch_missing=mineru)
-
     rank = {"high": 0, "low": 1}
     issues.sort(key=lambda i: (2 if i.get("visual") else rank[i["confidence"]], i["pdf_index"], -i["box"][1]))
     if issues:
@@ -786,7 +780,6 @@ def run(folder, threshold=70, max_dropped=3, max_symbol_diff=8, dpi=150, mineru=
 
 
 def write_reports(folder, name, stats, no_text_layer, issues):
-    import crosscheck
     for issue in issues:
         issue.pop("pdf_index", None)
         issue["box"] = [round(v, 1) for v in issue["box"]]
@@ -814,8 +807,6 @@ def write_reports(folder, name, stats, no_text_layer, issues):
             parts = [f"{n}. p{issue['page']} {issue['type']}", issue["reason"]]
             if issue.get("latex"):
                 parts.append(f"`{issue['latex']}`")
-            if issue.get("mineru"):
-                parts.append(crosscheck.note_text(issue))
             if issue.get("text"):
                 parts.append(issue["text"])
             parts.append(issue.get("crop", "(no crop)"))
@@ -836,24 +827,6 @@ def write_reports(folder, name, stats, no_text_layer, issues):
     elif os.path.exists(autofix_path):
         os.remove(autofix_path)
 
-    # MinerU readings that match the PDF text where Marker's doesn't: also ready for fix.py, but whole equations.
-    mineru_fixes = [i for i in issues if i.get("mineru", {}).get("fix")]
-    mineru_path = os.path.join(folder, "qa_mineru_fixes.txt")
-    if mineru_fixes:
-        with open(mineru_path, "w", encoding="utf-8") as f:
-            for i in mineru_fixes:
-                old, new = i["mineru"]["fix"]
-                label = " ".join(sorted(eq_labels(old)))
-                f.write(f"p{i['page']} {label} MinerU's reading matches the PDF ({i['reason']})\n- {old}\n+ {new}\n\n")
-        lines.insert(1, f"MinerU's reading of {len(mineru_fixes)} flagged equations matches the PDF text where Marker's "
-                        f"doesn't: written to qa_mineru_fixes.txt (fix.py --dry-run, look at a crop or two, then apply).")
-    elif os.path.exists(mineru_path):
-        os.remove(mineru_path)
-    checked = [i for i in issues if i.get("mineru")]
-    if checked:
-        agree = sum(1 for i in checked if i["mineru"]["verdict"] == "agree")
-        lines.insert(1, f"MinerU checked {len(checked)} flagged equations: {agree} read the same as Marker "
-                        f"(moved to lower confidence).")
     with open(os.path.join(folder, "qa_report.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return counts
@@ -867,15 +840,13 @@ def main():
     ap.add_argument("--max-symbol-diff", type=int, default=8,
                     help="largest two-sided equation symbol difference treated as a misread (bigger = box mismatch)")
     ap.add_argument("--dpi", type=int, default=150, help="resolution of crop images")
-    ap.add_argument("--no-mineru", action="store_true",
-                    help="don't run MinerU on flagged equations (readings already cached are still used)")
     a = ap.parse_args()
     if not os.path.isdir(a.folder):
         raise clierr.Fail("NOT_FOUND", f"chapter folder not found: {a.folder}", "check the converted chapter folder path")
     if not glob.glob(os.path.join(a.folder, "*.blocks.json")):
         raise clierr.Fail("NOT_FOUND", f"block JSON not found in {a.folder}",
                           "use a convert.py output folder containing .blocks.json")
-    run(a.folder, a.threshold, a.max_dropped, a.max_symbol_diff, a.dpi, mineru=not a.no_mineru)
+    run(a.folder, a.threshold, a.max_dropped, a.max_symbol_diff, a.dpi)
 
 
 if __name__ == "__main__":
