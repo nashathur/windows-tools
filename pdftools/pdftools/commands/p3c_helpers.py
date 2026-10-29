@@ -19,7 +19,7 @@ def add_toimg_arguments(parser):
     parser.add_argument("file", type=Path)
     parser.add_argument("--format", default="png")
     size = parser.add_mutually_exclusive_group()
-    size.add_argument("--dpi", type=float, default=150)
+    size.add_argument("--dpi", type=float, default=None)
     size.add_argument("--width", type=int)
     size.add_argument("--height", type=int)
     size.add_argument("--scale", type=float)
@@ -30,6 +30,10 @@ def add_toimg_arguments(parser):
     parser.add_argument("--threshold", type=int, default=128)
     parser.add_argument("--alpha", action="store_true")
     parser.add_argument("--quality", type=int)
+    parser.add_argument("--lossless", action="store_true")
+    parser.add_argument("--single", action="store_true")
+    parser.add_argument("--tiff-compression", choices=("lzw", "deflate", "group4"))
+    parser.add_argument("--svg-text", action="store_true")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--stitch", choices=("v", "h"))
     group.add_argument("--grid", type=_grid)
@@ -62,9 +66,30 @@ def _grid(value):
 
 
 WRITERS = {
-    "png": {"write": lambda image, path, args: image.save(path, format="PNG"), "alpha": True, "quality": False},
-    "jpeg": {"write": lambda image, path, args: image.convert("RGB").save(path, format="JPEG", quality=args.quality or 90), "alpha": False, "quality": True},
+    "png": {"ext": "png", "write": lambda image, path, args: image.save(path, format="PNG"), "alpha": True, "quality": False},
+    "jpeg": {"ext": "jpg", "write": lambda image, path, args: image.convert("RGB").save(path, format="JPEG", quality=args.quality or 90), "alpha": False, "quality": True},
+    "webp": {"ext": "webp", "write": lambda image, path, args: image.save(path, format="WEBP", quality=args.quality or 80, lossless=args.lossless), "alpha": True, "quality": True},
+    "tiff": {"ext": "tiff", "write": lambda image, path, args: image.save(path, format="TIFF", compression=_TIFF_COMPRESSION.get(args.tiff_compression, "tiff_lzw")), "alpha": True, "quality": False},
+    "bmp": {"ext": "bmp", "write": lambda image, path, args: image.convert("RGB").save(path, format="BMP"), "alpha": False, "quality": False},
+    "gif": {"ext": "gif", "write": lambda image, path, args: image.save(path, format="GIF"), "alpha": False, "quality": False},
+    "avif": {"ext": "avif", "write": lambda image, path, args: _write_avif(image, path, args), "alpha": True, "quality": True, "lossless": False},
+    "heic": {"ext": "heic", "write": lambda image, path, args: _write_heic(image, path, args), "alpha": False, "quality": True, "lossless": False},
+    # SVG is vector: it is written from the page itself, not from a raster (see _emit_page).
+    "svg": {"ext": "svg", "write": None, "alpha": False, "quality": False},
 }
+_TIFF_COMPRESSION = {"lzw": "tiff_lzw", "deflate": "tiff_adobe_deflate", "group4": "group4"}
+_ALIASES = {"jpg": "jpeg", "tif": "tiff", "heif": "heic"}
+
+
+def _write_avif(image, path, args):
+    import pillow_avif  # plugin registration
+    image.save(path, format="AVIF", quality=args.quality or 80)
+
+
+def _write_heic(image, path, args):
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+    image.convert("RGB").save(path, format="HEIF", quality=args.quality or 80)
 
 
 def _validate_toimg(args, fmt):
@@ -75,7 +100,25 @@ def _validate_toimg(args, fmt):
     if args.alpha and not options["alpha"]:
         raise PdfError("BAD_ARG", f"--alpha is not supported for {fmt}", "use PNG")
     if args.quality is not None and not options["quality"]:
-        raise PdfError("BAD_ARG", f"--quality is not supported for {fmt}", "use JPEG")
+        raise PdfError("BAD_ARG", f"--quality is not supported for {fmt}", "choose a format with a quality setting")
+    if args.lossless and (fmt not in {"webp"}):
+        raise PdfError("BAD_ARG", f"--lossless is not supported for {fmt}", "use WebP")
+    if args.single and fmt != "tiff":
+        raise PdfError("BAD_ARG", "--single is supported only for TIFF", "choose --format tiff")
+    if args.tiff_compression and fmt != "tiff":
+        raise PdfError("BAD_ARG", "--tiff-compression is supported only for TIFF", "choose --format tiff")
+    if args.tiff_compression == "group4" and not args.bw:
+        raise PdfError("BAD_ARG", "TIFF group4 compression requires --bw", "add --bw")
+    if fmt == "svg" and (args.clip or args.gray or args.bw or args.alpha or args.width or args.height or args.scale is not None or args.dpi is not None):
+        raise PdfError("BAD_ARG", "SVG does not support raster options", "remove --clip, --gray, --bw, --alpha and size options")
+    if fmt == "svg" and args.single:
+        raise PdfError("BAD_ARG", "SVG does not support --single", "choose TIFF for multi-page output")
+    if fmt == "svg" and (args.stitch or args.grid):
+        raise PdfError("BAD_ARG", "SVG does not support --stitch or --grid", "choose PNG for a combined image")
+    if args.svg_text and fmt != "svg":
+        raise PdfError("BAD_ARG", "--svg-text is supported only for SVG", "choose --format svg")
+    if args.single and (args.stitch or args.grid):
+        raise PdfError("BAD_ARG", "--single, --stitch and --grid are mutually exclusive", "choose one of them")
     if args.dpi is not None and (not math.isfinite(args.dpi) or args.dpi <= 0) or args.scale is not None and (not math.isfinite(args.scale) or args.scale <= 0):
         raise PdfError("BAD_ARG", "render size must be positive", "use a positive dpi or scale")
     if args.width is not None and args.width < 1 or args.height is not None and args.height < 1:
@@ -115,7 +158,7 @@ def _render(doc, page, args):
         if args.width or args.height:
             scale = min(args.width / rect.width if args.width else float("inf"), args.height / rect.height if args.height else float("inf"))
         else:
-            scale = args.scale if args.scale is not None else args.dpi / 72
+            scale = args.scale if args.scale is not None else (args.dpi or 150) / 72
     except OverflowError as exc:
         raise PdfError("TOO_BIG", "render dimensions exceed the supported pixel limit", "lower the requested image size") from exc
     cap = 200_000_000 if args.stitch else 100_000_000
@@ -132,10 +175,11 @@ def _render(doc, page, args):
     return image
 
 
-def _output_folder(source, fmt, output):
-    # The shared resolver supplies the stem and collision semantics; strip the
-    # source extension because this target is a folder, not a PDF filename.
-    return io.resolve_output(source, fmt, output, multi=True).with_suffix("")
+def _output_folder(source, ext, output):
+    """`<stem>_<ext>` beside the PDF, named after the written file extension (`doc_jpg`, not `doc_jpeg`)."""
+    if output is None:
+        return Path(source).with_name(f"{Path(source).stem}_{ext}")
+    return io.resolve_output(source, ext, output, multi=True)
 
 
 def _zip_paths(inputs, target):
@@ -180,10 +224,89 @@ def _zip_paths(inputs, target):
         return stage.publish()
 
 
+def _check_exports(items):
+    """Reopen every written raster with Pillow and compare its size (and TIFF frame count)."""
+    try:
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+        import pillow_avif  # noqa: F401
+    except Exception:
+        pass
+    problems = []
+    for path, size, frames in items:
+        # `size` is one (w, h) for every frame, or a list with one (w, h) per frame (pages of different sizes).
+        expected = [tuple(s) for s in size] if isinstance(size[0], (tuple, list)) else [tuple(size)] * frames
+        try:
+            with Image.open(path) as written:
+                ok = getattr(written, "n_frames", 1) == len(expected)
+                for index in range(getattr(written, "n_frames", 1)):
+                    written.seek(index)
+                    written.load()
+                    ok = ok and index < len(expected) and written.size == expected[index]
+        except Exception:
+            ok = False
+        if not ok:
+            problems.append(("EXPORT_FAILED", f"exported image failed verification: {Path(path).name}"))
+    return problems
+
+
+def _mark_unchecked(stage, target, context, problems):
+    if not problems:
+        return None
+    stage.target = target.with_name(target.stem + "_UNCHECKED" + target.suffix)
+    context.exit_code = 3
+    log = clierr.write_log("pdf", "CHECK_FAILED", "toimg invariant check failed",
+                           "review the exported images", sections={"findings": str(problems)}, log_name="toimg")
+    for code, message in problems:
+        clierr.warn("pdf toimg", code, message, "review the exported images")
+    return log
+
+
+def _emit_page(doc, n, fmt, path, args):
+    """Write page n to path; return (size_px, frames) for rasters or None for SVG."""
+    if fmt == "svg":
+        text = doc[n].get_svg_image(text_as_path=not args.svg_text)
+        Path(path).write_text(text, encoding="utf-8")
+        return None
+    image = _render(doc, doc[n], args)
+    try:
+        WRITERS[fmt]["write"](image, path, args)
+        return image.size, 1
+    finally:
+        image.close()
+
+
+def _write_tiff_single(doc, pages, path, args):
+    from PIL.TiffImagePlugin import AppendingTiffWriter
+    compression = _TIFF_COMPRESSION.get(args.tiff_compression, "tiff_lzw")
+    sizes = []
+    with AppendingTiffWriter(str(path), new=True) as writer:
+        for n in pages:
+            image = _render(doc, doc[n], args)
+            try:
+                image.save(writer, format="TIFF", compression=compression)
+                writer.newFrame()
+                sizes.append(image.size)
+            finally:
+                image.close()
+    return sizes
+
+
+def _result(final, kind, pages, warnings, verdict_ok, **extra):
+    # "ok" only when the written content was reopened and matched; SVG is not checked.
+    verdict = "warn" if warnings else ("ok" if verdict_ok else "report")
+    return {"type": "result", "command": "toimg", "path": str(final), "kind": kind, "pages": pages,
+            "bytes": (final.stat().st_size if final.is_file() else
+                      sum(x.stat().st_size for x in final.iterdir() if x.is_file())),
+            "verdict": verdict, "warnings": warnings, **extra}
+
+
 def toimg(args, context):
     source = args.file.resolve()
     fmt = args.format.lower()
+    fmt = _ALIASES.get(fmt, fmt)
     _validate_toimg(args, fmt)
+    ext = WRITERS[fmt]["ext"]
     warnings = []
     try:
         import pikepdf
@@ -192,17 +315,22 @@ def toimg(args, context):
                 warnings.extend(crypt.export_warnings(True))
     except Exception:
         pass
+    if fmt == "svg" and args.svg_text:
+        warnings.append("SVG_TEXT_NEEDS_FONTS")
     with open_input(source, context.password or context.owner_password) as doc:
         from ..pages import parse_page_ranges
         pages = parse_page_ranges(args.pages, doc.page_count) if args.pages else list(range(doc.page_count))
         if _signed(source, context.password or context.owner_password):
             warnings.append("SIGNATURE_NOT_RETAINED")
-        if args.zip and (len(pages) == 1 or args.stitch or args.grid):
+        if args.zip and (len(pages) == 1 or args.stitch or args.grid or args.single):
             raise PdfError("BAD_ARG", "--zip requires a multi-file image export", "select multiple pages")
         # Estimate from page geometry before any raster is allocated, then check
         # both the destination and run-temp drives using the shared budget.
         dims = []
         for n in pages:
+            if fmt == "svg":
+                dims.append((0, 0))  # vector output: no raster is allocated, so no pixel limit applies
+                continue
             page = doc[n]
             rect = page.rect
             if args.clip:
@@ -213,30 +341,56 @@ def toimg(args, context):
             try:
                 scale = (min(args.width / rect.width if args.width else float("inf"),
                              args.height / rect.height if args.height else float("inf"))
-                         if args.width or args.height else args.scale if args.scale is not None else args.dpi / 72)
+                         if args.width or args.height else args.scale if args.scale is not None else (args.dpi or 150) / 72)
             except OverflowError as exc:
                 raise PdfError("TOO_BIG", "render dimensions exceed the supported pixel limit", "lower the requested image size") from exc
             cap = 200_000_000 if args.stitch else 100_000_000
             width, height = _pixel_dimensions(rect, scale, cap)
             dims.append((width, height))
         page_count = doc.page_count
+
+    def finish(final, kind, count, checked, unchecked=False, log=None, expected=None, **extra):
+        # An unchecked export is published under its _UNCHECKED name on purpose; that is not a name clash.
+        if final != (expected or target_path[0]):
+            warnings.append("NAME_TAKEN")
+        for code in warnings:
+            clierr.warn("pdf toimg", code, "image export completed with a warning", "review the exported image")
+        record = _result(final, kind, count, warnings, checked, **extra)
+        if unchecked:
+            record["verdict"] = "unchecked"
+            record["log"] = log
+        return record
+
+    target_path = [None]
+    if args.single:
+        target = target_path[0] = io.resolve_output(source, "toimg", args.output, suffix="_single", extension=".tiff")
+        if args.dry_run:
+            return {"type":"result","command":"toimg","path":str(target),"kind":"image","pages":len(pages),"bytes":0,"verdict":"report","provisional":True,"warnings":warnings}
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with io.temp_folder() as temp:
+            io.disk_budget([source], target, temp, estimate=sum(w * h * 4 for w, h in dims))
+            with io.Staging(target, temp) as stage:
+                with open_input(source, context.password or context.owner_password) as doc:
+                    sizes = _write_tiff_single(doc, pages, stage.path, args)
+                problems = _check_exports([(stage.path, sizes, len(sizes))])
+                log = _mark_unchecked(stage, target, context, problems)
+                final = stage.publish()
+        return finish(final, "image", len(pages), True, bool(problems), log, expected=stage.target)
     if len(pages) == 1 and not (args.stitch or args.grid):
-        ext = "png" if fmt == "png" else "jpg"
-        target = io.resolve_output(source, "toimg", args.output,
-                                   suffix=f"_p{pages[0] + 1:03d}", extension=f".{ext}")
+        target = target_path[0] = io.resolve_output(source, "toimg", args.output,
+                                                    suffix=f"_p{pages[0] + 1:03d}", extension=f".{ext}")
         if args.dry_run:
             return {"type":"result","command":"toimg","path":str(target),"kind":"image","pages":1,"bytes":0,"verdict":"report","provisional":True,"warnings":warnings}
         target.parent.mkdir(parents=True, exist_ok=True)
         with io.temp_folder() as temp:
-            io.disk_budget([source], target, temp, estimate=dims[0][0] * dims[0][1] * 4)
-            with open_input(source, context.password or context.owner_password) as doc:
-                image = _render(doc, doc[pages[0]], args)
+            io.disk_budget([source], target, temp, estimate=dims[0][0] * dims[0][1] * 4 or None)
             with io.Staging(target, temp) as stage:
-                WRITERS[fmt]["write"](image, stage.path, args)
+                with open_input(source, context.password or context.owner_password) as doc:
+                    done = _emit_page(doc, pages[0], fmt, stage.path, args)
+                problems = _check_exports([(stage.path, done[0], 1)]) if done else []
+                log = _mark_unchecked(stage, target, context, problems)
                 final = stage.publish()
-        if final != target: warnings.append("NAME_TAKEN")
-        for code in warnings: clierr.warn("pdf toimg", code, "image export completed with a warning", "review the exported image")
-        return {"type":"result","command":"toimg","path":str(final),"kind":"image","pages":1,"bytes":final.stat().st_size,"verdict":"warn" if warnings else "ok","warnings":warnings}
+        return finish(final, "image", 1, bool(done), bool(problems), log, expected=stage.target)
     if args.stitch or args.grid:
         if args.grid:
             cols, rows = args.grid
@@ -252,7 +406,7 @@ def toimg(args, context):
         if canvas_size[0] * canvas_size[1] > cap:
             raise PdfError("TOO_BIG", f"combined image exceeds the {cap} pixel limit", "choose fewer pages or a smaller render size")
         suffix = "_stitch" if args.stitch else "_grid"
-        target = io.resolve_output(source, "toimg", args.output, suffix=suffix, extension=f".{fmt}")
+        target = target_path[0] = io.resolve_output(source, "toimg", args.output, suffix=suffix, extension=f".{ext}")
         if args.dry_run:
             return {"type":"result","command":"toimg","path":str(target),"kind":"image","pages":len(pages),"bytes":0,"verdict":"report","provisional":True,"page_map":[{"page":n+1,"path":str(target)} for n in pages],"warnings":warnings}
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -262,11 +416,11 @@ def toimg(args, context):
             with open_input(source, context.password or context.owner_password) as doc:
                 images = [(n + 1, _render(doc, doc[n], args)) for n in pages]
             if args.stitch == "v":
-                canvas = Image.new(images[0][1].mode, canvas_size)
+                canvas = Image.new(images[0][1].mode, canvas_size, "white")  # uncovered area is white, not black
                 y = 0
                 for _, image in images: canvas.paste(image, (0, y)); y += image.height
             elif args.stitch == "h":
-                canvas = Image.new(images[0][1].mode, canvas_size)
+                canvas = Image.new(images[0][1].mode, canvas_size, "white")
                 x = 0
                 for _, image in images: canvas.paste(image, (x, 0)); x += image.width
             else:
@@ -277,31 +431,42 @@ def toimg(args, context):
                     x, y = (idx % cols) * w, (idx // cols) * (h + 24)
                     canvas.paste(image.convert("RGB"), (x, y + 24)); draw.text((x + 4, y + 4), str(number), fill="black")
             with io.Staging(target, temp) as stage:
+                if fmt == "tiff" and args.tiff_compression == "group4":
+                    canvas = canvas.convert("1")
                 WRITERS[fmt]["write"](canvas, stage.path, args)
+                problems = _check_exports([(stage.path, canvas.size, 1)])
+                log = _mark_unchecked(stage, target, context, problems)
                 final = stage.publish()
-        if final != target: warnings.append("NAME_TAKEN")
-        for code in warnings: clierr.warn("pdf toimg", code, "image export completed with a warning", "review the exported image")
-        return {"type":"result","command":"toimg","path":str(final),"kind":"image","pages":len(pages),"bytes":final.stat().st_size,"verdict":"warn" if warnings else "ok","warnings":warnings}
-    folder = _output_folder(source, fmt, args.output)
+        return finish(final, "image", len(pages), True, bool(problems), log, expected=stage.target)
+    folder = _output_folder(source, ext, args.output)
+    target_path[0] = folder
+    digits = max(3, len(str(page_count)))
     if args.dry_run:
         zip_target = folder.with_name(folder.name + ".zip") if args.zip else None
-        return {"type":"result","command":"toimg","path":str(folder),"kind":"folder","pages":len(pages),"bytes":0,"verdict":"report","provisional":True,"page_map":[{"page":n+1,"path":str(folder / f"{source.stem}_p{n+1:0{max(3,len(str(page_count)))}d}.{fmt if fmt == 'png' else 'jpg'}")} for n in pages],"zip_path":str(zip_target) if zip_target else None,"warnings":warnings}
+        return {"type":"result","command":"toimg","path":str(folder),"kind":"folder","pages":len(pages),"bytes":0,"verdict":"report","provisional":True,"page_map":[{"page":n+1,"path":str(folder / f"{source.stem}_p{n+1:0{digits}d}.{ext}")} for n in pages],"zip_path":str(zip_target) if zip_target else None,"warnings":warnings}
     folder.parent.mkdir(parents=True, exist_ok=True)
     with io.temp_folder() as temp:
-        io.disk_budget([source], folder, temp, estimate=sum(w*h*4 for w, h in dims))
+        io.disk_budget([source], folder, temp, estimate=sum(w*h*4 for w, h in dims) or None)
         staged = io.create_staging(folder, temp); staged.mkdir()
         try:
-            digits = max(3, len(str(page_count)))
+            written = []
             with open_input(source, context.password or context.owner_password) as doc:
                 for n in pages:
-                    image = _render(doc, doc[n], args)
-                    path = staged / f"{source.stem}_p{n+1:0{digits}d}.{fmt if fmt == 'png' else 'jpg'}"
-                    WRITERS[fmt]["write"](image, path, args)
-                    image.close()
-            final = io.publish(staged, folder)
+                    path = staged / f"{source.stem}_p{n+1:0{digits}d}.{ext}"
+                    done = _emit_page(doc, n, fmt, path, args)
+                    if done:
+                        written.append((path, done[0], 1))
+            problems = _check_exports(written)
+            log = _mark_unchecked(type("Stage", (), {"target": folder})(), folder, context, problems)
+            if problems:
+                # Directory outputs use the same suffix protocol as file outputs.
+                staged = staged.rename(staged.with_name(staged.name + "_UNCHECKED"))
+                final = io.publish(staged, folder.with_name(folder.name + "_UNCHECKED"))
+            else:
+                final = io.publish(staged, folder)
         finally:
             if staged.exists(): shutil.rmtree(staged)
-    if final != folder: warnings.append("NAME_TAKEN")
+    if final != (folder.with_name(folder.name + "_UNCHECKED") if problems else folder): warnings.append("NAME_TAKEN")
     zip_final = None
     if args.zip:
         zpath = final.with_name(final.name + ".zip")
@@ -313,7 +478,11 @@ def toimg(args, context):
             clierr.warn("pdf toimg", "ZIP_FAILED", f"image folder published at {final}; ZIP creation failed: {exc}", "use the published image folder")
     for code in warnings:
         if code != "ZIP_FAILED": clierr.warn("pdf toimg", code, "image export completed with a warning", "review the exported images")
-    return {"type":"result","command":"toimg","path":str(final),"kind":"folder","pages":len(pages),"bytes":sum(x.stat().st_size for x in final.iterdir() if x.is_file()),"verdict":"warn" if warnings else "ok","warnings":warnings,**({"zip_path":str(zip_final)} if zip_final else {})}
+    record = _result(final, "folder", len(pages), warnings, fmt != "svg", **({"zip_path": str(zip_final)} if zip_final else {}))
+    if problems:
+        record["verdict"] = "unchecked"
+        record["log"] = log
+    return record
 
 
 def add_zip_arguments(parser):

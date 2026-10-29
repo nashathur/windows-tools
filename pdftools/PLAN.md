@@ -202,7 +202,7 @@ Three spaces, converted only in `coords.py`:
 
 ### Privacy
 
-- The toolkit never calls a model or web service. If Claude wants a model to describe an image, that is outside the toolkit and follows the CLAUDE.md rule on BMKG material.
+- The toolkit never calls a model or web service. If Claude wants a model to describe an image, that is outside the toolkit.
 - md2pdf: see its section (static HTML, scripts blocked, network blocked).
 - `file:` URLs with a host part (`file://server/share`, UNC paths) are refused everywhere a URL or path comes from document content; they would make Windows contact that server with the user's credentials.
 - LibreOffice runs with macros disabled and link updates off (see office2pdf).
@@ -423,7 +423,7 @@ Start from `size`: big images → downsample; fonts not subset → subset (unemb
 #### Office → PDF (`office2pdf`)
 
 - `soffice.com --headless --norestore --nolockcheck -env:UserInstallation=<Path(profile).as_uri()> --convert-to pdf --outdir <staging dir> <file>`; a fresh profile per run in the run's temp folder, and one staging folder per input (LibreOffice names its output after the input stem).
-- Before launch, write `user\registrymodifications.xcu` in the fresh profile setting macro security to the highest level and link updates to never (exact keys checked in phase 6 against LibreOffice 26.8; test with a .docx that has a macro and an external link).
+- Before launch, write `user\registrymodifications.xcu` in the fresh profile setting macro security to the highest level and link updates to never (exact keys checked in phase 6 against LibreOffice 26.8). Tripwire tests (.docx cannot hold macros): an `.odt` whose document-open event runs a Basic macro that writes a marker file, and a document with an external link to a local file; the conversion succeeds, no marker file appears, and the linked content is not refreshed.
 - Success = exit 0 and a new PDF that pymupdf opens with ≥ 1 page; else `TOOL_FAILED`. Ignore the harmless "Could not find platform independent libraries" line.
 
 #### PDF → Word (`toword`, layout mode)
@@ -446,7 +446,7 @@ Port of the generic parts of `D:\GFD NS-353B\practice\render_pdf.js` to `C:\Tool
 
 `check --source FILE.md` (run automatically by md2pdf):
 - `md2pdf.js --tokens <json>` emits the ordered blocks from the marked lexer: `{type: heading|paragraph|list_item|table_cell|code, section, text}` (math removed, code kept literally).
-- Python aligns the block word sequence with the PDF word sequence in order (occurrence-aware). A block with ≥ 50 % of its words missing → invariant failure (exit 3); a run of 3+ consecutive missing words → `WARN` with the section.
+- Python aligns the block word sequence with the PDF word sequence in order (occurrence-aware). A block with ≥ 50 % of its words missing → invariant failure: inside md2pdf that publishes `_UNCHECKED` (exit 3); a standalone `check --source` reports it as a finding with verdict `warn` and exit 0 (Exit codes: `check` finding differences). A run of 3+ consecutive missing words → `WARN` with the section.
 - Raw TeX in the PDF text (`\frac`, `\partial`, `^{`, `_{`) outside code-derived spans → invariant failure.
 - Geometry warnings only: text under 6 pt; a heading in the bottom 15 % with nothing after it; a block cut at the bottom margin and continued (tables across pages and blocks taller than a page allowed). Image count: warning only.
 
@@ -568,6 +568,9 @@ pikepdf wraps qpdf, so the two count as one opinion; independent cross-checks us
 
 ## Build process
 
-- Per phase: Codex (role `build`) in a worktree from this plan; Claude reads the diff and reruns the tests; one Codex review (role `review`) of the phase; findings in the CLAUDE.md Building format; commit after the user's OK.
+- Each wave runs in its own Claude Code session, started when the previous wave is committed; that session coordinates the wave's phases and ends when they are committed.
+- Within a wave, start every phase at once, split by file ownership: the parts of a phase that touch only its own files build in parallel from the start; only the parts that extend another phase's files (e.g. phase 6's `toimg` formats and `check --source`) wait until that phase is committed.
+- Each phase review is done twice and blind: Claude's own review and a Codex review (role `review`). Claude then compares them (findings both caught, only one caught, contradictions), verifies each finding against the code, and reports the comparison with the findings. When Codex is unavailable, its review waits; a Claude review never stands in for it.
+- Per phase: Codex (role `build`) in a worktree from this plan; Claude reads the diff and reruns the tests; one Codex review (role `review`) of the phase; findings in the CLAUDE.md Reviews format; commit after the user's OK.
 - A builder that finds the plan wrong or silent on something stops and reports it instead of guessing; Claude settles it and updates this plan.
 - `SKILL.md` updated at the end of each phase: that phase's commands, the rules (the verdict is the verification: no hand re-checks after `ok`, JSON jobs for anything beyond simple arguments, `thumb` only for `unchecked`/`failed` or on request, background for estimates over 90 s), common recipes; per-command options from `pdf.cmd <cmd> --help`. Form filling → `anthropic-skills:pdf`; PDF → Markdown → the `pdf2md` skill.

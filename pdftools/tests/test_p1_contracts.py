@@ -143,6 +143,16 @@ class ContractsTest(unittest.TestCase):
             path = stage.path
         self.assertFalse(path.exists())
 
+    def test_directory_publish_across_folders_copies_tree(self):
+        staged = self.root / "staged-folder"
+        staged.mkdir()
+        (staged / "inside.txt").write_text("payload", encoding="utf-8")
+        target = self.root / "destination" / "published-folder"
+        target.parent.mkdir()
+        published = io.publish(staged, target)
+        self.assertEqual((published / "inside.txt").read_text(encoding="utf-8"), "payload")
+        self.assertFalse(staged.exists())
+
     def test_temp_folder_is_removed(self):
         with io.temp_folder() as folder:
             self.assertTrue(folder.is_dir())
@@ -172,6 +182,20 @@ class ContractsTest(unittest.TestCase):
         stale.mkdir()
         os.utime(stale, (0, 0))
         self.assertIn(stale, io.sweep_temp(now=5000, parent=parent))
+
+    def test_sweeps_skip_a_leftover_that_cannot_be_deleted(self):
+        parent = self.root / "pdftools-temp"
+        parent.mkdir()
+        held = parent / "99999999-deadbeef"
+        held.mkdir()
+        os.utime(held, (0, 0))
+        part = self.root / ".out.99999999-deadbeef.part.pdf"
+        part.mkdir()
+        os.utime(part, (0, 0))
+        with patch.object(io.shutil, "rmtree", side_effect=PermissionError("in use")):
+            self.assertEqual(io.sweep_temp(now=5000, parent=parent), [])
+            self.assertEqual(io.sweep_stale(self.root, now=5000), [])
+        self.assertTrue(held.exists())
 
     def test_disk_budget_checks_both_destinations(self):
         source = self.root / "source.pdf"
