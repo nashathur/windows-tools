@@ -308,11 +308,11 @@ class Phase4CommandsTest(unittest.TestCase):
         target.unlink();race_source=folder/"race-source.pdf";race_source.write_bytes(self.fx["base"].read_bytes())
         race_target=folder/"race-target.pdf"
         from pdftools.commands import p4_files
-        real_rename=p4_files.os.rename
+        real_rename=p4_files.rename_exclusive
         def create_race(src,dst):
             if Path(dst)==race_target and not race_target.exists(): race_target.write_bytes(b"racing process file")
             return real_rename(src,dst)
-        with patch("pdftools.commands.p4_files.os.rename",side_effect=create_race):
+        with patch("pdftools.commands.p4_files.rename_exclusive",side_effect=create_race):
             code,record,err=self.run_cli("rename",race_source,"--title","race-target","--apply")
         self.assertNotEqual(code,0);self.assertEqual(race_target.read_bytes(),b"racing process file")
 

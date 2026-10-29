@@ -11,6 +11,7 @@ import pymupdf
 
 from ..check import OperationResult, Placement
 from ..errors import PdfError
+from ..io import rename_exclusive
 from ..pipeline import open_input, write_pdf
 from ..registry import command
 
@@ -129,7 +130,7 @@ def rename(args,context):
                 raise PdfError("BAD_INPUT",f"file identity changed: {current.name}","restore only files whose size and SHA-256 match the manifest")
             if old.exists() and old.resolve()!=current.resolve():
                 raise PdfError("NAME_TAKEN",f"original name is now taken: {old.name}","move the conflicting file, then retry --undo")
-            os.rename(current,old);row["state"]="restored";_manifest_write(manifest,data);restored.append(str(old))
+            rename_exclusive(current,old) if current!=old else None;row["state"]="restored";_manifest_write(manifest,data);restored.append(str(old))
         return {"type":"report","command":"rename","input":str(manifest),"verdict":"report","data":{"restored":restored}}
     if args.file is None:raise PdfError("BAD_ARG","rename requires a file or folder unless --undo is used","provide a PDF path")
     root=args.file.resolve()
@@ -159,11 +160,11 @@ def rename(args,context):
     try:
         for i,row in enumerate(plan):
             old=root.parent/row["old"];temp=root.parent/row["temp"]
-            os.rename(old,temp);row["state"]="temp";_manifest_write(manifest,data)
+            rename_exclusive(old,temp);row["state"]="temp";_manifest_write(manifest,data)
         for row in plan:
             temp=root.parent/row["temp"];new=root.parent/row["new"]
             if new.exists():raise PdfError("NAME_TAKEN",f"target name is taken: {new.name}","choose another title or resolve the collision")
-            os.rename(temp,new);row["state"]="new";_manifest_write(manifest,data)
+            rename_exclusive(temp,new);row["state"]="new";_manifest_write(manifest,data)
     except Exception:
         raise
     return {"type":"report","command":"rename","input":str(root),"verdict":"report","data":{"renamed":[r["new"] for r in plan],"manifest":str(manifest)}}

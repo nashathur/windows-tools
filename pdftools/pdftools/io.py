@@ -1,6 +1,9 @@
+import ctypes
+import errno
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 import uuid
@@ -98,6 +101,58 @@ def temp_folder():
         shutil.rmtree(folder, ignore_errors=True)
 
 
+RENAME_REPLACES = os.name != "nt"  # POSIX os.rename silently replaces an existing target
+try:
+    _renameat2 = ctypes.CDLL(None, use_errno=True).renameat2 if sys.platform.startswith("linux") else None
+except (OSError, AttributeError):
+    _renameat2 = None
+
+
+def _rename_noreplace(src, dst):
+    """Linux renameat2(RENAME_NOREPLACE): one atomic move; False when the system or filesystem lacks it."""
+    if _renameat2 is None:
+        return False
+    if _renameat2(-100, os.fsencode(src), -100, os.fsencode(dst), 1) == 0:  # AT_FDCWD, RENAME_NOREPLACE
+        return True
+    code = ctypes.get_errno()
+    if code in (errno.EINVAL, errno.ENOSYS, errno.ENOTSUP):
+        return False
+    raise OSError(code, os.strerror(code), str(src), None, str(dst))
+
+
+def rename_exclusive(src, dst):
+    """Move src to dst, raising FileExistsError if dst exists."""
+    if not RENAME_REPLACES:
+        os.rename(src, dst)
+        return
+    if _rename_noreplace(src, dst):
+        return
+    # fallback without an atomic no-replace move: a name taken by another process is never replaced,
+    # but a source swapped between link and unlink, or a reservation deleted by another process, is not guarded
+    folder = os.path.isdir(src)
+    if folder:
+        os.mkdir(dst)  # reserves the name; rename then replaces only this empty folder
+    else:
+        try:
+            os.link(src, dst)
+        except FileExistsError:
+            raise
+        except OSError:  # filesystem without hard links: reserve the name with an empty file
+            os.close(os.open(dst, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        else:
+            try:
+                os.unlink(src)
+            except OSError:
+                os.unlink(dst)
+                raise
+            return
+    try:
+        os.replace(src, dst)  # replaces only the reservation made above
+    except OSError:
+        (os.rmdir if folder else os.unlink)(dst)
+        raise
+
+
 def publish(staged, target, *, retry_seconds=2.0, sleep=time.sleep):
     staged, target = Path(staged), Path(target)
     deadline = time.monotonic() + retry_seconds
@@ -107,11 +162,11 @@ def publish(staged, target, *, retry_seconds=2.0, sleep=time.sleep):
         copy = None
         try:
             if staged.parent.resolve() == candidate.parent.resolve():
-                os.rename(staged, candidate)
+                rename_exclusive(staged, candidate)
             else:
                 copy = candidate.with_name(f".{os.getpid()}-{uuid.uuid4().hex[:8]}.part{candidate.suffix}")
                 shutil.copy2(staged, copy)
-                os.rename(copy, candidate)
+                rename_exclusive(copy, candidate)
                 staged.unlink()
             return candidate
         except FileExistsError:

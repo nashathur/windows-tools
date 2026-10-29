@@ -104,16 +104,31 @@ class ContractsTest(unittest.TestCase):
     def test_locked_target_retries_then_publishes(self):
         staged, target = self.root / "stage", self.root / "out"
         staged.write_text("x")
-        real = io.os.rename
+        real = io.rename_exclusive
         calls = []
         def rename(a, b):
             calls.append(1)
             if len(calls) == 1:
                 raise PermissionError
             return real(a, b)
-        with patch.object(io.os, "rename", rename):
+        with patch.object(io, "rename_exclusive", rename):
             io.publish(staged, target, sleep=lambda _: None)
         self.assertEqual(len(calls), 2)
+
+    def test_posix_publish_never_replaces(self):
+        target = self.root / "keep.pdf"
+        target.write_text("existing")
+        for name, link in (("a", io.os.link), ("b", PermissionError)):  # hard link, then the no-hard-link fallback
+            staged = self.root / f"stage-{name}"
+            staged.write_text(name)
+            with patch.object(io, "RENAME_REPLACES", True), patch.object(io, "_renameat2", None), patch.object(io.os, "link", side_effect=link):
+                published = io.publish(staged, target)
+            self.assertNotEqual(published, target)
+            self.assertEqual(published.read_text(), name)
+            self.assertFalse(staged.exists())
+        self.assertEqual(target.read_text(), "existing")
+        with patch.object(io, "RENAME_REPLACES", True), self.assertRaises(FileExistsError):
+            io.rename_exclusive(published, target)
 
     def test_staging_path_length_and_copy_publish(self):
         temp = self.root / "t"
@@ -151,7 +166,7 @@ class ContractsTest(unittest.TestCase):
     def test_locked_target_eventually_errors(self):
         staged = self.root / "stage"
         staged.write_text("x")
-        with patch.object(io.os, "rename", side_effect=PermissionError), patch.object(io.time, "monotonic", side_effect=[0, 0, 0, 3]):
+        with patch.object(io, "rename_exclusive", side_effect=PermissionError), patch.object(io.time, "monotonic", side_effect=[0, 0, 0, 3]):
             with self.assertRaises(PdfError) as caught:
                 io.publish(staged, self.root / "out", retry_seconds=2, sleep=lambda _: None)
         self.assertEqual(caught.exception.code, "LOCKED")
