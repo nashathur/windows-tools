@@ -97,7 +97,7 @@ def _image(path, secret_env=()):
             with Image.open(path) as probe:
                 detected_eps = probe.format == "EPS"
         if detected_eps:
-            gs = shutil.which("gswin64c") or shutil.which("gswin32c") or shutil.which("gs")
+            gs = tools.find_tool("ghostscript")
             if not gs:
                 raise PdfError("NOT_FOUND", "Ghostscript is required to read EPS", "install Ghostscript")
             dpi = _eps_dpi(path)
@@ -934,7 +934,7 @@ def selftest_write(source, output):
         doc.new_page(width=100, height=100).insert_image(pymupdf.Rect(10, 10, 60, 50), stream=buffer.getvalue())
         doc.save(sample)
     context = SimpleNamespace(password=None, owner_password=None, secret_env=(), exit_code=0)
-    record = images(SimpleNamespace(file=sample, output=str(work / "out") + "\\", min_px=0, dry_run=False), context)
+    record = images(SimpleNamespace(file=sample, output=str(work / "out") + os.sep, min_px=0, dry_run=False), context)
     folder = Path(record["path"])
     pngs = sorted(folder.glob("*.png"))
     if record["verdict"] != "ok" or len(pngs) != 1:

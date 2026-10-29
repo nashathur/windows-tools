@@ -21,6 +21,14 @@ def default_name(source, command, suffix=None, extension=None):
     return source.with_name(source.stem + (suffix if suffix is not None else "_" + command) + ext)
 
 
+def folder_marker(output, raw):
+    """`-o` text ending in `/` or `\\` means a folder on every platform. argparse's `type=Path` drops the
+    trailing separator, so re-apply it from the raw text, as the native separator (POSIX reads `\\` as a name)."""
+    if output is None or not isinstance(raw, str) or not raw.endswith(("/", "\\")):
+        return output
+    return str(output).rstrip("/\\") + os.sep
+
+
 def resolve_output(source, command, output=None, suffix=None, extension=None, multi=False):
     default = default_name(source, command, suffix, extension)
     if output is None:

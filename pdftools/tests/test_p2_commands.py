@@ -116,8 +116,8 @@ class Phase2CommandTest(unittest.TestCase):
         record = json.loads(out.getvalue())
         self.assertEqual(code, 0)
         self.assertIn("pymupdf", record["libraries"])
-        self.assertIn("msedge", record["tools"])
-        self.assertTrue(record["tools"]["msedge"]["path"])
+        self.assertNotEqual(record["tools"]["browser"]["path"], "absent")
+        self.assertNotEqual(record["tools"]["ghostscript"]["path"], "absent")
 
     def test_selftest_finds_future_format_writer_in_command_module(self):
         def run(args, context):

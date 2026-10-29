@@ -9,17 +9,14 @@ import pymupdf
 from PIL import Image
 import clierr
 
+from .. import tools
 from ..registry import command, commands_by_phase, output_formats
 
-TOOLS = {
-    "gswin64c": ["-version"], "qpdf": ["--version"], "jbig2": ["--version"],
+TOOLS = {  # keys in tools.TOOL_CANDIDATES resolve through tools.find_tool, the rest through PATH
+    "ghostscript": ["-version"], "qpdf": ["--version"], "jbig2": ["--version"],
     "pngquant": ["--version"], "tesseract": ["--version"], "ocrmypdf": ["--version"],
     "img2pdf": ["--version"], "soffice": ["--version"], "pandoc": ["--version"],
-    "node": ["--version"], "msedge": ["--version"],
-}
-TOOL_PATHS = {
-    "soffice": Path(r"C:\Program Files\LibreOffice\program\soffice.com"),
-    "msedge": Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+    "node": ["--version"], "browser": ["--version"],
 }
 LIBRARIES = ("pymupdf", "pikepdf", "PIL", "numpy", "cv2", "pillow_heif", "pillow_avif", "pdf2docx", "docx")
 
@@ -44,10 +41,10 @@ def _version(path, arguments):
 
 
 def _capabilities():
-    tools = {}
+    found = {}
     for name, args in TOOLS.items():
-        path = shutil.which(name) or (str(TOOL_PATHS[name]) if name in TOOL_PATHS and TOOL_PATHS[name].is_file() else None)
-        tools[name] = {"path": path or "absent", "version": _version(path, args) if path else "absent"}
+        path = tools.find_tool(name) if name in tools.TOOL_CANDIDATES else shutil.which(name)
+        found[name] = {"path": path or "absent", "version": _version(path, args) if path else "absent"}
     libraries = {}
     for name in LIBRARIES:
         try:
@@ -56,12 +53,12 @@ def _capabilities():
         except Exception as exc:
             libraries[name] = f"absent: {exc}"
     node_modules = Path(__file__).resolve().parents[2] / "node_modules"
-    for name in ("puppeteer-core", "katex", "marked"):  # md2pdf's Node packages, next to the Edge version
+    for name in ("puppeteer-core", "katex", "marked"):  # md2pdf's Node packages, next to the browser version
         try:
             libraries[name] = json.loads((node_modules / name / "package.json").read_text(encoding="utf-8"))["version"]
         except (OSError, ValueError, KeyError) as exc:
             libraries[name] = f"absent: {exc}"
-    return {"tools": tools, "libraries": libraries, "formats": output_formats()}
+    return {"tools": found, "libraries": libraries, "formats": output_formats()}
 
 
 def _format_writer(kind):

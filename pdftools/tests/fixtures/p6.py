@@ -5,6 +5,8 @@ import pymupdf
 from PIL import Image, ImageDraw, ImageFont
 from docx import Document
 
+from tests.fixtures import sans_font
+
 
 def build_fixtures(folder):
     folder = Path(folder)
@@ -28,7 +30,7 @@ def build_fixtures(folder):
     im = Image.new("RGBA", (400, 250), (255, 255, 255, 255))
     draw = ImageDraw.Draw(im)
     draw.rectangle((10, 10, 389, 239), outline=(20, 70, 150, 255), width=5)
-    font = ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", 34)
+    font = ImageFont.truetype(sans_font(), 34)
     draw.text((30, 80), "Weather 2026", fill=(0, 0, 0, 255), font=font)
     im.save(image, dpi=(300, 300)); im.close()
     with pymupdf.open(pdf) as doc:

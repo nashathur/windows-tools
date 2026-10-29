@@ -17,8 +17,9 @@ sys.path.insert(0, str(ROOT.parent / "common"))
 
 import pymupdf
 from PIL import Image
-from pdftools import cli
+from pdftools import cli, tools
 from pdftools.commands import p2_selftest, p3c_helpers, p6_convert
+from tests.fixtures import sans_font
 from tests.fixtures.p6 import (PASSWORD, build_encrypted_pdf, build_fixtures, build_markdown_fixtures,
                                build_office_tripwires)
 
@@ -26,28 +27,16 @@ TOOL_USAGE = {}
 
 
 def tool_info(name):
-    candidates = {
-        "soffice": ["soffice"],
-        "edge": [r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"],
-        "node": ["node"], "ghostscript": ["gswin64c"], "tesseract": ["tesseract"],
-        "pdf2docx": ["python"],
-    }[name]
-    if name == "edge":
-        path = candidates[0] if Path(candidates[0]).is_file() else None
-    elif name == "ghostscript":
-        path = shutil.which("gswin64c") or shutil.which("gswin64c.exe")
-    elif name == "soffice":
-        fixed = Path(r"C:\Program Files\LibreOffice\program\soffice.com")
-        path = str(fixed) if fixed.is_file() else shutil.which("soffice")
-    else:
-        path = shutil.which(candidates[0])
     if name == "pdf2docx":
+        from importlib.metadata import PackageNotFoundError, version
         try:
-            proc = subprocess.run([r"C:\Users\thurs\miniconda3\Scripts\conda.exe", "run", "-n", "dev", "python", "-c", "from importlib.metadata import version; print(version('pdf2docx'))"], capture_output=True, text=True, timeout=30)
-            return ("pdf2docx", proc.stdout.strip().splitlines()[-1]) if proc.returncode == 0 else (None, proc.stderr.strip())
-        except Exception as exc:
-            return None, str(exc)
-    if name == "edge" and path:
+            return "pdf2docx", version("pdf2docx")
+        except PackageNotFoundError as exc:
+            return None, f"pdf2docx is not installed: {exc}"
+    path = tools.find_tool(name) if name in tools.TOOL_CANDIDATES else shutil.which(name)
+    if not path:
+        return None, f"{name} executable is absent"
+    if Path(path).name.lower() == "msedge.exe":
         command = "(Get-Item -LiteralPath '" + path.replace("'", "''") + "').VersionInfo.ProductVersion"
         try:
             proc = subprocess.run(["powershell.exe", "-NoProfile", "-Command", command], capture_output=True, text=True, timeout=8)
@@ -55,9 +44,7 @@ def tool_info(name):
             return path, value[0] if value else f"exit {proc.returncode}"
         except Exception as exc:
             return None, str(exc)
-    if not path:
-        return None, f"{name} executable is absent"
-    version_args = {"soffice": ["--version"], "node": ["--version"], "ghostscript": ["-version"], "tesseract": ["--version"]}.get(name, [])
+    version_args = ["-version"] if name == "ghostscript" else ["--version"]
     try:
         proc = subprocess.run([path, *version_args], capture_output=True, text=True, timeout=8)
         value = (proc.stdout or proc.stderr).strip().splitlines()
@@ -202,7 +189,7 @@ class Phase6Tests(unittest.TestCase):
 
     def require_markdown_tools(self):
         self.require_tool("node")
-        self.require_tool("edge")
+        self.require_tool("browser")
 
     def make_pdf(self, name, pages):
         """pages: list of lists of (x, y, text, fontsize) -> hand-made PDF (no toolkit code)."""
@@ -222,12 +209,15 @@ class Phase6Tests(unittest.TestCase):
 
     @contextlib.contextmanager
     def junction(self, link, target):
-        proc = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True)
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        if os.name != "nt":  # POSIX has no junctions; a directory symlink is the same escape
+            os.symlink(target, link, target_is_directory=True)
+        else:
+            proc = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         try:
             yield
         finally:
-            os.rmdir(link)  # removes the junction only, never what it points to
+            (os.unlink if os.name != "nt" else os.rmdir)(link)  # removes the link only, never what it points to
 
     # ---- txt2pdf -------------------------------------------------------------------------------
 
@@ -639,7 +629,7 @@ class Phase6Tests(unittest.TestCase):
         self.assertNotIn("--no-sandbox", (ROOT / "md2pdf.js").read_text(encoding="utf-8"))
 
     def test_md2pdf_missing_status_file_fails_closed(self):
-        with mock.patch("shutil.which", return_value="node.exe"), mock.patch.object(p6_convert, "_edge_path", return_value="edge.exe"), \
+        with mock.patch("shutil.which", return_value="node.exe"), mock.patch.object(p6_convert.tools, "find_tool", return_value="edge.exe"), \
                 mock.patch.object(p6_convert.tools, "run_tool", return_value=subprocess.CompletedProcess([], 0, "", "")):
             code, rows, _ = self.run_cli(["md2pdf", self.fixtures["markdown"], "-o", self.root / "missing-status.pdf"])
         self.assertEqual((code, rows[0]["code"]), (1, "TOOL_FAILED"), rows)
@@ -683,7 +673,7 @@ class Phase6Tests(unittest.TestCase):
         pdf = self.root / "greek.pdf"
         doc = pymupdf.open()
         page = doc.new_page()
-        page.insert_font(fontname="TestFont", fontfile=r"C:\Windows\Fonts\arial.ttf")  # base-14 fonts lack Greek
+        page.insert_font(fontname="TestFont", fontfile=sans_font())  # base-14 fonts lack Greek
         page.insert_text((50, 100), "α β γ", fontname="TestFont", fontsize=12)
         doc.save(pdf)
         doc.close()

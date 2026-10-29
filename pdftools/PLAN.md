@@ -127,7 +127,7 @@ The canonical agent interface; shorthand is a convenience for simple cases.
 | `compare A B` | `<A stem>_vs_<B stem>.pdf` beside B |
 | `text`, `json`, `html` | stdout (bounded) unless `-o` |
 
-- `-o PATH`: an existing folder, or a path ending in `/` or `\`, means "default name in that folder"; otherwise the exact file path. Multi-file outputs require a folder. An exact path that exists gets `_2` with `WARN NAME_TAKEN`.
+- `-o PATH`: an existing folder, or a path ending in `/` or `\` (on every platform and for every command: `cli.main` reads the raw `-o` text, from argv or the job, and re-applies the marker as the native separator after argparse), means "default name in that folder"; otherwise the exact file path. Multi-file outputs require a folder. An exact path that exists gets `_2` with `WARN NAME_TAKEN`.
 - Collisions: `_2`, `_3`, ... resolved at publish time; never overwrite.
 - Never modify an input file. The one exception is `rename --apply` (names only, undoable).
 
@@ -179,9 +179,9 @@ Follows the global one-line error rule in `C:\Users\thurs\.claude\CLAUDE.md` and
 ### External tools
 
 - Run through `tools.py`: argv list (never a shell), cwd in the run's temp folder, timeout, stdout/stderr captured.
-- Timeouts: LibreOffice 120 s per file; Ghostscript max(120 s, 30 s/page); ocrmypdf max(120 s, 60 s/page); pdf2docx max(120 s, 20 s/page) (run in a child Python process so it can be stopped); Edge/puppeteer 120 s.
+- Timeouts: LibreOffice 120 s per file; Ghostscript max(120 s, 30 s/page); ocrmypdf max(120 s, 60 s/page); pdf2docx max(120 s, 20 s/page) (run in a child Python process so it can be stopped); browser/puppeteer 120 s.
 - On timeout or Ctrl-C, kill only the launched process tree (psutil), then clean its temp files.
-- Tool paths resolved inside the dev env (`shutil.which`): `gswin64c.exe`, `tesseract.exe` (`C:\Users\thurs\miniconda3\envs\dev\Library\bin\`), `jbig2.exe`, `pngquant.exe`; `soffice.com` from `C:\Program Files\LibreOffice\program\`; Edge from `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`. `selftest --caps` reports each with its version.
+- Tool paths: `tools.find_tool` resolves the three tools with platform-specific names, first found wins: `ghostscript` = `gswin64c`, `gswin32c`, `gs` on PATH; `soffice` = `C:\Program Files\LibreOffice\program\soffice.com` (Windows), then `soffice` on PATH; `browser` = `msedge` on PATH, `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe` (Windows), then `google-chrome`, `chromium`, `chromium-browser` on PATH. Every other tool (`tesseract`, `ocrmypdf`, `jbig2`, `pngquant`, `node`, ...) is `shutil.which` inside the dev env (Windows: `envs\dev\Library\bin\`; Linux: `envs/dev/bin/`). `selftest --caps` reports each with its version, the three under those keys.
 
 ### Coordinates
 
@@ -400,7 +400,7 @@ Start from `size`: big images → downsample; fonts not subset → subset (unemb
 | `max` | `rewrite_images(dpi_threshold=110, dpi_target=72, quality=50, ...same flags)` | resolution 72 | `-O3` |
 
 - `rewrite_images` resets both dpi values to 0 when `dpi_threshold` is falsy and requires threshold > target, so both are always passed. With `--include-graphics`, `lossless=True, bitonal=True` are added.
-- Ghostscript argv (no presets, so nothing else changes): `gswin64c -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=pdfwrite -dCompatibilityLevel=1.7 -dAutoRotatePages=/None -dDetectDuplicateImages=true -dCompressFonts=true -dSubsetFonts=true -dColorConversionStrategy=/LeaveColorUnchanged -dDownsampleColorImages=true -dDownsampleGrayImages=true -dDownsampleMonoImages=false -dColorImageResolution=<r> -dGrayImageResolution=<r> -dColorImageDownsampleThreshold=1.5 -dGrayImageDownsampleThreshold=1.5 -dAutoFilterColorImages=true -dAutoFilterGrayImages=true -o <staged> <input>`.
+- Ghostscript argv (no presets, so nothing else changes): `<ghostscript> -dSAFER -dBATCH -dNOPAUSE -dQUIET -sDEVICE=pdfwrite -dCompatibilityLevel=1.7 -dAutoRotatePages=/None -dDetectDuplicateImages=true -dCompressFonts=true -dSubsetFonts=true -dColorConversionStrategy=/LeaveColorUnchanged -dDownsampleColorImages=true -dDownsampleGrayImages=true -dDownsampleMonoImages=false -dColorImageResolution=<r> -dGrayImageResolution=<r> -dColorImageDownsampleThreshold=1.5 -dGrayImageDownsampleThreshold=1.5 -dAutoFilterColorImages=true -dAutoFilterGrayImages=true -o <staged> <input>`.
 - Scanned candidate (pages that are a single image with no text or OCR text only): `ocrmypdf --ocr-engine none --skip-text --output-type pdf -O<n>`; jbig2enc lossless; pngquant runs at `-O2`/`-O3`, so those two are used only with `--include-graphics` (otherwise `-O1`).
 - Ghostscript and the scanned candidate are skipped for PDFs with form fields, links, annotations or signatures (`WARN SKIPPED_GS` with the reason).
 - Selection: across all attempted candidates, keep the smallest whose check passes. If none is smaller than the input → `NO_GAIN` (exit 0, path = input). `--target SIZE`: try levels in order, stop at the first passing candidate ≤ SIZE; otherwise keep the smallest passing one with `WARN TARGET_MISSED` and the gap.
@@ -422,7 +422,7 @@ Start from `size`: big images → downsample; fonts not subset → subset (unemb
 
 #### Office → PDF (`office2pdf`)
 
-- `soffice.com --headless --norestore --nolockcheck -env:UserInstallation=<Path(profile).as_uri()> --convert-to pdf --outdir <staging dir> <file>`; a fresh profile per run in the run's temp folder, and one staging folder per input (LibreOffice names its output after the input stem).
+- `<soffice> --headless --norestore --nolockcheck -env:UserInstallation=<Path(profile).as_uri()> --convert-to pdf --outdir <staging dir> <file>`; a fresh profile per run in the run's temp folder, and one staging folder per input (LibreOffice names its output after the input stem).
 - Before launch, write `user\registrymodifications.xcu` in the fresh profile setting macro security to the highest level and link updates to never (exact keys checked in phase 6 against LibreOffice 26.8). Tripwire tests (.docx cannot hold macros): an `.odt` whose document-open event runs a Basic macro that writes a marker file, and a document with an external link to a local file; the conversion succeeds, no marker file appears, and the linked content is not refreshed.
 - Success = exit 0 and a new PDF that pymupdf opens with ≥ 1 page; else `TOOL_FAILED`. Ignore the harmless "Could not find platform independent libraries" line.
 
@@ -438,11 +438,11 @@ Port of the generic parts of `D:\GFD NS-353B\practice\render_pdf.js` to `C:\Tool
 
 - Render in Node: marked + KaTeX produce static HTML (no script in the page). Math rules: `$$…$$` display; inline `$…$` needs a non-space after the opening and before the closing `$`, and the closing `$` not followed by a digit; `\$` is a literal dollar; code spans and blocks are never parsed for math.
 - The HTML gets `<base href="<Markdown folder as file URI>">` and `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file:; style-src 'unsafe-inline' file:; font-src file:; script-src 'none'">`. Raw HTML from the Markdown stays but cannot run scripts or reach the network.
-- puppeteer-core (pinned version, `package-lock.json` kept) drives the installed Edge. Request interception allows only `file:` URLs without a host whose canonical path is the generated HTML file, inside the Markdown folder, or inside `node_modules\katex`; everything else is aborted (`WARN REMOTE_RESOURCE`).
+- puppeteer-core (pinned version, `package-lock.json` kept) drives the installed browser (Edge on Windows, Chrome or Chromium on Linux). Request interception allows only `file:` URLs without a host whose canonical path is the generated HTML file, inside the Markdown folder, or inside `node_modules\katex`; everything else is aborted (`WARN REMOTE_RESOURCE`).
 - Sequence on one page: `emulateMediaType('print')` → viewport at A4 printable width → `page.evaluate` waits for `document.fonts.ready` and images (60 s bound) → measures and shrinks wide display equations (flush left, then scale) → `page.pdf({format: 'A4', preferCSSPageSize: true, printBackground: true})` → status read from the same page. Confirm in phase 6 that `page.evaluate` works under `script-src 'none'`; if not, use `page.setBypassCSP(true)` with interception as the only network barrier.
 - CSS `md2pdf.css`: A4, 20 mm margins, `break-inside: avoid` on display math, figures, table rows; headings `break-after: avoid`.
 - Outcome: KaTeX errors > 0 or failed local images → exit 3 (`_UNCHECKED`); equations shrunk below 70 % → `WARN`.
-- `selftest --caps` records the Edge version next to the pinned puppeteer-core version.
+- `selftest --caps` records the browser version next to the pinned puppeteer-core version.
 
 `check --source FILE.md` (run automatically by md2pdf):
 - `md2pdf.js --tokens <json>` emits the ordered blocks from the marked lexer: `{type: heading|paragraph|list_item|table_cell|code, section, text}` (math removed, code kept literally).
@@ -555,7 +555,7 @@ pikepdf wraps qpdf, so the two count as one opinion; independent cross-checks us
 - Layout: `tests\test_p<phase>_*.py` (unittest, discovered by `unittest discover -s pdftools\tests`); fixtures from `tests\fixtures\p<phase>.py`, built into a temp folder or `tests\fixtures\out\` (`make_fixtures.py [folder] [--bench]`; the 500-page fixture only with `--bench`).
 - Unit cases (no external tools, whole suite under 60 s): contracts, parsers, job loader, naming, staging/publishing (two processes racing for one name; locked target retry), secrets redaction, encryption matrix, coordinates, recipe parsing, check measurements.
 - Independent assertions: outputs are inspected with a different engine where possible (pikepdf/pypdf for pages, rotation, boxes, metadata, encryption, bookmarks; Pillow for images), not only through `check`.
-- Integration cases (LibreOffice, Edge/puppeteer, Ghostscript, ocrmypdf, tesseract): on this PC they must run; a skip is allowed only when the tool is absent and prints `SKIP <tool>: <reason>`.
+- Integration cases (LibreOffice, browser/puppeteer, Ghostscript, ocrmypdf, tesseract): on this PC they must run; a skip is allowed only when the tool is absent and prints `SKIP <tool>: <reason>`.
 - Security tests (secrets, encryption, signatures, sanitize, redact) are never skippable.
 - Each phase adds its cases; standing cases: collision `_2`, inputs unchanged by hash, one ERROR line per code, quiet output, JSON Lines parse with a damaged fixture, bounded output, `--dry-run` creates no output, path with spaces and non-ASCII.
 - `selftest`: imports, one render, one write per shipped format, presence and version of each external tool; under 45 s; prints only failures.

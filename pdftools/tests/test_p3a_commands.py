@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT.parent / "common"))
 import pymupdf
 
 from pdftools import cli
+from tests.fixtures import sans_font
 from tests.fixtures.p3a import build_fixtures
 
 
@@ -237,7 +238,7 @@ class Phase3aCommandsTest(unittest.TestCase):
         font_pdf = self.root / "embedded-font.pdf"
         doc = pymupdf.open()
         page = doc.new_page()
-        page.insert_font(fontname="TestFont", fontfile=r"C:\Windows\Fonts\arial.ttf")
+        page.insert_font(fontname="TestFont", fontfile=sans_font())
         page.insert_text((40, 60), "Embedded font stream", fontname="TestFont")
         doc.save(font_pdf)
         doc.close()

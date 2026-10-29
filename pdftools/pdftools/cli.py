@@ -8,6 +8,7 @@ from pathlib import Path
 
 import clierr
 
+from . import io
 from .errors import BadArg, library_warnings
 from .registry import discover
 from .secrets import SecretStore, strip_one_newline
@@ -218,6 +219,17 @@ def prune_reports(root, keep=50):
         old.unlink(missing_ok=True)
 
 
+def _raw_output(argv):
+    """The `-o` text as typed (argparse keeps the last one), before `type=Path` drops a trailing separator."""
+    raw = None
+    for index, token in enumerate(map(str, argv)):
+        if token in ("-o", "--output") and index + 1 < len(argv):
+            raw = str(argv[index + 1])
+        elif token.startswith("--output="):
+            raw = token.split("=", 1)[1]
+    return raw
+
+
 def main(argv=None):
     argsv = list(sys.argv[1:] if argv is None else argv)
     warnings.filterwarnings("default" if "-v" in argsv else "ignore")
@@ -255,8 +267,10 @@ def main(argv=None):
             args.verbose = global_flags["-v"]
             args.dry_run = global_flags["--dry-run"]
             args.stdout = global_flags["--stdout"]
+            raw_output = next((step["output"] for step in job.get("steps", [])[:1] if "output" in step), job.get("output"))
         else:
             args = build_parser(commands).parse_args(argsv)
+            raw_output = _raw_output(argsv)
             if getattr(args, "file", None):
                 args.file = Path(args.file).resolve()
             if password is None and getattr(args, "password_file", None):
@@ -268,6 +282,8 @@ def main(argv=None):
             if store.owner_password is None and getattr(args, "owner_password_env", None):
                 store.env_names.append(args.owner_password_env)
                 store.add(os.environ.get(args.owner_password_env), owner=True)
+        if hasattr(args, "output"):
+            args.output = io.folder_marker(args.output, raw_output)
         context = Context(password, args.json, store.env_names, store.owner_password)
         context.secret_store = store
         record = commands[args.command].run(args, context)

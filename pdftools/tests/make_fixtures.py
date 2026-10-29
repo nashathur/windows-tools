@@ -1,7 +1,10 @@
 import argparse
 import importlib.util
 import inspect
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # fixtures import `tests.fixtures` when run as a script
 
 
 def build_all(folder, bench=False):

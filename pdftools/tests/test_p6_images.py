@@ -38,16 +38,11 @@ QUADRANTS = ((255, 0, 0), (0, 200, 0), (0, 0, 255), (255, 255, 0))  # TL, TR, BL
 
 
 def tool_path(name):
-    """PATH first, then the dev env's Library\\bin (PATH lacks it outside `conda run`)."""
-    exe = {"ghostscript": "gswin64c", "tesseract": "tesseract", "ocrmypdf": "ocrmypdf"}[name]
-    found = shutil.which(exe)
-    if found:
-        return found
-    for folder in (Path(sys.prefix) / "Library" / "bin", Path(sys.prefix) / "Scripts"):
-        for suffix in (".exe", ".EXE"):
-            if (folder / (exe + suffix)).is_file():
-                return str(folder / (exe + suffix))
-    return None
+    """PATH first, then the dev env's own tool folders (PATH lacks them outside `conda run`)."""
+    folders = ((Path(sys.prefix) / "Library" / "bin", Path(sys.prefix) / "Scripts") if os.name == "nt"
+               else (Path(sys.prefix) / "bin",))
+    with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([os.environ.get("PATH", ""), *map(str, folders)])}):
+        return tools.find_tool(name) if name in tools.TOOL_CANDIDATES else shutil.which(name)
 
 
 def quadrant_image(size=(120, 80)):

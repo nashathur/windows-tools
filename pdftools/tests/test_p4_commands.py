@@ -154,17 +154,16 @@ class Phase4CommandsTest(unittest.TestCase):
 
     def test_gray_ghostscript_fallback_runs_on_this_machine(self):
         import os
-        import shutil
-        # Resolve like the tools do: PATH first, then the dev env's Library\bin (PATH lacks it outside `conda run`).
-        gs_dir=Path(sys.prefix)/"Library"/"bin"
-        if shutil.which("gswin64c"):gs_dir=None
-        elif not (gs_dir/"gswin64c.exe").is_file():
-            reason="gswin64c.exe is absent from PATH and from "+str(gs_dir)
+        from pdftools import tools
+        # Resolve like the tools do: PATH first, then the dev env's tool folder (PATH lacks it outside `conda run`).
+        gs_dir=Path(sys.prefix)/"Library"/"bin" if os.name=="nt" else Path(sys.prefix)/"bin"
+        env_path=os.environ["PATH"]+os.pathsep+str(gs_dir)
+        with patch.dict(os.environ,{"PATH":env_path}):gs=tools.find_tool("ghostscript")
+        if not gs:
+            reason="Ghostscript is absent from PATH and from "+str(gs_dir)
             if os.environ.get("PDFTOOLS_REQUIRE_TOOLS")=="1":self.fail("required tool ghostscript is missing: "+reason)
             print("SKIP ghostscript: "+reason,file=sys.stderr)
             self.skipTest(reason)
-        from pdftools import tools
-        env_path=os.environ["PATH"] if gs_dir is None else str(gs_dir)+os.pathsep+os.environ["PATH"]
         with patch.dict(os.environ,{"PATH":env_path}),patch("pdftools.tools.run_tool",wraps=tools.run_tool) as ghostscript:
             out,record,err=self.run_cli("gray",self.fx["saturated"],"-o",self.root/"gray-saturated.pdf")
         self.assertEqual(ghostscript.call_count,1,"the Ghostscript fallback must run when chroma remains")

@@ -1,9 +1,32 @@
 import os
+import shutil
 import subprocess
 import psutil
 from pathlib import Path
 
 import clierr
+
+# Each tool's candidates, first found wins: PATH names, and fixed Windows install paths (checked only on Windows).
+TOOL_CANDIDATES = {
+    "ghostscript": ("gswin64c", "gswin32c", "gs"),
+    "soffice": (r"C:\Program Files\LibreOffice\program\soffice.com", "soffice"),
+    "browser": ("msedge", r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                "google-chrome", "chromium", "chromium-browser"),
+}
+
+
+WINDOWS = os.name == "nt"
+_is_file = os.path.isfile
+
+
+def find_tool(tool):
+    for candidate in TOOL_CANDIDATES[tool]:
+        if candidate[1:3] == ":\\":
+            if WINDOWS and _is_file(candidate):
+                return candidate
+        elif path := shutil.which(candidate):
+            return path
+    return None
 
 
 def run_tool(argv, *, timeout=None, cwd=None, env=None, temp=None, secret_env=(), secret_values=()):

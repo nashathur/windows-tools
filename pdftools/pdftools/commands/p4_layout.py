@@ -406,12 +406,14 @@ def gray(args,context):
                     context.gray_skip_reason=reason
                     clierr.warn("pdf gray","SKIPPED_GS",f"Ghostscript fallback skipped because the PDF contains {reason}","review grayscale output")
                 else:
-                    from ..tools import run_tool
-                    gs=shutil.which("gswin64c")
-                    if not gs: raise PdfError("NOT_FOUND","gswin64c is not available for grayscale fallback","install Ghostscript or use --no-gs")
+                    from ..tools import find_tool, run_tool
+                    gs=find_tool("ghostscript")
+                    if not gs: raise PdfError("NOT_FOUND","Ghostscript is not available for grayscale fallback","install Ghostscript or use --no-gs")
+                    # Windows' sRGB profile when present; elsewhere Ghostscript's built-in default_rgb.icc (also sRGB).
+                    srgb=Path(r"C:\Windows\System32\spool\drivers\color\sRGB Color Space Profile.icm")
                     argv=[gs,"-dSAFER","-dBATCH","-dNOPAUSE","-dQUIET","-sDEVICE=pdfwrite","-dCompatibilityLevel=1.7",
                           "-dAutoRotatePages=/None","-dDetectDuplicateImages=true","-dCompressFonts=true","-dSubsetFonts=true",
-                          "-dUseCIEColor","-dUseFastColor=true","-sDefaultRGBProfile=C:\\Windows\\System32\\spool\\drivers\\color\\sRGB Color Space Profile.icm",
+                          "-dUseCIEColor","-dUseFastColor=true",*([f"-sDefaultRGBProfile={srgb}"] if srgb.is_file() else []),
                           "-sColorConversionStrategy=Gray","-dProcessColorModel=/DeviceGray","-dDownsampleColorImages=true",
                           "-dDownsampleGrayImages=true","-dDownsampleMonoImages=false","-dColorImageResolution=300",
                           "-dGrayImageResolution=300","-dColorImageDownsampleThreshold=1.5","-dGrayImageDownsampleThreshold=1.5",

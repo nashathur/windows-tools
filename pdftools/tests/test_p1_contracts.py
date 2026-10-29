@@ -130,10 +130,48 @@ class ContractsTest(unittest.TestCase):
         with patch.object(io, "RENAME_REPLACES", True), self.assertRaises(FileExistsError):
             io.rename_exclusive(published, target)
 
+    def test_trailing_separator_is_a_folder_marker_for_every_output_type(self):
+        import contextlib
+        import io as io_module
+        from pdftools import cli
+        self.assertEqual(io.folder_marker(Path("out"), "out\\"), "out" + os.sep)
+        self.assertEqual(io.folder_marker("out\\", "out\\"), "out" + os.sep)
+        self.assertEqual(io.folder_marker(Path("out.pdf"), "out.pdf"), Path("out.pdf"))
+        self.assertIsNone(io.folder_marker(None, None))
+        self.assertEqual(cli._raw_output(["organize", "a.pdf", "1", "-o", "x\\", "--output=y/"]), "y/")
+        job = self.root / "job.json"
+        job.write_text(json.dumps({"version": 1, "command": "organize", "input": str(self.fixtures["plain"]),
+                                   "recipe": "1", "output": str(self.root / "job-out") + "\\"}), encoding="utf-8")
+        # organize declares -o as type=Path, which drops the separator; both markers must still mean "folder".
+        for folder, argv in ((self.root / "argv-out", ["organize", str(self.fixtures["plain"]), "1", "-o", str(self.root / "argv-out") + "\\"]),
+                             (self.root / "slash-out", ["organize", str(self.fixtures["plain"]), "1", "-o", str(self.root / "slash-out") + "/"]),
+                             (self.root / "job-out", ["--job", str(job)])):
+            out = io_module.StringIO()
+            with patch.object(clierr, "LOG_ROOT", self.root / "logs"), contextlib.redirect_stdout(out), \
+                    contextlib.redirect_stderr(io_module.StringIO()):
+                code = cli.main(["--json", *argv])
+            record = json.loads(out.getvalue().splitlines()[0])
+            self.assertEqual(code, 0, record)
+            self.assertEqual(Path(record["path"]), folder / "plain_organized.pdf")
+
+    def test_find_tool_order_and_windows_only_fixed_paths(self):
+        from pdftools import tools
+        on_path = {"gs": "/usr/bin/gs", "google-chrome": "/usr/bin/google-chrome", "soffice": "/usr/bin/soffice"}
+        with patch("shutil.which", side_effect=on_path.get), patch.object(tools, "WINDOWS", False):
+            self.assertEqual(tools.find_tool("ghostscript"), "/usr/bin/gs")
+            self.assertEqual(tools.find_tool("browser"), "/usr/bin/google-chrome")
+            self.assertEqual(tools.find_tool("soffice"), "/usr/bin/soffice")
+        with patch("shutil.which", side_effect=lambda name: None), patch.object(tools, "WINDOWS", True), \
+                patch.object(tools, "_is_file", lambda path: path.endswith("soffice.com")):
+            self.assertEqual(tools.find_tool("soffice"), r"C:\Program Files\LibreOffice\program\soffice.com")
+            self.assertIsNone(tools.find_tool("browser"))
+
     def test_staging_path_length_and_copy_publish(self):
         temp = self.root / "t"
         temp.mkdir()
-        target = self.root / ("x" * 175 + ".pdf")
+        # 235 characters: the target fits under 240, its in-place staging name does not (any temp root length).
+        target = self.root / ("x" * (235 - len(str(self.root)) - 1 - len(".pdf")) + ".pdf")
+        self.assertEqual(len(str(target)), 235)
         stage = io.create_staging(target, temp=temp, pid=1, token="12345678")
         self.assertEqual(stage.parent, temp)
         self.assertLessEqual(len(str(stage)), 240)

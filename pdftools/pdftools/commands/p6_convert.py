@@ -124,10 +124,6 @@ def add_arguments_office2pdf(parser):
     parser.add_argument("-o", "--output")
 
 
-def _tool_path(name, fallback=None):
-    return shutil.which(name) or (str(fallback) if fallback and Path(fallback).is_file() else None)
-
-
 # LibreOffice 26.8 schema (share\registry\main.xcd). Update/Link: Writer 0 never, 1 on request,
 # 2 always; Calc 0 always, 1 never, 2 on request. Macro level 3 = very high; documents binding
 # macros to events are blocked (CheckDocumentEvents) and links from untrusted places are refused.
@@ -155,9 +151,9 @@ def _office_security(profile):
 
 def office2pdf(args, context):
     source = _path(args.file)
-    soffice = _tool_path("soffice", r"C:\Program Files\LibreOffice\program\soffice.com")
+    soffice = tools.find_tool("soffice")
     if not soffice:
-        raise PdfError("NOT_FOUND", "LibreOffice soffice.com is not installed", "install LibreOffice")
+        raise PdfError("NOT_FOUND", "LibreOffice is not installed", "install LibreOffice")
 
     def writer(source, staged, temp):
         profile = temp / "lo-profile"
@@ -292,10 +288,6 @@ def add_arguments_md2pdf(parser):
     parser.add_argument("-o", "--output")
 
 
-def _edge_path():
-    return _tool_path("msedge", r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
-
-
 def _node_env(**extra):
     return {**os.environ, "NODE_PATH": str(NODE_MODULES), **extra}
 
@@ -328,9 +320,9 @@ def _clean_markdown_path(path):
 def md2pdf(args, context):
     source = _clean_markdown_path(args.file)
     node = shutil.which("node")
-    edge = _edge_path()
+    edge = tools.find_tool("browser")
     if not node or not edge:
-        missing = "Node.js" if not node else "Microsoft Edge"
+        missing = "Node.js" if not node else "Microsoft Edge or Chrome"
         raise PdfError("NOT_FOUND", f"{missing} is not installed", "install the required renderer")
     script = ROOT / "md2pdf.js"
     # Absolute: node runs in the temp folder, so a relative staging path would land there.
