@@ -313,7 +313,10 @@ function Find-Lockout([switch]$Final) {   # first lockout line in the transcript
 }
 $jobExit = 'interrupted'
 $lockLine = $null
+$savedPythonPath = $env:PYTHONPATH
 try {
+    # Lets tempfile work inside the unelevated sandbox (pyshim\sitecustomize.py says why); Codex's process only.
+    $env:PYTHONPATH = (@("$PSScriptRoot\pyshim") + @($savedPythonPath | Where-Object { $_ })) -join ';'
     $p = Start-Process -FilePath $exe.FullName -ArgumentList $args_ -WorkingDirectory $Dir -NoNewWindow -PassThru `
         -RedirectStandardInput $stdin -RedirectStandardOutput "$log.out" -RedirectStandardError $log
     $null = $p.Handle   # keeps ExitCode readable after exit (PS 5.1)
@@ -348,6 +351,7 @@ try {
     }
     $jobExit = if ($p.ExitCode -ne 0) { $p.ExitCode } elseif (-not (Test-Path -LiteralPath $Out)) { 'no answer' } else { 0 }
 } finally {
+    $env:PYTHONPATH = $savedPythonPath
     # Last, so a "finished" notice never precedes the worktree/session records it points to.
     $end = $job + @("ended=$((Get-Date).ToString('o'))", "exit=$jobExit")
     if ($Worktree -and $wd) { $end += "worktree=$wd" }
