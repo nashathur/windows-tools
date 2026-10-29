@@ -11,7 +11,7 @@ equation number or every row is a relation (=, <, ≤, …). Each new equation i
 fails, the table is left as it was. Real tables (headers, data, prose) are not touched.
 
 convert.py runs this automatically. To run it on an existing file (edits in place):
-    conda run -n pdfmath python C:\\Tools\\pdf2md\\postprocess.py chapter.md
+    conda run -n dev python C:\\Tools\\pdf2md\\postprocess.py chapter.md
 """
 
 import html

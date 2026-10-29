@@ -64,10 +64,13 @@ def sweep_stale(folder, now=None):
     for path in Path(folder).glob(".*.*-*.part*"):
         match = re.match(r"^\..+\.(\d+)-[0-9a-fA-F]{8}\.part", path.name)
         if match and not _running(int(match.group(1))) and now - path.stat().st_mtime > 3600:
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
+            try:  # a leftover held open by another process is skipped; it must not fail this run
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+            except OSError:
+                continue
             removed.append(path)
     return removed
 
@@ -81,7 +84,10 @@ def sweep_temp(now=None, parent=None):
     for folder in parent.iterdir():
         match = re.fullmatch(r"(\d+)-[0-9a-fA-F]{8}", folder.name)
         if folder.is_dir() and match and not _running(int(match.group(1))) and now - folder.stat().st_mtime > 3600:
-            shutil.rmtree(folder)
+            try:  # a folder held open by an orphaned tool is skipped; it must not fail this run
+                shutil.rmtree(folder)
+            except OSError:
+                continue
             removed.append(folder)
     return removed
 
@@ -165,18 +171,30 @@ def publish(staged, target, *, retry_seconds=2.0, sleep=time.sleep):
                 rename_exclusive(staged, candidate)
             else:
                 copy = candidate.with_name(f".{os.getpid()}-{uuid.uuid4().hex[:8]}.part{candidate.suffix}")
-                shutil.copy2(staged, copy)
+                if staged.is_dir():
+                    shutil.copytree(staged, copy)
+                else:
+                    shutil.copy2(staged, copy)
                 rename_exclusive(copy, candidate)
-                staged.unlink()
+                if staged.is_dir():
+                    shutil.rmtree(staged)
+                else:
+                    staged.unlink()
             return candidate
         except FileExistsError:
             if copy is not None:
-                copy.unlink(missing_ok=True)
+                if copy.is_dir():
+                    shutil.rmtree(copy, ignore_errors=True)
+                else:
+                    copy.unlink(missing_ok=True)
             candidate = target.with_name(f"{target.stem}_{index}{target.suffix}")
             index += 1
         except PermissionError:
             if copy is not None:
-                copy.unlink(missing_ok=True)
+                if copy.is_dir():
+                    shutil.rmtree(copy, ignore_errors=True)
+                else:
+                    copy.unlink(missing_ok=True)
             if time.monotonic() >= deadline:
                 raise PdfError("LOCKED", f"output is locked: {target}", "close the program holding the file, then rerun")
             sleep(min(0.05, max(0, deadline - time.monotonic())))

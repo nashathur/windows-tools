@@ -1,0 +1,12 @@
+@page { size: A4; margin: 20mm; }
+html { color: #111; background: #fff; font-family: "Segoe UI", Arial, sans-serif; font-size: 10.5pt; line-height: 1.42; }
+body { margin: 0; overflow-wrap: anywhere; }
+h1, h2, h3, h4, h5, h6 { break-after: avoid; line-height: 1.2; }
+p, ul, ol, blockquote, pre, figure, .katex-display { margin: 0 0 0.9em; }
+pre, code { font-family: Consolas, "Courier New", monospace; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border: 1px solid #888; padding: 0.25em 0.4em; }
+tr, figure, .katex-display { break-inside: avoid; }
+img { max-width: 100%; height: auto; }
+blockquote { border-left: 3px solid #aaa; padding-left: 0.8em; color: #444; }

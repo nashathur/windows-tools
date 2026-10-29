@@ -1,14 +1,21 @@
-"""Convert a PDF with Marker in one pass, saving both Markdown (to read) and JSON (block positions, for qa.py).
+"""Convert a PDF (or a page range) to Markdown without a GPU: text, headings and tables from pymupdf4llm and the PDF's
+own text layer (Tesseract on scanned pages), display equations cropped for eqread.py to turn into LaTeX.
 
-Run in the pdfmath env:
-    conda run -n pdfmath python C:\\Tools\\pdf2md\\convert.py book.pdf out_dir [--page-range 0-24] [--name ch01]
+Run in the dev env:
+    conda run -n dev python C:\\Tools\\pdf2md\\convert.py book.pdf out_dir [--page-range 0-24] [--name ch01] [--no-read]
 
 Writes to out_dir/<name>/:
-    <name>.md, images, <name>_meta.json   (same as marker_single, plus equation tables -> display math)
-    <name>.blocks.json                     (block types, HTML and bounding boxes, used by qa.py)
+    <name>.src.md      Markdown with one <!--eq:ID--> line per display equation (pymupdf4llm leaves them out)
+    eqs.json           per equation: page, box, crop, and the PDF text inside the box (hint and referee for eqread.py)
+    eqs/ID.png         crop of each equation, number included
+    <name>.md          the finished Markdown (render(): equations filled in, headings and \\tag numbers tidied)
+    <name>.blocks.json block types, text and boxes in the shape qa.py and export.py read
+Then runs eqread.py (Codex reads the equations; --no-read to stop after extraction) and qa.py.
 """
 
 import argparse
+import hashlib
+import html
 import json
 import os
 import re
@@ -16,211 +23,188 @@ import sys
 import time
 from pathlib import Path
 
-os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
-os.environ.setdefault("GLOG_minloglevel", "2")
-
-import psutil
-import surya.inference.backends.spawn as surya_spawn
-
-from marker.config.parser import ConfigParser
-from marker.models import create_model_dict
-from marker.output import save_output
-from marker.processors.equation import EquationProcessor
-from marker.schema import BlockTypes
-from marker.renderers.json import JSONRenderer
-from marker.renderers.markdown import MarkdownRenderer
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import clierr
 
-import verify
-from postprocess import clean_markdown, fix_equation_tables
+import qa
+from postprocess import clean_markdown
+
+CROP_DPI = 200
+EQ_LINE = re.compile(r"^<!--eq:(\w+)-->$", re.M)
+# pymupdf-layout classes -> the Marker block types qa.py knows
+BLOCK_TYPES = {"text": "Text", "title": "SectionHeader", "section-header": "SectionHeader", "list-item": "ListItem",
+               "caption": "Caption", "footnote": "Footnote", "table": "Table", "picture": "Picture",
+               "page-header": "PageHeader", "page-footer": "PageFooter", "formula": "Equation"}
+DROP = {"picture", "page-header", "page-footer"}  # picture labels and running heads are never content
+CAPTION_IN_PICTURE = re.compile(r"((?:Figure|Fig\.|Table)\s*\d+(?:\s*[-–.]\s*\d+)?\s*[:.]?\s.*?)(?:<!-- End of picture text -->|$)", re.S)
 
 
-def stop_process_windows_safe(pid, name):
-    """Replacement for surya's _stop_process. Surya checks "still alive?" with os.kill(pid, 0),
-    which on Windows sends Ctrl+C to every process in the console (killing the calling shell)."""
-    try:
-        proc = psutil.Process(pid)
-        proc.terminate()
-        proc.wait(timeout=10)
-    except psutil.NoSuchProcess:
-        pass
-    except psutil.TimeoutExpired:
-        proc.kill()
+def parse_range(spec, n_pages):
+    if not spec:
+        return list(range(n_pages))
+    pages = []
+    for part in spec.split(","):
+        a, _, b = part.partition("-")
+        pages += range(int(a), int(b or a) + 1)
+    if not pages or min(pages) < 0 or max(pages) >= n_pages:
+        raise clierr.Fail("BAD_ARG", f"page range {spec} outside 0-{n_pages - 1}", "use 0-indexed pages, e.g. 0-24")
+    return pages
 
 
-surya_spawn._stop_process = stop_process_windows_safe
-
-
-# Inline-math OCR of a paragraph sometimes returns only a (garbled) copy of the display equation above it, and
-# the paragraph's text is lost (C-R&B: 27 paragraphs in the book, about 1 in 150 text blocks, right below an equation). When the OCR
-# result has almost no words but the PDF text layer has a paragraph there, keep the PDF text (inline math then
-# comes out as Unicode, not LaTeX) instead of losing the paragraph.
-_original_equation_call = EquationProcessor.__call__
-MIN_PROSE_WORDS = 8  # PDF words (3+ letters) needed before an OCR result without prose is rejected
-repaired_blocks = []
-
-
-def prose_word_count(text):
-    return len(re.findall(r"[A-Za-z]{3,}", text))
-
-
-def math_as_words(latex):
-    """Each math variable with its subscript as one word ("T_{\\text{peak}}" -> "Tpeak"), the way a PDF that sets
-    math in the text font spells it."""
-    s = re.sub(r"\\(?:text|mathrm|operatorname)\s*\{([^{}]*)\}", r"\1", latex)
-    return " ".join(re.findall(r"[A-Za-z]+", re.sub(r"[_{}]", "", re.sub(r"\\[A-Za-z]+", " ", s))))
-
-
-def ocr_sequence(block_html):
-    """Lowercase words (3+ letters) of an OCR result in reading order, math written as words."""
-    text = re.sub(r"<math\b[^>]*>(.*?)</math>", lambda m: " " + math_as_words(m.group(1)) + " ", block_html, flags=re.S)
-    return [w.lower() for w in re.findall(r"[A-Za-z]{3,}", re.sub(r"<[^>]+>", " ", text))]
-
-
-def ocr_words(block_html):
-    return set(ocr_sequence(block_html))
-
-
-OPERATOR_WORDS = {"sin", "cos", "tan", "exp", "log", "max", "min", "sup", "inf", "lim", "sinh", "cosh", "tanh", "det"}
-
-
-def equation_call_keep_prose(self, document):
-    before = {}
-    for page in document.pages:
-        for block in page.contained_blocks(document, self.inline_math_block_types):
-            if not block.html and block.structure:
-                pdf_text = block.raw_text(document)
-                before[block.id] = (list(block.structure), pdf_text)
-                # The OCR crop is the block's box, which can end above the paragraph's last text line (the line
-                # was then cut off). Make the box cover all of the block's lines.
-                lines = [document.get_block(i) for i in block.structure]
-                lines = [l.polygon for l in lines if l is not None and l.polygon is not None]
-                if lines:
-                    block.polygon = block.polygon.merge(lines)
-                # Marker's output budget is the layout model's token estimate + 100: long paragraphs got cut off
-                # once their math is written as LaTeX. Budget at least half a token per character + 200.
-                block.layout_token_count = max(block.layout_token_count or 0, len(pdf_text) // 2 + 200)
-    _original_equation_call(self, document)
-    for block_id, (structure, pdf_text) in before.items():
-        block = document.get_block(block_id)
-        if not block.html or block.structure:
+def merge_formulas(boxes):
+    """Formula boxes that overlap (also a thin slice of one equation boxed on its own, C-R&B p. 84) become one
+    box, so no equation is read twice."""
+    out = []
+    for b in boxes:
+        prev = next((o for o in reversed(out) if o["class"] == "formula"), None) if b["class"] == "formula" else None
+        p, q = (prev["bbox"], b["bbox"]) if prev else (None, None)
+        if prev and min(p[3], q[3]) > max(p[1], q[1]) and min(p[2], q[2]) > max(p[0], q[0]):
+            prev["bbox"] = (min(p[0], q[0]), min(p[1], q[1]), max(p[2], q[2]), max(p[3], q[3]))
             continue
-        ocr_text = re.sub(r"<math\b.*?</math>|<[^>]+>", " ", block.html, flags=re.S)
-        pdf_list = [w.lower() for w in re.findall(r"[A-Za-z]{3,}", pdf_text)]
-        ocr_set = ocr_words(block.html)
-        coverage = sum(w in ocr_set for w in pdf_list) / max(1, len(pdf_list))
-        # Stops early: of the paragraph's last three real words (4+ letters, no operator names; a paragraph may end in
-        # math that the OCR writes as LaTeX), fewer than two are in the last third (at least 12 words) of the OCR text.
-        tail = [w for w in pdf_list if len(w) >= 4 and w not in OPERATOR_WORDS][-3:]
-        seq = ocr_sequence(block.html)
-        end = set(seq[-max(12, len(seq) // 3):])
-        truncated = len(tail) == 3 and sum(w in end for w in tail) < 2
-        # Reject when the OCR text has (almost) no words, misses half of the paragraph's words, or stops early.
-        if len(pdf_list) >= MIN_PROSE_WORDS and (prose_word_count(ocr_text) < 0.3 * len(pdf_list) or coverage < 0.5
-                                                 or truncated):
-            if os.environ.get("PDF2MD_DEBUG"):
-                print(f"  kept PDF text {block_id}: words {prose_word_count(ocr_text)}/{len(pdf_list)}, "
-                      f"coverage {coverage:.2f}, truncated {truncated} | PDF: {pdf_text[:80]!r} | OCR: {block.html[:120]!r}")
-            block.html, block.structure = None, structure
-            repaired_blocks.append(block_id)
+        out.append(dict(b))
+    return out
 
 
-EquationProcessor.__call__ = equation_call_keep_prose
+def extract(pdf_path, pages):
+    import pymupdf
+    import pymupdf.layout  # noqa: F401  (switches pymupdf4llm to the layout model, which finds the formula boxes)
+    import pymupdf4llm
+    doc = pymupdf.open(pdf_path)
+    return doc, pymupdf4llm.to_markdown(doc, pages=pages, page_chunks=True, write_images=False, show_progress=False)
 
 
-# Marker only OCRs a paragraph for inline math when it sees TeX math fonts or math Unicode. Publisher PDFs
-# (Springer, Elsevier...) set math in the text font, so "T_Peak" stayed as "*T*Peak". Also treat as inline math:
-# an italic span of 1-2 letters (a variable) or a subscript span with letters. Superscript digits (citations) don't
-# count. The paragraph is then OCR'd; equation_call_keep_prose keeps the PDF text if the OCR loses words.
-_original_has_inline_math = EquationProcessor._block_has_inline_math
-VARIABLE = re.compile(r"[A-Za-zͰ-Ͽ]{1,2}")
+def convert(pdf_path, out_dir, page_range=None, name=None, read=True):
+    t0 = time.time()
+    name = name or Path(pdf_path).stem
+    folder = os.path.join(out_dir, name)
+    os.makedirs(os.path.join(folder, "eqs"), exist_ok=True)
+    pdf = qa.Pdf(pdf_path)
+    doc, chunks = extract(pdf_path, parse_range(page_range, len(pdf.doc)))
+
+    parts, eqs, pages_json = [], [], []
+    for chunk in chunks:
+        pi = chunk["metadata"]["page_number"] - 1
+        W, H = pdf.size(pi)
+        text, boxes = chunk["text"], merge_formulas(chunk["page_boxes"])
+        page_md, blocks = [], []
+        for b in boxes:
+            cls, (x0, y0, x1, y1) = b["class"], b["bbox"]
+            piece = text[b["pos"][0]:b["pos"][1]].strip()
+            if cls == "formula":
+                raw = pdf.text_in_box(pi, (x0, H - y0, x1, H - y1))
+                words = [w for w in re.findall(r"[A-Za-z]{3,}", raw) if w not in qa.OPERATOR_NAMES]
+                if len(words) >= 5 and "=" not in raw and not qa.eq_labels(raw):  # prose taken for math
+                    cls, piece = "text", re.sub(r"\s+", " ", raw).strip()
+            if cls == "picture":  # a caption set beside the figure ends up in the picture's text
+                m = CAPTION_IN_PICTURE.search(piece)
+                if m:
+                    cls, piece = "caption", re.sub(r"<br>|\s+", " ", m.group(1)).strip()
+            btype = BLOCK_TYPES.get(cls, "Text")
+            block = {"id": f"/page/{pi}/{btype}/{b['index']}", "block_type": btype, "bbox": [x0, y0, x1, y1]}
+            if cls == "formula":
+                eid = f"p{pi + 1:03d}_{b['index']}"
+                # Equation numbers sit flush right, sometimes outside the formula box, and on scans the box can miss
+                # the start of the equation ("U ="): crop out to the edges of the text column the formula is in
+                # (the crop then trims to the ink).
+                column = [t["bbox"] for t in boxes if t["class"] == "text" and t["bbox"][0] < x1 and t["bbox"][2] > x0]
+                left = min([x0] + [c[0] - 2 for c in column])
+                right = max([x1] + [c[2] + 2 for c in column])
+                box = (left, H - y0, right, H - y1)  # pdfium: left, top, right, bottom
+                crop = f"eqs/{eid}.png"
+                pdf.crop(pi, box, CROP_DPI, os.path.join(folder, crop), prose=False)
+                raw = pdf.text_in_box(pi, box)
+                eqs.append({"id": eid, "page": pi + 1, "block": block["id"], "box": [round(v, 2) for v in box],
+                            "crop": crop, "pdf_text": re.sub(r"\s+", " ", raw).strip(),
+                            "bold": "".join(pdf.bold_in_box(pi, box)), "labels": sorted(qa.eq_labels(raw)),
+                            "crop_sha": hashlib.sha1(open(os.path.join(folder, crop), "rb").read()).hexdigest(),
+                            "readings": [], "latex": None})
+                block["eq"] = eid
+                page_md.append(f"<!--eq:{eid}-->")
+            elif cls not in DROP and piece:
+                page_md.append(piece)
+                block["text"] = piece
+            blocks.append(block)
+        parts.append("\n\n".join(page_md))
+        pages_json.append({"id": f"/page/{pi}/Page/0", "block_type": "Page", "bbox": [0, 0, W, H], "children": blocks})
+
+    with open(os.path.join(folder, f"{name}.src.md"), "w", encoding="utf-8") as f:
+        f.write("\n\n".join(parts) + "\n")
+    with open(os.path.join(folder, f"{name}.pages.json"), "w", encoding="utf-8") as f:
+        json.dump({"source_pdf": os.path.abspath(pdf_path), "pages": pages_json}, f, ensure_ascii=False)
+    old = load_eqs(folder)
+    for e in eqs:  # re-extraction keeps readings already paid for
+        o = old.get(e["id"])
+        if o and (o["pdf_text"], o["box"], o.get("crop_sha")) == (e["pdf_text"], e["box"], e["crop_sha"]):
+            e.update({k: v for k, v in o.items() if k not in e or k in ("readings", "latex")})
+    save_eqs(folder, eqs)
+    render(folder)
+    print(f"{name}: {len(chunks)} pages, {len(eqs)} display equations cropped in {time.time() - t0:.0f} s")
+    if read and eqs:
+        import eqread
+        eqread.run([folder])
+    return folder
 
 
-def has_inline_math_incl_text_font(self, block, document):
-    if _original_has_inline_math(self, block, document):
-        return True
-    for span in block.contained_blocks(document, (BlockTypes.Span,)):
-        text = (span.text or "").strip()
-        if span.italic and VARIABLE.fullmatch(text):
-            return True
-        if span.has_subscript and re.search(r"[A-Za-z]", text):
-            return True
-    return False
+# ------------------------------------------------------------------------------------------ eqs.json and rendering
+
+def load_eqs(folder):
+    path = os.path.join(folder, "eqs.json")
+    return {e["id"]: e for e in json.load(open(path, encoding="utf-8"))} if os.path.exists(path) else {}
 
 
-# Off by default: the files are sources for a Claude project, where "*T*Peak" reads as well as LaTeX, and the extra
-# OCR costs ~30-40% more time on such papers. Set PDF2MD_TEXT_FONT_MATH=1 to get LaTeX inline math there.
-if os.environ.get("PDF2MD_TEXT_FONT_MATH"):
-    EquationProcessor._block_has_inline_math = has_inline_math_incl_text_font
+def save_eqs(folder, eqs):
+    with open(os.path.join(folder, "eqs.json"), "w", encoding="utf-8") as f:
+        json.dump(list(eqs), f, indent=1, ensure_ascii=False)
 
 
-def block_to_dict(block):
-    """Plain-dict copy of a JSONBlockOutput without its images (already saved as files by save_output).
-    pydantic's model_dump() fails on blocks with images ("unhashable type: 'dict'")."""
-    return {
-        "id": block.id,
-        "block_type": block.block_type,
-        "html": block.html,
-        "polygon": block.polygon,
-        "bbox": block.bbox,
-        "section_hierarchy": block.section_hierarchy,
-        "children": [block_to_dict(c) for c in block.children] if block.children else None,
-    }
+def fallback(e):
+    """An equation nobody has read yet: the PDF's own text for it, marked, so nothing is lost."""
+    return f"*(equation not read yet; PDF p. {e['page']} text: {e['pdf_text'] or 'none'})*"
 
 
-def convert(pdf, out_dir, page_range=None, name=None, models=None, verify_pdf=True):
-    """Convert one PDF (or page range) into out_dir/<name>/. Pass `models` (from create_model_dict()) to reuse
-    loaded models across calls, as book.py does. Returns the output folder."""
-    if not os.path.isfile(pdf):
-        raise clierr.Fail("NOT_FOUND", f"{pdf} not found", "check the PDF path")
-    name = name or os.path.splitext(os.path.basename(pdf))[0]
-    out_folder = os.path.join(out_dir, name)
-    os.makedirs(out_folder, exist_ok=True)
+def md_to_html(piece):
+    """A block's Markdown as the HTML qa.py compares with the PDF text: emphasis marks dropped, <sup>/<sub>/<br>
+    kept as tags, everything else escaped (a "<" in "a < b" must not read as a tag)."""
+    t = html.escape(re.sub(r"\*\*|(?<!\w)[*_]|[*_](?!\w)", "", piece), quote=False)
+    return re.sub(r"&lt;(/?(?:sup|sub|br)\s*/?)&gt;", r"<\1>", t)
 
-    start = time.time()
-    models = models if models is not None else create_model_dict()
-    parser = ConfigParser({"output_format": "markdown", "output_dir": out_dir, "page_range": page_range})
-    converter = parser.get_converter_cls()(
-        config=parser.generate_config_dict(),
-        artifact_dict=models,
-        processor_list=parser.get_processors(),
-        renderer=parser.get_renderer(),
-    )
 
-    # Build the document once, correct it against the PDF text layer (verify.py), then render it twice.
-    repaired_blocks.clear()
-    document = converter.build_document(pdf)
-    if os.environ.get("PDF2MD_SAVE_UNVERIFIED"):  # for measuring verify.py: same OCR run, before corrections
-        before = converter.resolve_dependencies(JSONRenderer)(document)
-        with open(os.path.join(out_folder, f"{name}.unverified.blocks.json"), "w", encoding="utf-8") as f:
-            json.dump({"source_pdf": os.path.abspath(pdf), "pages": [block_to_dict(p) for p in before.children]}, f)
-    fixes = verify.correct(document, pdf, models["recognition_model"], EquationProcessor(models["recognition_model"]),
-                           list(repaired_blocks)) if verify_pdf else {}
-    markdown = converter.resolve_dependencies(MarkdownRenderer)(document)
-    blocks = converter.resolve_dependencies(JSONRenderer)(document)
+def chapter_md(folder):
+    """The rendered <name>.md of a chapter folder (other .md files there: <name>.src.md, qa_report.md, ...)."""
+    blocks = next(Path(folder).glob("*.blocks.json"), None)
+    return str(blocks)[: -len(".blocks.json")] + ".md" if blocks else None
 
-    save_output(markdown, out_folder, name)
 
-    # Equations Marker rendered as Markdown tables -> display math; headings, \tag numbers, anchors, spacing
-    # tidied (see postprocess.py).
-    md_path = os.path.join(out_folder, f"{name}.md")
-    with open(md_path, encoding="utf-8") as f:
-        md_text, n_tables, n_kept = fix_equation_tables(f.read())
-    md_text = clean_markdown(md_text)
-    with open(md_path, "w", encoding="utf-8") as f:
-        f.write(md_text)
-    blocks_json = json.dumps({"source_pdf": os.path.abspath(pdf), "pages": [block_to_dict(p) for p in blocks.children]})
-    with open(os.path.join(out_folder, f"{name}.blocks.json"), "w", encoding="utf-8") as f:
-        f.write(blocks_json)
+def render(folder):
+    """<name>.md and <name>.blocks.json from <name>.src.md, <name>.pages.json and eqs.json. Run again after every
+    change to eqs.json; edits made to <name>.md by hand or fix.py are overwritten, so fix.py comes last."""
+    src = next(Path(folder).glob("*.src.md"))
+    name = src.name[: -len(".src.md")]
+    eqs = load_eqs(folder)
 
-    print(f"Saved {name}.md and {name}.blocks.json to {out_folder} ({len(document.pages)} pages, {time.time() - start:.0f} s); "
-          f"{n_tables} equation tables converted to display math" + (f", {n_kept} kept (failed KaTeX)" if n_kept else "") +
-          (f"; {len(repaired_blocks)} paragraphs kept from the PDF text (OCR returned only math)" if repaired_blocks else ""))
-    if fixes:
-        print("  verified against the PDF: " + ", ".join(f"{k} {v}" for k, v in fixes.items()))
-    return out_folder
+    def fill(m):
+        e = eqs.get(m.group(1))
+        if not e:
+            return ""
+        if not e.get("latex"):
+            return fallback(e)
+        note = f" *(possible OCR error in this equation; see PDF p. {e['page']})*" if e.get("status") == "doubtful" else ""
+        return f"$${e['latex']}$$" + note
+    md = clean_markdown(EQ_LINE.sub(fill, src.read_text(encoding="utf-8")))
+    (Path(folder) / f"{name}.md").write_text(md, encoding="utf-8")
+
+    data = json.load(open(os.path.join(folder, f"{name}.pages.json"), encoding="utf-8"))
+    for page in data["pages"]:
+        for b in page["children"]:
+            e = eqs.get(b.pop("eq", None) or "")
+            if e and e.get("latex"):
+                b["html"] = f'<p><math display="block">{html.escape(e["latex"])}</math></p>'
+            elif e:
+                b["html"] = f"<p>{html.escape(e['pdf_text'])}</p>"
+            else:
+                b["html"] = f"<p>{md_to_html(b.pop('text', ''))}</p>"
+    with open(os.path.join(folder, f"{name}.blocks.json"), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
 
 
 def main():
@@ -228,9 +212,14 @@ def main():
     ap.add_argument("pdf")
     ap.add_argument("out_dir")
     ap.add_argument("--page-range", help='0-indexed pages, e.g. "0-24" or "0,5-10"')
-    ap.add_argument("--name", help="output base name (default: PDF file name)")
-    args = ap.parse_args()
-    convert(args.pdf, args.out_dir, args.page_range, args.name)
+    ap.add_argument("--name", help="output folder and file name (default: PDF name)")
+    ap.add_argument("--no-read", action="store_true", help="extract and crop only; don't run eqread.py and qa.py")
+    a = ap.parse_args()
+    if not os.path.isfile(a.pdf):
+        raise clierr.Fail("NOT_FOUND", f"{a.pdf} not found", "check the PDF path")
+    folder = convert(a.pdf, a.out_dir, a.page_range, a.name, read=not a.no_read)
+    if not a.no_read:
+        qa.run(folder)
 
 
 if __name__ == "__main__":

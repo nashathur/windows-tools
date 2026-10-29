@@ -63,6 +63,17 @@ class Phase3cTests(unittest.TestCase):
         records = [json.loads(line) for line in stdout.splitlines()]
         return code, records, stderr
 
+    def test_svg_rejects_explicit_dpi_but_keeps_default_dpi(self):
+        self.assertEqual(self.run_cli(["toimg", str(self.pdf), "--format", "svg"])[0], 0)
+        code, records, _ = self.run_json(["toimg", str(self.pdf), "--format", "svg", "--dpi", "150"])
+        self.assertNotEqual(code, 0)
+        self.assertEqual(records[0]["code"], "BAD_ARG")
+
+    def test_tiff_group4_grid_writes_bilevel_canvas(self):
+        code, records, _ = self.run_json(["toimg", str(self.pdf), "--format", "tiff", "--bw",
+                                          "--tiff-compression", "group4", "--grid", "2x2"])
+        self.assertEqual(code, 0, records)
+
     def test_toimg_size_options_and_exclusivity(self):
         outputs = [("--dpi", "72", "dpi.png", (144, 72)),
                    ("--width", "300", "width.png", (300, 150)),
@@ -239,10 +250,10 @@ class Phase3cTests(unittest.TestCase):
                                 for x in range(0, 35) for y in range(0, 24)))
 
     def test_toimg_unknown_format_lists_supported_formats(self):
-        code, records, stderr = self.run_json(["toimg", str(self.pdf), "--format", "bmp"])
+        code, records, stderr = self.run_json(["toimg", str(self.pdf), "--format", "pcx"])
         self.assertEqual(code, 2, (records, stderr))
         self.assertEqual(records[0]["code"], "BAD_ARG")
-        self.assertIn("png, jpeg", records[0]["message"])
+        self.assertIn("png, jpeg, webp, tiff, bmp, gif, avif, heic, svg", records[0]["message"])
 
     def test_toimg_zip_multifile_and_zip_folder(self):
         self.assertEqual(self.run_cli(["toimg", str(self.pdf), "--pages", "1-2", "--zip"])[0], 0)

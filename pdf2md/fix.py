@@ -1,7 +1,7 @@
 """Apply review corrections to a chapter's Markdown from a short fixes file, and log them in review_notes.md.
 
-Run in the pdfmath env:
-    conda run -n pdfmath python C:\\Tools\\pdf2md\\fix.py out\\ch02 fixes.txt [--dry-run]
+Run in the dev env:
+    conda run -n dev python C:\\Tools\\pdf2md\\fix.py out\\ch02 fixes.txt [--dry-run]
 
 Fixes file: blocks separated by blank lines. Each block starts with a header line, then edit lines:
 
@@ -137,8 +137,11 @@ def main():
         raise clierr.Fail("NOT_FOUND", f"chapter folder not found: {args.folder}", "check the chapter folder path")
     if not os.path.isfile(args.fixes):
         raise clierr.Fail("NOT_FOUND", f"fixes file not found: {args.fixes}", "check the fixes file path")
-    md_files = [p for p in glob.glob(os.path.join(args.folder, "*.md"))
-                if os.path.basename(p) not in ("qa_report.md", "review_notes.md")]
+    # A converted chapter's Markdown is <name>.md beside <name>.blocks.json (also there: <name>.src.md, qa_report.md).
+    blocks = glob.glob(os.path.join(args.folder, "*.blocks.json"))
+    md_files = [blocks[0][: -len(".blocks.json")] + ".md"] if blocks else \
+        [p for p in glob.glob(os.path.join(args.folder, "*.md")) if os.path.basename(p) not in ("qa_report.md", "review_notes.md")]
+    md_files = [p for p in md_files if os.path.isfile(p)]
     if not md_files:
         raise clierr.Fail("NOT_FOUND", f"Markdown file not found in {args.folder}", "use a chapter folder containing one .md file")
     md_path = md_files[0]
