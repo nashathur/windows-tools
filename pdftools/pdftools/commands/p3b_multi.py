@@ -7,7 +7,7 @@ import os
 import pymupdf
 
 from .. import io
-from ..errors import BadArg
+from ..errors import BadArg, PdfError
 from ..pipeline import open_input, write_pdf
 from ..registry import command
 from ..secrets import strip_one_newline
@@ -48,6 +48,7 @@ def _build_split(p):
     p.add_argument("file", type=Path); p.add_argument("-o", "--output")
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--every", type=int); group.add_argument("--ranges", nargs="+"); group.add_argument("--bookmarks", action="store_true")
+    p.add_argument("--level", default="1", help="bookmark level (integer) or auto")
     p.add_argument("--password-file", type=Path); p.add_argument("--password-env")
     p.add_argument("--owner-password-file", type=Path); p.add_argument("--owner-password-env")
     p.add_argument("--ignore-restrictions", action="store_true"); p.add_argument("--break-signature", action="store_true")
@@ -115,22 +116,22 @@ def _split_parts(doc, args):
             label = value.replace(",", "-")
             parts.append(("p" + label, pages))
         return parts
-    toc = doc.get_toc()
-    top = [entry for entry in toc if entry[0] == 1]
-    if not top: raise BadArg("PDF has no top-level bookmarks to split")
-    parts = []
-    for i, entry in enumerate(top):
-        start = 0 if i == 0 else entry[2] - 1
-        end = (top[i + 1][2] - 1) if i + 1 < len(top) else len(doc)
-        parts.append((_safe_title(entry[1]), list(range(start, end))))
-    return parts
+    from ..chapters import plan
+    level = None if args.level == "auto" else int(args.level)
+    planned = plan(doc, level=level, cover_all=True)
+    args._chapter_notes = planned["notes"]
+    return [("front_matter" if part["title"].lower() == "front matter" else _safe_title(part["title"]),
+             list(range(part["start"], part["end"] + 1))) for part in planned["parts"]]
 
 
 def split(args, context):
+    if args.bookmarks and (args.level != "auto" and (not args.level.isdigit() or int(args.level) < 1)):
+        raise BadArg("--level must be auto or an integer of at least 1")
     source = Path(args.file).resolve()
     password = context.owner_password or context.password
     with open_input(source, password) as doc:
         parts = _split_parts(doc, args)
+        outline_notes = getattr(args, "_chapter_notes", [])
         if not parts or any(not pages for _, pages in parts): raise BadArg("split produced an empty part")
         page_count = len(doc)
         labels, used = [], set()
@@ -155,10 +156,13 @@ def split(args, context):
             raise BadArg("split output requires a folder", ["use -o with an existing or trailing-separator folder"])
     if raw_output is not None and (not Path(output_path).is_dir() and not directory_intent):
         raise BadArg("split output requires a folder", ["use -o with an existing or trailing-separator folder"])
+    for note in outline_notes:
+        __import__("clierr").warn("pdf split", "OUTLINE_REPAIRED", note, "review the repaired bookmark page")
     if args.dry_run:
         return {"type": "result", "command": "split", "path": str(target), "kind": "folder", "pages": page_count,
                 "bytes": 0, "verdict": "report", "provisional": True,
-                "page_map": [f"{name}: {','.join(str(n+1) for n in pages)}" for name, pages in parts], "warnings": []}
+                "page_map": [f"{name}: {','.join(str(n+1) for n in pages)}" for name, pages in parts],
+                "warnings": ["OUTLINE_REPAIRED"] if outline_notes else []}
     target.parent.mkdir(parents=True, exist_ok=True)
     if len(str(target)) > 240: raise BadArg(f"output path exceeds 240 characters: {target}", ["use a shorter -o"])
     with io.temp_folder() as temp:
@@ -166,6 +170,8 @@ def split(args, context):
         with io.Staging(target, temp) as stage:
             stage.path.mkdir(parents=True, exist_ok=False)
             staged_names, findings, warnings, log_paths = [], [], [], []
+            if outline_notes:
+                warnings.append("OUTLINE_REPAIRED")
             for label, pages in parts:
                 name = f"{source.stem}_{label}.pdf"
                 staged = stage.path / name
@@ -179,7 +185,9 @@ def split(args, context):
                 part_args = copy(args)
                 part_args.output = staged
                 def writer(src, destination):
+                    original_toc = src.get_toc()
                     src.select(pages)
+                    org._restore_dropped_bookmarks(src, original_toc, pages)
                     src.set_page_labels([])
                     src.save(destination, garbage=3, deflate=True)
                     if restore_catalog:

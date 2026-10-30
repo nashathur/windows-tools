@@ -345,6 +345,17 @@ def _normalize_toc_levels(toc):
     return normalized
 
 
+def _restore_dropped_bookmarks(doc, original_toc, pages):
+    """select drops an entry whose parent points outside the kept pages; rebuild the outline when it did."""
+    destination = {}
+    for out_page, page in enumerate(pages, 1):
+        destination.setdefault(page, out_page)
+    wanted = _normalize_toc_levels([[level, title, destination[page - 1]]
+                                    for level, title, page, *_ in original_toc if page - 1 in destination])
+    if len(doc.get_toc()) != len(wanted):
+        doc.set_toc(wanted)
+
+
 def _clone_repeated_widget_fields(path, rows):
     """Detach repeated-page widgets so each copied occurrence has an independent value."""
     import pikepdf
@@ -548,7 +559,9 @@ def _write_rows(docs, rows, target, *, top_level_toc=False, input_occurrences=()
         restore_catalog = _catalog_features_present(source)
         original_labels = source.get_page_labels()
         preserve_labels = [row["page"] for row in rows] == list(range(len(source)))
+        original_toc = source.get_toc()
         source.select([row["page"] for row in rows])
+        _restore_dropped_bookmarks(source, original_toc, [row["page"] for row in rows])
         source.set_page_labels(original_labels if preserve_labels else [])
         for page, row in zip(source, rows):
             if row["rotation"] is not None:
