@@ -1,6 +1,6 @@
 # pdftools plan
 
-Local PDF toolkit that Claude runs on request: the pdfjar.com tool set plus folder helpers, as one CLI and one skill. Only Claude runs it (no GUI, no right-click menu). The toolkit never sends file content off the PC (see Privacy). Status: phases 1, 2, 3a, 3b, 3c, 4 and 6 built. Plan reviews are finished; remaining issues are caught per phase in build, tests and the phase review.
+Local PDF toolkit that Claude runs on request: the pdfjar.com tool set plus folder helpers, as one CLI and one skill. Only Claude runs it (no GUI, no right-click menu). Commands may use Codex where it helps (see Privacy). Phase 8 brings every PDF capability under pdftools, pdf2md included. Status: phases 1, 2, 3a, 3b, 3c, 4 and 6 built. Plan reviews are finished; remaining issues are caught per phase in build, tests and the phase review.
 
 ## Deliverables
 
@@ -25,6 +25,7 @@ Each phase is its own build, Claude diff read, Codex phase review and commit. A 
 | 6 | `office2pdf`, `toword` (layout), `md2pdf`, `txt2pdf`, `img2pdf`, `toimg` other formats, `images`, `imgtext`, `imginfo`, `imgdiff` | phase tests pass; integration tests run (not skipped) for every tool installed on this PC |
 | H | Hardening (see Hardening): full-tools test profile, validator attack tests, semantic feature checks, real-world corpus sweep | each item's tests pass; corpus sweep has no new or worsened failures against its baseline |
 | 7 | `sanitize`, `redact` | adversarial fixtures pass; security tests are never skippable |
+| 8 | pdf2md merge (see Phase 8): PDF → Markdown with equations read by Codex, chapter plans from the outline, one OCR path, shared text-coverage and KaTeX checks; `C:\Tools\pdf2md` and the `pdf2md` skill retired | pdf2md's tests pass as phase 8 tests; the pdftools skill covers PDF → Markdown |
 
 ### Parallel builds
 
@@ -35,6 +36,7 @@ Each phase is its own build, Claude diff read, Codex phase review and commit. A 
 | 3 | 3a, 3b, 3c, 4, 6 | in parallel, 2–3 at a time (review is the bottleneck) |
 | 4 | 5, H | in parallel, after 3b and 4 are merged |
 | 5 | 7 | after H (7's security postconditions build on H's validator tests) |
+| 6 | 8 | after 7 |
 
 So that parallel builds never edit the same file:
 - Commands self-register: each module in `pdftools\commands\` declares its commands with a decorator (`@command(name, phase, input_kind, output_kind, suffix, rewrites_pdf, check_policy)` plus an argument-builder function); `registry.py` imports every module in `pdftools\commands\` (pkgutil) and `cli.py` builds parsers from the registry. Adding a command never edits `registry.py` or `cli.py`.
@@ -46,7 +48,7 @@ So that parallel builds never edit the same file:
 - Pipeline hooks added for phase 4 (`pipeline.write_pdf`): `encrypt_output={"user_password", "owner_password", "permissions"}` replaces the encryption matrix (`protect`; owner defaults to user), `decrypt_output=True` publishes unencrypted (`unlock`), `opener(path, password)` replaces `open_input` for inputs and the check (`repair`), `OperationResult.baseline` names a PDF the check uses instead of the input (`--flatten-annots`), `OperationResult.keep_input = "<CODE>"` publishes nothing and returns a `warn` result whose path is the input, with that warning (`compress` `NO_GAIN`), and `context.temp` is the run's temp folder for such scratch files.
 - `--each` (folders/globs, any command that offers it): one result record per file plus a `summary` record; a failing file is reported and skipped; exit 4 if any failed (as `batch --each`).
 
-Backlog (not a phase; each item needs its own spec first): `toword --mode math` (pdf2md + pandoc, GPU), a GPU lock shared with pdf2md, `batch --jobs N`, composed batch checks, `img2pdf --scan`, animated GIF/WebP export, HEIC lossless export (`quality=-1`, `chroma=444`, after a round-trip test), `open --page` viewer arguments, `imgtext --surya`, PDF version conversion, PDF/A output, hidden-text and hidden-layer removal in `sanitize`.
+Backlog (not a phase; each item needs its own spec first): `toword --mode math` (phase 8's Markdown + pandoc), `batch --jobs N`, composed batch checks, `img2pdf --scan`, animated GIF/WebP export, HEIC lossless export (`quality=-1`, `chroma=444`, after a round-trip test), `open --page` viewer arguments, `imgtext --surya`, PDF version conversion, PDF/A output, hidden-text and hidden-layer removal in `sanitize`.
 
 ## Contracts (phase 1)
 
@@ -202,7 +204,7 @@ Three spaces, converted only in `coords.py`:
 
 ### Privacy
 
-- The toolkit never calls a model or web service. If Claude wants a model to describe an image, that is outside the toolkit.
+- Commands may send content to Codex (the user's ChatGPT plan) where it helps, as pdf2md's equation reading does; no other model or web service is called. The rules below are security barriers and stay.
 - md2pdf: see its section (static HTML, scripts blocked, network blocked).
 - `file:` URLs with a host part (`file://server/share`, UNC paths) are refused everywhere a URL or path comes from document content; they would make Windows contact that server with the user's credentials.
 - LibreOffice runs with macros disabled and link updates off (see office2pdf).
@@ -537,6 +539,15 @@ Failure policy for both: if the check fails, nothing is published (exit 3, verdi
   - representations the checker cannot read (text drawn as paths, text in images on pages without `--ocr`) are reported `WARN UNVERIFIED_REPRESENTATION`.
 - The result line states that `crop` is not redaction and `redact` is.
 
+### Phase 8: pdf2md merge
+
+Moves `C:\Tools\pdf2md` (book, convert, eqread, qa, postprocess, fix, export, inspect_pdf, validate_math.js; its README describes each) into pdftools; the detailed spec is written when phase 7 is committed. Settled so far:
+- PDF → Markdown becomes pdftools commands: extraction (pymupdf4llm with the layout model, text layer first), equation reading by Codex with pdf2md's three-pass check, QA, fixes and project export. A local-only run (equations left as the PDF's text) stays available.
+- `book.py`'s chapter planning (outline level of about 25 pages, repair of outline entries that point to the wrong page, front matter as its own part) also serves `split` (`--level`, outline repair).
+- One OCR path: pages without a text layer go through `ocr` before extraction, replacing pdf2md's own Tesseract call; `inspect_pdf.py` is replaced by `info`.
+- export.py's missing-text recovery and md2pdf's `check --source` share one word-alignment routine; pdf2md and md2pdf share one KaTeX validator.
+- Afterwards `C:\Tools\pdf2md` and the `pdf2md` skill are retired, and the global CLAUDE.md "PDF → Markdown" rule points to the pdftools skill.
+
 ## Hardening (phase H)
 
 The verdict replaces Claude looking (see Looking), so `ok` must be demonstrably trustworthy. Items, in order:
@@ -575,4 +586,4 @@ pikepdf wraps qpdf, so the two count as one opinion; independent cross-checks us
 - Per phase: Claude reads the workshop worktree's diff, then `ask.ps1 -Accept <path>` copies its changes into `C:\Tools` uncommitted, and the full suite runs once on Windows (env dev) before the commit. The Codex review (role `review`) runs in the workshop on committed code, `-Workshop -Review commit:<sha>` or `-Review custom` naming the commits; before the phase is committed and pushed it runs on Windows as `-Review custom` naming the phase's files. Findings go in the CLAUDE.md Reviews format; commit after the user's OK.
 - After the push, every phase's tests also pass in the workshop clone (`~/src/windows-tools`, `conda run -n dev python -m unittest discover -s pdftools/tests -q`).
 - A builder that finds the plan wrong or silent on something stops and reports it instead of guessing; Claude settles it and updates this plan.
-- `SKILL.md` updated at the end of each phase: that phase's commands, the rules (the verdict is the verification: no hand re-checks after `ok`, JSON jobs for anything beyond simple arguments, `thumb` only for `unchecked`/`failed` or on request, background for estimates over 90 s), common recipes; per-command options from `pdf.cmd <cmd> --help`. Form filling → `anthropic-skills:pdf`; PDF → Markdown → the `pdf2md` skill.
+- `SKILL.md` updated at the end of each phase: that phase's commands, the rules (the verdict is the verification: no hand re-checks after `ok`, JSON jobs for anything beyond simple arguments, `thumb` only for `unchecked`/`failed` or on request, background for estimates over 90 s), common recipes; per-command options from `pdf.cmd <cmd> --help`. Form filling → `anthropic-skills:pdf`; PDF → Markdown → the `pdf2md` skill until phase 8 is committed.
