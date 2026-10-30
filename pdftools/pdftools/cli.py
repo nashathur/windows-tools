@@ -93,9 +93,11 @@ def load_job(path, commands, *, cwd=None, secret_store=None):
                 secret_store.add(os.environ.get(job[key]), owner=owner)
     if job.get("version") != 1:
         problems.append("version must be 1")
-    if len(steps) > 1:
-        problems.append("multi-step jobs are not available in phase 1; run steps separately (batch arrives in phase 5)")
     name = job.get("command", job.get("cmd"))
+    if name is None and len(steps) > 1:
+        name = "batch"  # batch validates its own steps and receives them raw as args.steps
+    if len(steps) > 1 and name != "batch":
+        problems.append(f"a job with several steps runs as batch; drop command/cmd ({name}) or set it to batch")
     step_values = {}
     if name is None and steps:
         if not isinstance(steps[0], dict):
@@ -125,6 +127,8 @@ def load_job(path, commands, *, cwd=None, secret_store=None):
         raise BadArg(f"job has {len(problems)} problem(s): {problems[0]}", problems)
     values = {k: v for k, v in job.items() if k in command_dest}
     values.update(step_values)
+    if name == "batch":
+        values["steps"] = steps
     if "input" in job and "file" in command_dest:
         values["file"] = job["input"]
     for key in sorted(required_dest - set(values)):
@@ -197,10 +201,11 @@ def emit(record, json_output, force_stdout=False):
         print("\n".join(lines))
     elif record.get("type") == "result":
         path = record.get("path") or "(nothing published)"
+        note = f"; {record['note']}" if record.get("note") else ""  # command-specific summary (compress, ocr)
         if record.get("pages") is None:
-            print(f"{path}: {record.get('bytes', 0)} bytes; verdict {record.get('verdict')}")
+            print(f"{path}: {record.get('bytes', 0)} bytes; verdict {record.get('verdict')}{note}")
         else:
-            print(f"{path}: {record.get('pages')} pages, {record.get('bytes', 0)} bytes; verdict {record.get('verdict')}")
+            print(f"{path}: {record.get('pages')} pages, {record.get('bytes', 0)} bytes; verdict {record.get('verdict')}{note}")
     elif record.get("type") == "summary":
         print(json.dumps(record, ensure_ascii=False))
 
@@ -267,7 +272,9 @@ def main(argv=None):
             args.verbose = global_flags["-v"]
             args.dry_run = global_flags["--dry-run"]
             args.stdout = global_flags["--stdout"]
-            raw_output = next((step["output"] for step in job.get("steps", [])[:1] if "output" in step), job.get("output"))
+            steps = job.get("steps", [])
+            raw_output = next((step["output"] for step in steps[:1] if len(steps) == 1 and "output" in step),
+                              job.get("output"))
         else:
             args = build_parser(commands).parse_args(argsv)
             raw_output = _raw_output(argsv)

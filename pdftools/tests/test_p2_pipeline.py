@@ -62,6 +62,12 @@ def test_security(args, context):
     return write_pdf(args.file, get("p2-test-security"), args, context, copy_writer, security=True)
 
 
+@command("p2-test-keep", 2, "pdf", "pdf", "_keep", True, "placements")
+def test_keep(args, context):
+    return write_pdf(args.file, get("p2-test-keep"), args, context,
+                     lambda doc, path: (copy_writer(doc, path), OperationResult(keep_input="NO_GAIN"))[1])
+
+
 class PipelineTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -103,6 +109,18 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("NAME_TAKEN", second["warnings"])
         self.assertIn("WARN pdf p2-test-write NAME_TAKEN:", err)
         self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), before)
+
+    def test_keep_input_publishes_nothing_and_points_at_input(self):
+        source = self.fixtures["plain"]
+        code, record, err = self.run_cli(["p2-test-keep", source])
+        self.assertEqual((code, Path(record["path"]), record["verdict"], record["warnings"]),
+                         (0, source.resolve(), "warn", ["NO_GAIN"]))
+        self.assertEqual(sorted(p.name for p in source.parent.iterdir() if "_keep" in p.name or ".part" in p.name), [])
+        self.assertIn("WARN pdf p2-test-keep NO_GAIN:", err)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cli.emit(dict(record, note="1000 → 1000 bytes (0 %)"), False)
+        self.assertTrue(out.getvalue().rstrip().endswith("verdict warn; 1000 → 1000 bytes (0 %)"))
 
     def test_invariant_failure_publishes_unchecked_and_exit_three(self):
         source = self.fixtures["plain"]

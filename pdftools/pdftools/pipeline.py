@@ -203,8 +203,18 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
                 candidate_op = writer(doc, stage.path)
                 if isinstance(candidate_op, OperationResult):
                     op = candidate_op
+                source_pages = doc.page_count if doc else None
                 for item in docs:
                     item.close()
+                if op.keep_input:
+                    stage.cleanup()
+                    warnings.append(op.keep_input)
+                    for warning in warnings:
+                        clierr.warn(f"pdf {spec.name}", warning, f"{spec.name} produced warning {warning}; output is the input",
+                                    "nothing to do; the input is already the best result")
+                    return {"type": "result", "command": spec.name, "path": str(source), "kind": "pdf",
+                            "pages": source_pages, "bytes": source.stat().st_size,
+                            "verdict": "warn", "warnings": warnings, "findings": []}
                 check_password = password
                 if decrypt_output:
                     check_password = None

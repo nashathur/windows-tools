@@ -43,7 +43,7 @@ So that parallel builds never edit the same file:
 - Phase 2 also delivers `textmatch.py` and `pages.py`, so phase 7 does not depend on phase 4's code.
 - Commands split across phases: 3a adds the folder branch of `info` in `commands\p1_info.py` (no other phase touches it). Phase 6 extends 3c's `toimg` module (other formats) and 3a's `check` module (`--source`), so phase 6 starts after 3a and 3c are committed; 3c keeps its `toimg` writers in a format → writer table so phase 6 only adds entries.
 - A module with several commands defines `add_arguments_<name>(parser)` per command (the registry prefers it over `add_arguments`); never dispatch on `parser.prog`, which job parsing does not set.
-- Pipeline hooks added for phase 4 (`pipeline.write_pdf`): `encrypt_output={"user_password", "owner_password", "permissions"}` replaces the encryption matrix (`protect`; owner defaults to user), `decrypt_output=True` publishes unencrypted (`unlock`), `opener(path, password)` replaces `open_input` for inputs and the check (`repair`), `OperationResult.baseline` names a PDF the check uses instead of the input (`--flatten-annots`), and `context.temp` is the run's temp folder for such scratch files.
+- Pipeline hooks added for phase 4 (`pipeline.write_pdf`): `encrypt_output={"user_password", "owner_password", "permissions"}` replaces the encryption matrix (`protect`; owner defaults to user), `decrypt_output=True` publishes unencrypted (`unlock`), `opener(path, password)` replaces `open_input` for inputs and the check (`repair`), `OperationResult.baseline` names a PDF the check uses instead of the input (`--flatten-annots`), `OperationResult.keep_input = "<CODE>"` publishes nothing and returns a `warn` result whose path is the input, with that warning (`compress` `NO_GAIN`), and `context.temp` is the run's temp folder for such scratch files.
 - `--each` (folders/globs, any command that offers it): one result record per file plus a `summary` record; a failing file is reported and skipped; exit 4 if any failed (as `batch --each`).
 
 Backlog (not a phase; each item needs its own spec first): `toword --mode math` (pdf2md + pandoc, GPU), a GPU lock shared with pdf2md, `batch --jobs N`, composed batch checks, `img2pdf --scan`, animated GIF/WebP export, HEIC lossless export (`quality=-1`, `chroma=444`, after a round-trip test), `open --page` viewer arguments, `imgtext --surya`, PDF version conversion, PDF/A output, hidden-text and hidden-layer removal in `sanitize`.
@@ -71,7 +71,7 @@ set PYTHONIOENCODING=utf-8
 
 - Every parser is a subclass of `argparse.ArgumentParser` with `allow_abbrev=False` and `error()` raising `BadArg`; usage text is never printed.
 - stdout carries results only. Default: one human line per result. `--json`: JSON Lines, each record with `type`:
-  - `result`: `{type, command, path, kind: pdf|image|docx|html|txt|json|zip|folder, pages, bytes, verdict, warnings: [codes]}`
+  - `result`: `{type, command, path, kind: pdf|image|docx|html|txt|json|zip|folder, pages, bytes, verdict, warnings: [codes]}`, plus an optional `note` (a command's one-line summary, appended to the human line)
   - `report`: read-only commands: `{type, command, input, verdict, data | path}`
   - `error`: `{type, command, code, message, fix, log, problems: [...]}`
   - `summary`: batch totals
@@ -110,7 +110,7 @@ The canonical agent interface; shorthand is a convenience for simple cases.
 - `pdf.cmd <command> --job FILE` or `--job -` (stdin). UTF-8, BOM allowed. `version` must be 1.
 - Keys are the command's argparse `dest` names; unknown keys are `BAD_ARG`. With `--job`, only global flags (`-v`, `--json`, `--dry-run`, `--stdout`) may be given on the command line.
 - Paths: relative paths resolve against the job file's folder (`--job -`: the current folder); on the plain command line, against the current folder.
-- Before phase 5, a job with more than one step is `BAD_ARG ... | fix: run steps separately (batch arrives in phase 5)`.
+- A job with more than one step and no `command`/`cmd` (or with `cmd: batch`) runs as `batch`: the job loader passes the raw `steps` list as `args.steps` and `batch` validates every step itself. Several steps with any other command are `BAD_ARG`.
 - Shorthand grammar, organizer: items separated by `,`; item = `N | N-M | N- | -M | odd | even | rev` optionally followed by `@90|@180|@270` and/or `xK`, or `blank` / `blank=a4|letter|WxH`. No other files, colons or quotes in shorthand. Batch shorthand: steps separated by ` | `, each step only a command name and flags without spaces in values. Anything else needs a job.
 - Nothing is ever run through a shell.
 

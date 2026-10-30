@@ -52,6 +52,7 @@ class OperationResult:
     annotation_delta: int | None = None
     cropboxes: list = field(default_factory=list)
     baseline: str | None = None  # PDF the check compares against instead of the input (e.g. a baked copy)
+    keep_input: str | None = None  # warning code; nothing is published and the result points at the input (compress NO_GAIN)
 
 
 @dataclass

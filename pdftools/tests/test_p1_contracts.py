@@ -16,7 +16,7 @@ import clierr
 import pymupdf
 from pdftools import coords, crypt, io, pages
 from pdftools.cli import Parser, build_parser, load_job
-from pdftools.registry import discover
+from pdftools.registry import Command, discover
 from pdftools.errors import BadArg, PdfError
 from pdftools.secrets import SecretStore
 from pdftools.tools import run_tool
@@ -62,6 +62,13 @@ class ContractsTest(unittest.TestCase):
             job.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaises(BadArg):
                 load_job(job, commands)
+        # several steps without a command go to batch, which receives them raw
+        fake = Command("batch", "5", "pdf", "pdf", "", True, "report",
+                       lambda p: p.add_argument("file", nargs="?", type=Path), None)
+        steps = [{"cmd": "rotate", "by": 90}, {"cmd": "numbers"}]
+        job.write_text(json.dumps({"version": 1, "input": "input.pdf", "steps": steps}), encoding="utf-8")
+        args, _ = load_job(job, dict(commands, batch=fake))
+        self.assertEqual((args.command, args.steps, args.file), ("batch", steps, (job.parent / "input.pdf").resolve()))
         malformed = {"version": 1, "command": [], "input": [], "output": {},
                      "password_file": [], "password_env": {}, "owner_password_file": 1,
                      "owner_password_env": [], "steps": [{}, 7]}
