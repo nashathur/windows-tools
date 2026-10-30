@@ -60,7 +60,8 @@ def dev_tool_env(temp, langs="eng+ind", env=None):
     return child
 
 
-def run_tool(argv, *, timeout=None, cwd=None, env=None, temp=None, secret_env=(), secret_values=()):
+def run_tool(argv, *, timeout=None, cwd=None, env=None, temp=None, secret_env=(), secret_values=(), input=None):
+    """input: text sent to the tool's stdin (e.g. a prompt), never on its command line."""
     if not isinstance(argv, (list, tuple)):
         raise TypeError("tool arguments must be an argv list")
     if any(secret and any(str(secret) in str(arg) for arg in argv) for secret in secret_values):
@@ -78,6 +79,7 @@ def run_tool(argv, *, timeout=None, cwd=None, env=None, temp=None, secret_env=()
             child_env["XDG_RUNTIME_DIR"] = str(runtime)
     try:
         proc = subprocess.Popen(list(map(str, argv)), cwd=cwd or temp, env=child_env,
+                                stdin=subprocess.PIPE if input is not None else None,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 encoding="utf-8", errors="replace")
     except FileNotFoundError:
@@ -86,7 +88,7 @@ def run_tool(argv, *, timeout=None, cwd=None, env=None, temp=None, secret_env=()
     try:
         from .watchdog import paused
         with paused():
-            stdout, stderr = proc.communicate(timeout=timeout)
+            stdout, stderr = proc.communicate(input=input, timeout=timeout)
     except (KeyboardInterrupt, subprocess.TimeoutExpired) as exc:
         try:
             parent = psutil.Process(proc.pid)

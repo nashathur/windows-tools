@@ -38,7 +38,8 @@ def tool_info(name):
     if name == "node":
         try:
             toolkit = Path(__file__).resolve().parents[1]
-            child_env = dict(os.environ, NODE_PATH=str(toolkit / "node_modules"))
+            # A worktree has no node_modules (git-ignored); builds point NODE_PATH at a checkout that has them.
+            child_env = dict(os.environ, NODE_PATH=os.environ.get("NODE_PATH", str(toolkit / "node_modules")))
             check = subprocess.run([path, "-e", "require.resolve('marked');require.resolve('katex');require.resolve('puppeteer-core')"],
                                    capture_output=True, text=True, timeout=8, env=child_env)
             if check.returncode:
