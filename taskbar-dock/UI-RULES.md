@@ -7,25 +7,25 @@ Corner reasoning and table: README.md "Corner design".
 
 ## Rounded corners
 Modelled on Apple's hardware/UI: the closer a surface is to the hand, the rounder it is.
-1. **Roundness = 2 × radius ÷ shorter side.** Pick it by role, not by eye: big panels ≤ ~8%
+1. Roundness = 2 × radius ÷ shorter side. Pick it by role, not by eye: big panels ≤ ~8%
    (use Windows' own DWM corner, below), buttons/hover highlights ~20-30% (`highlight_shape`),
    cards and cover art ~25% (`draw::card_radius`: side ÷ 8, 4-12 px), badges/chips 30-50%,
    dots, switches, avatars, progress ends 100% (radius = shorter side ÷ 2).
-2. **Nested shapes are concentric:** inner radius = outer radius − the gap between them,
+2. Nested shapes are concentric: inner radius = outer radius − the gap between them,
    `draw::concentric(outer, gap, floor)` with the control radius as floor for clickable things
    (menu rows: `PANEL_RADIUS` − inset). Never give a child the parent's radius.
-3. **One source of radii:** `Look` (`control_radius`) via `draw::highlight_shape` /
+3. One source of radii: `Look` (`control_radius`) via `draw::highlight_shape` /
    `card_radius` / `concentric`; widgets never hard-code a radius. Multiply by DPI `scale`,
    round to whole px; `shape_cover`/`background_rect` clamp to min(w, h) ÷ 2. One
    `draw::fill_round` (anti-aliased, alpha) for panel pixels; don't copy it into a widget.
    Known gap: weather's bars and discord's buttons are GDI `RoundRect` (not anti-aliased,
    drawn on a plain DC); the radius is shared, the edge is not smooth.
-4. **Panels:** Block's panel windows get Windows' own round corner (`DWMWCP_ROUND`); a widget
+4. Panels: Block's panel windows get Windows' own round corner (`DWMWCP_ROUND`); a widget
    draws inside them and never shapes the window itself.
-5. **Drawn shapes** go through `draw::round_rect` / `background_rect` (anti-aliased coverage, so
+5. Drawn shapes go through `draw::round_rect` / `background_rect` (anti-aliased coverage, so
    the edge fades instead of stepping). Borders and rings follow the same shape (`progress_ring`
    runs along the rounded outline); inset a stroke by half its width.
-6. **Radius above 8 px (`draw::SMOOTH_ABOVE`):** a plain circular arc shows where the straight
+6. Radius above 8 px (`draw::SMOOTH_ABOVE`): a plain circular arc shows where the straight
    edge ends and the curve starts, so `draw::shape_cover` (used by `round_rect` and
    `fill_round`) switches to a continuous-curvature corner: superellipse n = 3.2 reaching
    1.5 × radius along each edge, as deep on the diagonal as the circle (tested). Automatic;
@@ -44,10 +44,10 @@ full-height bar**: the tray-icon box (`draw::icon_box`, 16 px at 100%) + `draw::
 (4 px at 100%) on every side, centred on the taskbar's middle and on the glyph, never wider than
 the button's column. Get it from `draw::button_box(col, height, scale)` and draw it with
 `draw::background_rect` (or a tinted copy with the same box and `highlight_shape` radius); never
-pass a button's whole column or the strip's height. **The hitbox is the same box**: hit-test a
+pass a button's whole column or the strip's height. The hitbox is the same box: hit-test a
 button with `button_box` at (x, y) (the layout keeps its drawn height and scale for this), so the
 margin around the box, above and below it, belongs to the strip (click panel, drag), and what
-lights up is exactly what is clickable. Only the *whole-strip* highlight spans
+lights up is exactly what is clickable. Only the whole-strip highlight spans
 `(0, inset, width, height - inset)`. A brand colour may tint the box (discord: blurple, red for
 Leave / switched-on), the geometry stays shared. A new button gets this by using `button_box`.
 
@@ -59,7 +59,7 @@ moves the strip. The widget only says which windows are the app's and the fallba
 fallback: `shell:AppsFolder\<id>` or a `scheme://` link, for an app sitting in the tray). Build
 the cover's box with `draw::centered_box`.
 
-**Cover feel** is Block's. The widget does two things with the same resting box: `Content::hit`
+Cover feel is Block's. The widget does two things with the same resting box: `Content::hit`
 returns `Hit::Cover(box)` over it (Block's hover, press and click on the cover need this; the
 default `hit` is `Hit::Strip`, and a click there toggles the panel), and `Content::cover` returns
 it. Block then grows it while hovered (`anim::HOVER_GROW` 1.06), dips it while pressed

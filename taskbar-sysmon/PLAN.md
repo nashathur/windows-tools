@@ -60,20 +60,20 @@ G 41%   ↓1.2M
 - CPU temperature (panel): warn at `cpu_temp_warn` (80 °C), critical at `cpu_temp_crit` (90 °C).
 
 ### 2.4 Main panel (hover and left click; a click inside pins it, Block's)
-- Row 1: "System" left; **Task Manager** button right (opens `taskmgr.exe`).
-- Row 2: range **1m / 5m / 1h** (saved as `range`), speed **High / Normal / Low / Paused**,
-  **Reset graphs** button.
+- Row 1: "System" left; Task Manager button right (opens `taskmgr.exe`).
+- Row 2: range 1m / 5m / 1h (saved as `range`), speed High / Normal / Low / Paused,
+  Reset graphs button.
 - Four cards, 2 × 2, each with a boxed graph over the range:
-  - **CPU · <name>**: %, graph, per-thread bars, clock (GHz), Temp (°C or "—").
-  - **GPU · <name>**: %, graph, VRAM used / total, temp · power, clock · fan.
-  - **Memory**: in use %, graph, in use / total GB, committed / limit GB, cached GB.
-  - **Network · <adapter>**: ↓ speed, ↓ and ↑ lines in one auto-scaled graph, link speed, session
+  - CPU · <name>: %, graph, per-thread bars, clock (GHz), Temp (°C or "—").
+  - GPU · <name>: %, graph, VRAM used / total, temp · power, clock · fan.
+  - Memory: in use %, graph, in use / total GB, committed / limit GB, cached GB.
+  - Network · <adapter>: ↓ speed, ↓ and ↑ lines in one auto-scaled graph, link speed, session
     totals ↓ / ↑.
 - Nothing below the cards. 5m / 1h graphs downsample to the pixel width (max per pixel for the line).
 - Buttons use `draw::button_box` geometry and highlights (UI-RULES.md).
 
 ### 2.5 Right-click panel
-Own rows on top: **Open Task Manager**, **Reset graphs**, **Update speed** (a new shared
+Own rows on top: Open Task Manager, Reset graphs, Update speed (a new shared
 three/four-way choice row in `menu_panel`, High / Normal / Low / Paused); then Block's standard
 rows (Show on taskbar, Compact mode, Start with Windows, Edit settings…, Quit).
 

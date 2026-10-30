@@ -4,15 +4,15 @@ Widgets using it: `..\buswidget` (bus departures), `..\taskbar-weather`, `..\tas
 `..\taskbar-discord` (Discord voice chat via Discord's local RPC), `..\taskbar-sysmon` (CPU / GPU /
 RAM / network, with an elevated CPU-temperature helper in `temp\`). Each widget's CLAUDE.md imports
 this file. Reference, read by section when the task reaches it:
-- **BLOCK.md**: Block's API (Spec, Content, Ctx, panel shell, tray icon, settings it owns). Read
+- BLOCK.md: Block's API (Spec, Content, Ctx, panel shell, tray icon, settings it owns). Read
   before changing Block or building or changing a widget.
-- **UI-RULES.md**: corners, button highlights and hitboxes, cover/logo click and feel. Read before
+- UI-RULES.md: corners, button highlights and hitboxes, cover/logo click and feel. Read before
   changing any drawing, hit box, highlight, radius or cover behaviour.
 - README.md: the recipe for a new widget (a `Spec` + a `Content`), the shared `dock` settings,
   corner design reasoning, dockctl ("Testing"). plan\PLAN.md: open ideas.
 
 ## Library modules (windows-sys 0.52, handles are isize; `windows` 0.58 only for UI Automation in icons)
-**A widget is a `Spec` + a `Content` handed to `block::run`; Block does the rest** (BLOCK.md).
+A widget is a `Spec` + a `Content` handed to `block::run`; Block does the rest (BLOCK.md).
 A widget's own code uses settings, style, system, theme (every colour, font and size; checked by
 `tests\theme_lint.rs`), draw, text_edit, emoji, badge, anim, marquee, window; the other modules
 are Block's internals. One line per module: README.md "What's in it".
@@ -20,7 +20,7 @@ The settings app crate is `settings-app\`; build, install and `dockctl settings`
 
 ## Where a rule lives (rule)
 A behaviour every widget shares is written once, in Block or in `theme`, never copied into a
-widget: **change it there, and every widget has it.** Only content is per widget (what the strip
+widget: change it there, and every widget has it. Only content is per widget (what the strip
 and panels show, their rows, their data). If a change would touch the same code in two widgets,
 it belongs in Block (or `theme`); if Block can't express it, add a `Spec` field or a `Content`
 method with a default (and a test in `block/core.rs`), don't special-case one widget. A change to a
@@ -28,15 +28,15 @@ rule in UI-RULES.md is made in Block / `theme`, then checked on every widget (do
 `_tmp\shot_strip.ps1`).
 
 ## Every widget has these five parts (rule)
-1. **Full mode**: the normal strip.
-2. **Compact mode**: the smallest useful strip (icon/badge + the key values; weather: temperature over
+1. Full mode: the normal strip.
+2. Compact mode: the smallest useful strip (icon/badge + the key values; weather: temperature over
    humidity, bus: next two departures; others one line, vertically centred). Setting `compact` (bool)
    in the widget's section, switchable from the right-click panel; the strip redraws and glides back
    into its dock slot on change.
-3. **Hover panel**: opens after the hover delay without taking focus, closes when the mouse
+3. Hover panel: opens after the hover delay without taking focus, closes when the mouse
    leaves (`panel::PanelBehaviour`). It may be the left-click panel shown unpinned.
-4. **Left-click panel**: the main panel, pinned (stays until clicked away or clicked again).
-5. **Right-click panel**: a panel in the same look as the others (not a Windows menu): the
+4. Left-click panel: the main panel, pinned (stays until clicked away or clicked again).
+5. Right-click panel: a panel in the same look as the others (not a Windows menu): the
    widget's actions, then Show on taskbar, Compact mode and Start with Windows as on/off
    switches, Edit settings…, Quit (Block's `menu_panel` with its standard rows).
    Right click while the left-click panel is open switches to it, and back.
@@ -82,7 +82,7 @@ fetches it runs outside content timers.
 
 ## Testing (prefer in this order)
 1. Unit tests (pure logic in the library: `block/core.rs`, `ctl.rs`, `panel.rs`, …).
-2. **dockctl** for widgets on Block (weather, discord, bus, media, sysmon):
+2. dockctl for widgets on Block (weather, discord, bus, media, sysmon):
    `taskbar-dock\dockctl.exe <widget|all> state|panel …|menu …|tray click …|set|get|log|redraw|quit|simulate …`
    (README.md "Testing"). It runs commands through Block's own paths in the running widget, so
    settings, logs and state are the REAL `%APPDATA%`. Use it instead of `_tmp\real.ps1` for the
@@ -104,7 +104,7 @@ reaches the bug's real path, say so instead of adding a shallow test.
   Write/Edit tools, or `[IO.File]::WriteAllText(path, text, (New-Object Text.UTF8Encoding $false))`).
   Never PS 5.1 `Set-Content`/`Out-File -Encoding ASCII`/`Get-Content | ConvertTo-Json` round trips:
   they have turned "→" into mojibake and non-ASCII into "???" before.
-- **Claude desktop sessions see a private `%APPDATA%`** (MSIX): reads/writes under
+- Claude desktop sessions see a private `%APPDATA%` (MSIX): reads/writes under
   `AppData\Roaming` from session shells, and widgets started from them, go to
   `AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\TaskbarDock`, not the real folder
   the sign-in launcher and Explorer-started widgets use. To read/write the real folder or start widgets as at sign-in, use a one-off scheduled task

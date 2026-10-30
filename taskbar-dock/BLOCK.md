@@ -27,7 +27,7 @@ Right-click panel rows: `menu_panel::Row::switch` calls `Content::menu_switch`; 
 A left click on the strip always toggles the panel (Block's, no widget decides); a tray icon's clicks
 are Block's too (no strip needed: the panel opens above the pointer).
 
-The standard **Edit settings…** row opens `taskbar-dock-settings.exe` on this widget's page.
+The standard Edit settings… row opens `taskbar-dock-settings.exe` on this widget's page.
 If the app is missing or does not start successfully, Block opens `settings.json` in Notepad.
 
 ## Main panel (`shell.rs`)
@@ -71,7 +71,7 @@ with, after the strip's redraw, no fade.
   none), publishes it as `full` (the others refit
   once) and glides to it like a compact switch (`start_resize` watches the target width: compact
   or crowded; `core::animate_width`, tested), `publish_drawn` each frame so the neighbours follow. Meanwhile `Frame::fit_width` may
-  be **wider** than the content: lay out to it up to your maximum (media's text column, discord's
+  be wider than the content: lay out to it up to your maximum (media's text column, discord's
   avatar column). Without the flag a new width jumps (weather, bus); a compact switch
   animates for every widget.
 - The compact switch and every glide take `glide_ms` (300) on the taskbar's own curve

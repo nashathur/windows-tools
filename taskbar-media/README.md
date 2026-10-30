@@ -6,29 +6,29 @@ library in `..\taskbar-dock`, and looks and behaves like them.
 
 ## What it shows
 
-- **Strip** (in the taskbar, left of the tray): the cover with a progress ring around it, the
+- Strip (in the taskbar, left of the tray): the cover with a progress ring around it, the
   title and artist, and three buttons: previous / play-pause / next, or −15 s / play-pause /
   +15 s for a single video. It follows whatever is playing, keeps a paused track for 2 minutes,
   then fades out (and fades in when something plays). `compact: true` shows only the cover and
   buttons. Crowded, its text column narrows first.
-- **Ring**: the position when the app reports it live (Spotify). Full and slowly pulsing when it
+- Ring: the position when the app reports it live (Spotify). Full and slowly pulsing when it
   doesn't (Firefox while playing). Red for a live stream (a Twitch/Kick tab, or a track without a
   length).
-- **Click panel**: hover the strip (opens without focus, closes when the mouse leaves) or click it
+- Click panel: hover the strip (opens without focus, closes when the mouse leaves) or click it
   (stays open; Esc closes it). Cover, title, artist, album, app, a progress bar you can click to
   seek, the buttons, and the app's volume and mute (its Volume Mixer entries on every device).
   A click in a hover-opened panel pins it.
-- **Right-click panel** (the one every widget shares): the track as its header, Open *app*, Copy
+- Right-click panel (the one every widget shares): the track as its header, Open app, Copy
   "Artist – Title", then Show on taskbar, Compact mode, Start with Windows, Edit settings…, Quit.
-- **Tray icon** (a play logo): shown while the strip isn't (Show on taskbar off, or nothing
+- Tray icon (a play logo): shown while the strip isn't (Show on taskbar off, or nothing
   playing). Left click opens the click panel ("Nothing playing" when that's so), right click the
   right-click panel.
-- **Highlight box**: colour and strength follow Block's shared Highlight box settings. Automatic
+- Highlight box: colour and strength follow Block's shared Highlight box settings. Automatic
   uses the site's or app's brand colour; for an unlisted site it uses the tab icon's dominant
   colour when the tab exposes a host, then falls back to the app's colour while the icon loads.
   High contrast suppresses tint. The playing tab is found by UI Automation, so the
   panel says the YouTube tab is playing in Firefox.
-- **No cover**: the site's or app's logo, else a badge in the brand colour, else ♪.
+- No cover: the site's or app's logo, else a badge in the brand colour, else ♪.
 
 Supported players: Spotify (desktop app) and Firefox are tested; anything that reports to
 Windows' media controls should work. Discord doesn't report to Windows, so it isn't shown.

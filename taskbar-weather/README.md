@@ -3,15 +3,15 @@
 The current weather on the Windows 11 taskbar, on the shared `taskbar-dock` library (Block owns
 the strip, dock, panels and tray icon; `..\taskbar-dock\BLOCK.md`).
 
-- **Strip**: an icon, the temperature over the humidity (dimmer), the conditions beside them.
+- Strip: an icon, the temperature over the humidity (dimmer), the conditions beside them.
   Compact: the icon with temperature over humidity. `label_position` "auto" puts it next to the
   tray when the taskbar icons are left-aligned, else on the left side (not a dock member there).
-- **Flyout** (hover on the strip, or left click on the strip or tray icon; the tray icon's hover
+- Flyout (hover on the strip, or left click on the strip or tray icon; the tray icon's hover
   shows only its tooltip): current conditions, the next 6
   hours, the next 5 days with temperature ranges and rain chance (shown from 10%, coloured from
   50%).
-- **Right-click panel**: Refresh now, Fahrenheit, then Block's standard rows.
-- **Tray icon** (a cloud logo) while the strip is off; its tooltip shows the weather.
+- Right-click panel: Refresh now, Fahrenheit, then Block's standard rows.
+- Tray icon (a cloud logo) while the strip is off; its tooltip shows the weather.
 
 ## Data
 
@@ -19,7 +19,7 @@ the strip, dock, panels and tray icon; `..\taskbar-dock\BLOCK.md`).
   flyout shows the attribution). One call per `refresh_minutes`. Location by IP (ip-api.com)
   unless `city` or coordinates are set. `model` picks the forecast model (`best_match` by
   default; `knmi_seamless` = KNMI HARMONIE-AROME 2 km for 2.5 days, then ECMWF).
-- **KNMI (optional, Netherlands)**: with `knmi_api_key` (an **EDR API** key from the KNMI
+- KNMI (optional, Netherlands): with `knmi_api_key` (an EDR API key from the KNMI
   Developer Portal; the anonymous Open Data key doesn't work for EDR), current temperature,
   humidity and wind are the latest 10-minute measurement at the nearest station within 50 km
   (~4 requests/hour). Symbol, "feels like" and forecasts stay Open-Meteo. The flyout shows

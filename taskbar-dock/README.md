@@ -94,7 +94,7 @@ the pages, compares widget rows with descriptions and `get`, then closes the app
 |---|---|
 | `gap` | Pixels (at 100%) between docked widgets and to the tray. |
 | `font`, `font_size` | Taskbar text. The defaults are the taskbar clock's font and size. |
-| `text_size` | `1.0` matches the clock, which does **not** follow Windows' Text size. `"system"` follows Windows' Text size instead. |
+| `text_size` | `1.0` matches the clock, which does not follow Windows' Text size. `"system"` follows Windows' Text size instead. |
 | `control_radius` | Corner radius of the hover highlight and badges. Windows 11 controls use 4 px. Panels get Windows' own 8 px from DWM. |
 | `time_format` | `"system"` uses the Windows region format, e.g. `h:mm tt` → "7:45 PM". `"12h"` or `"24h"` fix it. |
 | `animations` | `"system"` follows Settings → Accessibility → Visual effects → Animation effects. `true`/`false` fix it. When off, slides, zooms and fades are instant. |
@@ -113,7 +113,7 @@ Missing keys are filled in with the defaults the first time a widget starts, so 
 Source: arun.is, "The secret formula for Apple's rounded corners". The rules to follow are in
 UI-RULES.md; this is the reasoning.
 
-**Closer to the human, the rounder.** The author measured Apple products as a roundness score,
+Closer to the human, the rounder. The author measured Apple products as a roundness score,
 corner diameter ÷ the rectangle's shorter side, and found each category sits in its own band:
 
 | Role (Apple) | Roundness | Widget equivalent | Radius to use |
@@ -129,12 +129,12 @@ corner diameter ÷ the rectangle's shorter side, and found each category sits in
 Rules of thumb: 4 px for a 16-32 px control is the Windows 11 default and stays; the only
 panel radius is the one DWM draws, so a panel and the system flyouts next to it match.
 
-**Concentric corners.** A phone's screen corner is the case corner shrunk by the bezel, so the
+Concentric corners. A phone's screen corner is the case corner shrunk by the bezel, so the
 bezel keeps one width all the way round. Same for UI: inner radius = outer radius − gap
 (floored at 0). A child 4 px inside an 8 px panel gets 4 px, not 8; a child 8 px or more inside
 gets 0 from the formula, so use `control_radius` as the floor for anything interactive.
 
-**Continuous curvature ("squircle").** A circular arc meets the straight edge with a jump in
+Continuous curvature ("squircle"). A circular arc meets the straight edge with a jump in
 curvature, so reflections/eyes see a seam. Apple's corners ease the curvature in and out
 instead (superellipse-like; Figma's "corner smoothing 60%" is the common approximation). Only
 the property matters: no visible seam, radius appearing larger
@@ -145,7 +145,7 @@ not against Apple's real curve).
 
 ## Building a new widget
 
-**Start from the template:** `scripts\new_widget.ps1 -Name taskbar-x -Title "X"
+Start from the template: `scripts\new_widget.ps1 -Name taskbar-x -Title "X"
 [-Description "…"] [-Register]` copies `template\` (a counter widget with all five parts, a tray icon, a `do
 now` command, one setting, the shared log, its live-check extra) to `..\taskbar-x`, builds and
 tests it, builds the release executable, registers it, syncs the session settings copy, and prints
@@ -153,30 +153,30 @@ how to start it. `-Section` defaults to the name without `taskbar-` and must equ
 Use `-NoRegister` to skip registration and follow the printed manual steps in order. Then replace
 the counter with the content.
 
-**A new widget = a `Spec` + a `Content`.** The widget supplies the parameters and what to draw;
+A new widget = a `Spec` + a `Content`. The widget supplies the parameters and what to draw;
 `block::run(spec, content)` does everything else (BLOCK.md has the API). The closest examples:
 `taskbar-weather` (smallest), `buswidget\rust` (a picker panel, a worker), `taskbar-media` (buttons, a
 cover, a width that follows its content), `taskbar-discord` (a worker, a width that follows).
 Supply `Content::tint`'s automatic colour for the Highlight box, or None when the widget has no automatic colour.
 
-1. **The crate**: `taskbar-dock = { path = "../taskbar-dock" }`, `build.rs` + `app.manifest`
+1. The crate: `taskbar-dock = { path = "../taskbar-dock" }`, `build.rs` + `app.manifest`
    copied from `taskbar-weather` (a layered child window of the taskbar needs the Windows 8+
    `supportedOS` manifest), a `dev.ps1` like theirs (it wraps `taskbar-dock\scripts\dev.ps1`), and a
    `CLAUDE.md` that imports `..\taskbar-dock\CLAUDE.md`. `windows-sys` (like this library and bus)
    or `windows` (weather, media: handles are `h.0 as isize`).
-2. **`Spec::new(class, section, title, log)`**: `class` is the strip window's class and its name
+2. `Spec::new(class, section, title, log)`: `class` is the strip window's class and its name
    in the dock order, `section` the settings section (also the name on the startup list). Change
    only what differs from the defaults: `mutex`, `float`, `force_float`, `draggable`, `hover_panel`,
    `compact_when_crowded`, `stretch` (any width between compact and full, when crowded),
    `glide_width` (a width that follows the content), `log_file` (dockctl's `log`).
-3. **A `Content`** (`block::Content`): `measure(frame, compact)` and `draw(canvas, frame)` are
+3. A `Content` (`block::Content`): `measure(frame, compact)` and `draw(canvas, frame)` are
    required; everything else has a default: `hit`, `cover`, `tint`, `visible`, `side`, `start`,
    `timer`, `button`, `cover_click`, the panels (`panel_size`, `panel_draw`, `panel_mouse`,
    `panel_key`, `panel_char`, `panel_wheel`, `panel_shown`, `panel_state`), the right-click panel's own rows (`menu`, `menu_switch`, `menu_choice` (a `menu_panel::Row::choice` picker), `menu_action`),
    `settings_changed`, `look_changed`, `taskbar_restarted`, `on_message`, `closing`, and the tray
    icon (`tray_icon`, `tray_tip`). A `Ctx` collects what a callback wants done (`redraw`,
    `redraw_panel`, `every`, `after`, ...).
-4. **Drawing**: colours, fonts and sizes come from `theme` (`Theme::new(look)`, `theme::space`,
+4. Drawing: colours, fonts and sizes come from `theme` (`Theme::new(look)`, `theme::space`,
    `theme::size`, the text styles), never typed in; `tests\theme_lint.rs` (dev.ps1) checks it.
    Every width and position is measured text or `theme::space` × scale, never a pixel number
    (the lint can't catch those). Strip text uses the taskbar clock's font (`look.font`,
@@ -189,19 +189,19 @@ Supply `Content::tint`'s automatic colour for the Highlight box, or None when th
    `draw::progress_ring`, `badge` (a coloured rounded badge with short text), `emoji` (colour
    emoji), `marquee` (a line too long for its box). UI-RULES.md for corners, highlights, hit boxes
    and the cover.
-5. **Settings**: reads are pure; fill defaults on start with `settings::fill_missing` and write
+5. Settings: reads are pure; fill defaults on start with `settings::fill_missing` and write
    only changed keys with `settings::set_key` or a focused `settings::update`. Block owns the
    section's `compact` and `show_on_taskbar`. Reload on
    `Content::settings_changed` (an edit of the file applies live). `Setting::shown_when(key, value)` hides a row until that sibling setting in the same section equals the value. Secrets (API keys) stay in the
    section but are never shown in full in logs, menus or panels; mask them. A data file the user
    may edit (bus's `line_colors.txt`): check its mtime from a content timer.
-6. **Data and network**: fetch on a worker thread, never the UI thread; the worker posts a
+6. Data and network: fetch on a worker thread, never the UI thread; the worker posts a
    message to `ctx.main_window()` (`WM_APP + n`), `Content::on_message` takes it and calls
    `ctx.redraw()`. Be careful with APIs: cache responses on disk, poll no more often than the data
    changes, fetch only when it's useful (bus: live times only when a bus is due within 90
    minutes). On HTTP 429 or an error back off: keep the old data, save the next allowed try so a
    restart doesn't retry early, and show that the data is stale rather than an empty widget.
-7. **Start with Windows** is one of Block's standard right-click rows (the widget's `section` is
+7. Start with Windows is one of Block's standard right-click rows (the widget's `section` is
    its name on the `startup` list in settings.json). The launcher `taskbar-dock-start.exe`
    (src/bin, installed as `taskbar-dock\taskbar-dock-start.exe`) is run at sign-in by the
    Startup-folder shortcut "Taskbar widgets" and starts everything on the list (problems go to
@@ -213,13 +213,13 @@ Supply `Content::tint`'s automatic colour for the Highlight box, or None when th
    `HKCU\...\Run` key (its values are skipped at sign-in on this PC).
    Every widget starts with Windows by default; switching Show on taskbar off idles it. Implement
    `Content::idle` for worker threads; Block pauses content timers by itself.
-8. **Block's job, not the widget's** (the same for every widget): the strip
+8. Block's job, not the widget's (the same for every widget): the strip
    window and its DPI handling, the dock slot, order, drag and drop, fit next to the taskbar's
    buttons (narrow, compact, hide), instant reflow on neighbours' changes, hover / click / pin
    panels with their fade and placement, the right-click panel's standard rows (Show on taskbar,
    Compact mode, Start with Windows, Edit settings…, Quit), the tray icon, one instance,
    Explorer restarts, the floating fallback and following Windows' theme and settings.
-9. **Done** when it has the five parts in CLAUDE.md ("Every widget has these five parts"), it
+9. Done when it has the five parts in CLAUDE.md ("Every widget has these five parts"), it
    behaves like the other widgets (drag, drop, compact, crowding, panels, cover), and
    `dockctl <widget> state|panel|menu` answers.
 
@@ -301,20 +301,20 @@ before returning from the message. The widget does the reading and writing, so i
 worker (timetable, network, Discord, the media session) reply when it finishes; nothing blocks
 the widget meanwhile.
 
-- **bus**: `now` (line, stop, the next six departures, live or scheduled, and the age of the live
+- bus: `now` (line, stop, the next six departures, live or scheduled, and the age of the live
   data the widget already has: no new OVapi request); `stops <query>` (up to 20 matching stops);
   `lines <stop_code>` (lines and directions, numbered); `choose <stop_code> <line> [agency]
   [--to <n|text>]` (saves the stop and line as the picker's Select does; a line with several
   directions fails and lists them until `--to` picks one). Timetable reads go through one queue
   shared with the picker and never download: without a timetable on disk they say so.
-- **weather**: `now` (place, temperature, conditions, last update); `places <query>` (up to 5
+- weather: `now` (place, temperature, conditions, last update); `places <query>` (up to 5
   Open-Meteo geocoding matches, numbered); `place <n | lat,lon | auto>` (`n` from the last
   `places` reply, valid 10 minutes; `auto` = by IP). `place` saves the location, then replies
   once the new weather (or the fetch error) is in.
-- **media**: `now`, `sessions` (one per app, with its id); `play`, `pause`, `toggle`, `next`,
+- media: `now`, `sessions` (one per app, with its id); `play`, `pause`, `toggle`, `next`,
   `prev`, `skip <±s>`, `seek <s>`, `volume <0-100>`, `mute on|off`, each with `--app <id or
   name prefix>` (default: the session the strip shows). Unknown position or length is null.
-- **discord**: `now` (status, channel, members speaking / muted); `mute on|off`, `deafen on|off`
+- discord: `now` (status, channel, members speaking / muted); `mute on|off`, `deafen on|off`
   (set, not toggle: already in that state replies `"changed": false` at once); `leave`. These
   wait for Discord's answer and fail on an error, a disconnect or after 10 s. Sign in and
   Reconnect stay `menu click`.

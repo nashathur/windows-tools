@@ -9,57 +9,57 @@ Not taken from it: the web UI (Tauri), a Save button, search, categories, update
 
 ## Decisions
 
-1. **Registered widgets.** The app shows the widgets on a `widgets` list in settings.json, not
+1. Registered widgets. The app shows the widgets on a `widgets` list in settings.json, not
    whatever is on disk. The four (weather, bus, media, discord) are registered at install. The
    Developer tab registers (pick an exe) and removes; removing only takes the entry off the list
    (and the widget off `startup`), nothing is deleted.
-2. **Home page ("Widgets")**: one row per registered widget: status dot + word, title, one-line
+2. Home page ("Widgets"): one row per registered widget: status dot + word, title, one-line
    description, Show on taskbar switch, and Start (stopped) or Quit + Restart (running). A click
    on the row opens the widget's page.
-3. **Status**: green Running (answers), grey Stopped, orange Not responding (process or window
+3. Status: green Running (answers), grey Stopped, orange Not responding (process or window
    there, no answer in 2 s), red Keeps crashing (the watchdog gave up). Refreshed every 2 s.
-4. **Widget page**: Show on taskbar, Compact mode, Start with Windows on top (the same on every
+4. Widget page: Show on taskbar, Compact mode, Start with Windows on top (the same on every
    page), then the widget's everyday settings as cards in groups. Each card: label, help line,
    control on the right, a Reset (to default) button shown when the value differs from the default.
-5. **Dock page**: the shared `dock` section, all keys, in groups (below).
-6. **Developer tab**, five cards: (1) Advanced settings per widget: the setup-type settings
+5. Dock page: the shared `dock` section, all keys, in groups (below).
+6. Developer tab, five cards: (1) Advanced settings per widget: the setup-type settings
    (bus agency/line/stop, Discord client id/secret/redirect, weather coordinates/place name, KNMI
    key and station), editable, under a warning line; (2) Widget details: exe path, build time,
    pid, last 20 log lines; (3) Registered widgets: Register widget…, Remove from list;
    (4) Raw settings: the whole file read-only, secrets as dots, Open in Notepad; (5) Console
    commands: a copyable dockctl cheat sheet.
-7. **Settings only**: actions (bus Change stop…, Refresh, Update timetable; Discord Sign in,
+7. Settings only: actions (bus Change stop…, Refresh, Update timetable; Discord Sign in,
    Reconnect; weather Refresh) stay in the right-click menus.
-8. **Controls**: switch; segmented buttons (2–3 options) or dropdown (more); slider with the value
+8. Controls: switch; segmented buttons (2–3 options) or dropdown (more); slider with the value
    shown (number with a range); text box (text, open numbers); colour box (hex + swatch); secret
    (dots, reveal while held, typing replaces). Values out of range or not an option are refused,
    by the same check in the app and in dockctl `set`.
-9. **Applying**: no Save button. Switches, segments, dropdowns and sliders write at once (a slider
+9. Applying: no Save button. Switches, segments, dropdowns and sliders write at once (a slider
    on release; while dragging only the label moves); text on Enter or focus loss. Invalid input
    stays in the box with a red line under the card; nothing is written; Esc restores. A "Saved"
    badge (top right) shows "Saved" for 2 s after each write, "Not saved: <reason>" on failure.
    Edits from elsewhere show within a second (the box being edited is left alone).
-10. **Window**: a normal top-level window, one instance; Edit settings… opens it on that widget's
+10. Window: a normal top-level window, one instance; Edit settings… opens it on that widget's
     page (notepad when the app is missing or fails to start). Nav on the left: Widgets, Dock,
     each widget, Developer (bottom). Same look as the panels (`theme`), dark/light live, per-monitor
     DPI, keyboard-only use.
-11. **Tray icons** stay per widget. **Step 13** (one tray icon, owned by the launcher) starts only
+11. Tray icons stay per widget. Step 13 (one tray icon, owned by the launcher) starts only
     once this app has proven robust.
-12. **dockctl reaches every setting** (user, 2026-10-12): anything the app can change, dockctl can
+12. dockctl reaches every setting (user, 2026-10-12): anything the app can change, dockctl can
     too, through the same library code (F); dockctl is not run by the app.
-13. **Testing**: dockctl drives the app (`dockctl settings …`); a smoke check after each build.
+13. Testing: dockctl drives the app (`dockctl settings …`); a smoke check after each build.
 
 ## Contracts
 
 ### 0. Reads are pure, writes are patches (library + four widgets; first, before anything else)
 
 Today every widget's `Config::load()` reads outside the lock and then writes its whole section
-back (`save()`), on start **and on every `settings_changed`** (media `main.rs:418`, bus `:239`;
+back (`save()`), on start and on every `settings_changed` (media `main.rs:418`, bus `:239`;
 weather and discord on start); `Style::load` replaces the whole `dock` object. A change made
 between that read and that write (by the app, dockctl or another widget) is put back to the old
 value. So:
 - `settings::fill_missing(section, defaults: &Value)`: inside one `settings::update`, adds only
-  the keys missing from the **current** section (nested objects: missing leaves), never touches a
+  the keys missing from the current section (nested objects: missing leaves), never touches a
   present key. Every widget's `load` and `Style::load` use it instead of `save()` / replacing
   `dock`; reloads (`settings_changed`) only read. A widget writes a key only when the user
   changes it (its own picker / menu), and then only that key (`settings::set_key(section, key,
@@ -126,11 +126,11 @@ Small builder helpers (`Setting::number(key, label, min, max, step)`, `.help(..)
 `<widget>.exe --describe <out.json>` writes `{ "describe": 1, "section", "class", "title",
 "description", "log_file", "settings": [...], "defaults": {...} }` (settings incl. Block's two
 rows; defaults incl. Block's; `log_file` the absolute log path or null) to `out.json` and exits
-0. **Nothing else happens**: no mutex, no window, no COM, no directory created, no settings read
+0. Nothing else happens: no mutex, no window, no COM, no directory created, no settings read
 or write, no network. So the first statement of each widget's `main` is
 `block::describe_if_asked(describe)`, where `describe: fn() -> block::Describe` is a separate,
 side-effect-free function next to the `Spec` (section, class, title, description, settings,
-defaults, log path computed **without** creating its folder: bus's `data_dir()` creates
+defaults, log path computed without creating its folder: bus's `data_dir()` creates
 `data\`, media calls `CoInitializeEx` first). `main` then builds its `Spec` from the same
 constants as today. Test (per widget, `cargo test`): `describe()` output passes
 `describe::from_json`, every default passes `check`, section/class equal the `Spec`'s.
@@ -160,22 +160,22 @@ through the registry first, then its built-in `WIDGETS` table (so it keeps worki
 Ranges below; where the widget's own code clamps differently, the builder uses the code's range
 and says so. Group headings in brackets. Advanced = Developer tab.
 
-- **bus** [Taskbar] `label` Text "Taskbar label"; `dest` Text empty_ok "Destination" (help:
+- bus [Taskbar] `label` Text "Taskbar label"; `dest` Text empty_ok "Destination" (help:
   "Empty: the trip's own destination"); [Line badge] `badge_color` Color no-hash empty_ok,
   `badge_text` Color no-hash empty_ok. Advanced: `agency`, `line`, `stop_code` Text (help:
   "Set by Change stop… in the menu").
-- **weather** [Location] `city` Text empty_ok (help: "Empty: found by IP. Coordinates in Developer
+- weather [Location] `city` Text empty_ok (help: "Empty: found by IP. Coordinates in Developer
   win over this"); [Display] `units` Choice celsius/fahrenheit, `label_position` Choice
   auto/left/right; [Data] `refresh_minutes` Number 5–180 step 5 "min", `model` Choice best_match
   "Best match", knmi_seamless "KNMI HARMONIE", dmi_seamless "DMI HARMONIE", ecmwf_ifs025 "ECMWF
   IFS", icon_seamless "DWD ICON", other: true. Advanced: `latitude` Optional Number −90–90 step
   0.0001, `longitude` Optional Number −180–180 step 0.0001, `location_name` Text empty_ok,
   `knmi_api_key` Secret, `knmi_station` Text empty_ok.
-- **media** [Strip] `max_width` Number 60–400 step 1 "px", `fixed_width` Switch; [Panel]
+- media [Strip] `max_width` Number 60–400 step 1 "px", `fixed_width` Switch; [Panel]
   `click_panel_width` Number 280–600 step 1 "px"; [Playback] `hide_after_pause_s` Number 0–3600
   step 5 "s", `skip_seconds` Number 1–60 step 1 "s"; [Colour] `tint` Choice brand/cover/off,
   `tint_strength` Number 0–3 step 0.05, `live_color` Color hash.
-- **discord** [Strip] `max_avatars` Number 1–10 step 1, `fixed_width` Switch. Advanced:
+- discord [Strip] `max_avatars` Number 1–10 step 1, `fixed_width` Switch. Advanced:
   `client_id` Text empty_ok, `client_secret` Secret, `redirect_uri` Text.
 
 ### E. Dock page (`style::dock_settings`)
@@ -201,13 +201,13 @@ then a ctl `reload` to the running widget (for a dock key: to every running regi
 `Applied { value, saved: Result<(), String>, followed: Result<(), String> }`: saved and
 followed are reported apart ("Saved", "Saved; the widget hasn't confirmed", "Not saved: …").
 `control::reset` (default from the description) the same way.
-- `reload` (new ctl request): Block re-reads the section and `dock` **regardless of mtime**
+- `reload` (new ctl request): Block re-reads the section and `dock` regardless of mtime
   (today `follow_settings` skips when the mtime matches what Block last saw, which a menu
   switch right after an app edit would cause), calls `settings_changed` / `look_changed`,
   redraws, then replies.
 - Where it runs (the private `%APPDATA%` of Claude sessions): dockctl itself never touches
   settings files when the target widget is running: it sends the request (`set`, `unset`, …)
-  and the **widget** calls `control::apply` (today's path, so it is the real file). Only for a
+  and the widget calls `control::apply` (today's path, so it is the real file). Only for a
   stopped widget (or `--dock` with no widget running, or `widgets …` / `startup …`) does dockctl
   call the library in its own process, and it refuses that when it runs with a package identity
   (`GetCurrentPackageFullName` succeeds = inside the Claude app), saying to start the widget or
@@ -235,20 +235,20 @@ followed are reported apart ("Saved", "Saved; the widget hasn't confirmed", "Not
 
 Step 12 keeps the launcher's watching as it is; per-widget watching (widgets started from the
 app restarted after a crash) belongs to step 13, which reworks the launcher anyway.
-- **Status** (`control::status_all(&[Entry]) -> Vec<Status>`): one process snapshot per round
+- Status (`control::status_all(&[Entry]) -> Vec<Status>`): one process snapshot per round
   (full image paths, compared to the registry's canonical exe path, not the base name); for each
   widget whose process runs, find `<class>Main` owned by that pid and send the new quiet ctl
-  `ping` (answered by Block with `{pid, build}`, **not logged**, unlike `state`), all widgets at
+  `ping` (answered by Block with `{pid, build}`, not logged, unlike `state`), all widgets at
   once on the probing thread's own message window, one common 1.5 s deadline, replies matched by
   request id. Result per widget: Running (answered), Not responding (process there, no window or
   no answer), Stopped, Keeps crashing (`watchdog.json` has a give-up for it and no process runs:
   a live process wins over an old record). A round never overlaps the next: the next starts 2 s
   after the last ended; stale rounds are dropped by a round number.
-- **The launcher's one change**: when it gives up on a widget it also writes `{ "<name>":
+- The launcher's one change: when it gives up on a widget it also writes `{ "<name>":
   { "gave_up": <unix s>, "exit_code": n } }` into `%APPDATA%\TaskbarDock\watchdog.json` (read,
   change, atomic write under the named mutex `Local\TaskbarDock.Watchdog`), and it removes that
   name's record when it starts the widget. Nothing else in the launcher changes.
-- **Start / Quit / Restart** (`control::start(name)`, `quit(name)`, `restart(name)`):
+- Start / Quit / Restart (`control::start(name)`, `quit(name)`, `restart(name)`):
   - Start runs the registered exe directly (`CreateProcessW`, working folder = the exe's
     folder, as the launcher does), then removes the name's `watchdog.json` record. A widget
     started this way is not watched for crashes until the next sign-in (step 13 changes that).
@@ -268,44 +268,44 @@ app restarted after a crash) belongs to step 13, which reworks the launcher anyw
   `win.rs`, drawing in `paint.rs`.
 - Args: `--widget <name>`, `--dock`, `--developer`, none = Widgets page; `--register <exe>`
   (no window; registers, prints the result, exits 0/1).
-- **One instance**: mutex `Local\TaskbarDock.SettingsApp` (not `TaskbarDock.Settings`: that is
+- One instance: mutex `Local\TaskbarDock.SettingsApp` (not `TaskbarDock.Settings`: that is
   the settings-file lock). The first instance creates its visible window `TaskbarDockSettings`
   before anything slow. A second launch: finds that window (retrying every 100 ms for up to
   3 s while the first starts), sends `WM_COPYDATA` with the page and waits for its reply
   (`SendMessageTimeout`, 2 s); the first shows, restores and comes to front
   (`AllowSetForegroundWindow(ASFW_ANY)` by the second before sending), replies, the second exits
   0. No window found or no reply: the second exits 1.
-- **Window**: `WS_OVERLAPPEDWINDOW`, initial client 880×640 at 100 % times the monitor's scale,
+- Window: `WS_OVERLAPPEDWINDOW`, initial client 880×640 at 100 % times the monitor's scale,
   minimum 640×420 (scaled, `WM_GETMINMAXINFO`), position/size not saved. DWM immersive dark mode
   from `Look::light`, Mica (`DWMSBT_MAINWINDOW`) where available. Per-monitor DPI v2 (manifest);
   `WM_DPICHANGED`: take the suggested rect, rebuild fonts and every scaled resource, re-layout.
   `WM_SETTINGCHANGE` → re-read `Look` (dark/light, Windows text size) and redraw. Double-buffered
   GDI paint; colours, fonts, sizes from `theme` (add named app sizes there); `tests\theme_lint.rs`
   gains the app's folder in its roots.
-- **Cards**: label + help (wrapped, height measured) on the left and the control on the right;
+- Cards: label + help (wrapped, height measured) on the left and the control on the right;
   sliders and text boxes wider than half the card go on a full-width line under the help text
   (as in TaskbarWidgets' dialog). An error line under the card, wrapped. Reset button only when
   the value differs from its default.
-- **Text editing** (extend `text_edit`, single line): caret, Left/Right, Home/End, Shift+arrows
+- Text editing (extend `text_edit`, single line): caret, Left/Right, Home/End, Shift+arrows
   / Shift+Home/End selection, Ctrl+A, Ctrl+C/X/V, Backspace/Delete, Ctrl+Backspace, a click sets
   the caret (drag-select not needed). No undo.
-- **Keyboard precedence**: while a text box edits, every key goes to it (Home/End too); Enter
+- Keyboard precedence: while a text box edits, every key goes to it (Home/End too); Enter
   commits, Esc cancels the edit. An open dropdown takes arrows/Enter/Esc. Otherwise: Tab /
   Shift+Tab through controls (nav, then the page's controls in order; the focused control is
   scrolled into view), arrows in the nav and segments, Space flips a switch, Enter/F2 starts
   editing, Left/Right a slider by one step, PgUp/PgDn/Home/End scroll, Esc closes the window.
   A focus ring on the focused control. Mouse wheel scrolls.
-- **Writes**: through `control::apply` / `control::reset` only, on one writer thread in order
+- Writes: through `control::apply` / `control::reset` only, on one writer thread in order
   (a queue: a later change to the same key replaces a queued one). Each result posts back with
   its sequence number; an older result never overwrites a newer row state or badge. A slider
   writes on release (while dragging only the value label moves; capture lost = back to the saved
   value). Badge: "Saved" (2 s), "Saved; <widget> hasn't confirmed", "Not saved: <reason>".
-- **File watch**: poll `settings::mtime()` every second; on change re-read and refresh every row
+- File watch: poll `settings::mtime()` every second; on change re-read and refresh every row
   that has no draft, no pending write and no shown error. An invalid file: a banner
   "settings.json has an error; fix it in Notepad" with Open in Notepad, all controls disabled.
-- **Secrets**: never logged, dots on screen, shown only while the mouse is held on the eye button
+- Secrets: never logged, dots on screen, shown only while the mouse is held on the eye button
   (released or capture lost = dots again); typing replaces the whole value.
-- **Developer tab**: Advanced settings (the `advanced` rows of each widget, under the warning
+- Developer tab: Advanced settings (the `advanced` rows of each widget, under the warning
   "These change how the widget connects and what it shows; wrong values can stop it working");
   Widget details (exe, build time from `ping` or the exe's mtime, pid, last 20 lines of the
   describe's `log_file`, read directly, so it works while stopped); Registered widgets (Register
@@ -313,7 +313,7 @@ app restarted after a crash) belongs to step 13, which reworks the launcher anyw
   their reason); Raw settings (the whole file pretty-printed, `ctl::mask` + described secrets
   masked, read-only, scrollable, Open in Notepad); Console commands (a fixed list of dockctl
   lines with a Copy button each).
-- **Log**: `%APPDATA%\TaskbarDock\settings-app.log` (writes with masked values, failures,
+- Log: `%APPDATA%\TaskbarDock\settings-app.log` (writes with masked values, failures,
   start/quit/restart); when it passes 256 KB it is cut to its last 128 KB.
 
 ### I. dockctl drives the app
@@ -329,7 +329,7 @@ v2 like Block's `remote.rs` (copy the request before returning from `WM_COPYDATA
   down, left, right, home, end); `type "<text>"`; `quit`. Replies after the change is applied
   and painted (writes: after the writer's result).
 - Smoke (`scripts\settings_smoke.ps1`, the app started through a scheduled task like dev.ps1's
-  widgets): start the app, `state`, visit every page; for each widget, the **union** of the rows
+  widgets): start the app, `state`, visit every page; for each widget, the union of the rows
   on its page and its Developer advanced rows equals its described keys, and each value equals
   `dockctl <w> get` (Start with Windows is not a key and is left out); `quit`; the process is
   gone. Read-only.
@@ -345,9 +345,9 @@ as today.
 
 ## Jobs (Codex Luna, one at a time: each builds on the last)
 
-1. **Safe settings** (0): `fill_missing`, `set_key`, the lock and read errors, the four widgets'
+1. Safe settings (0): `fill_missing`, `set_key`, the lock and read errors, the four widgets'
    `load`/save paths and `Style::load` changed to it, the tests in 0. Small, first, on its own.
-2. **Descriptions, registry, shared path, process control** (A–G): `describe.rs`,
+2. Descriptions, registry, shared path, process control (A–G): `describe.rs`,
    `Spec::settings` / `description`, `Describe` + `describe_if_asked` as each widget's first
    statement, the four widgets' and dock's descriptions, the describe cache, `registry.rs`,
    `startup::set_exe`, `control::apply` / `reset`, ctl `reload` and `ping`, dockctl
@@ -355,11 +355,11 @@ as today.
    keys, `startup`, `widgets`, `describe`, `status`, `start`, `restart` commands, dockctl
    resolving through the registry; status and start/quit/restart, the launcher's give-up record.
    Done: `cargo test` green in the library and every widget, with the tests of A, B and G.
-3. **The window and the widget pages** (H without Dock and Developer, I): window, nav, Widgets
+3. The window and the widget pages (H without Dock and Developer, I): window, nav, Widgets
    page, widget pages with every control kind, text editing, keyboard, writes, file watch, the
    app's ctl window and `dockctl settings`. Done: builds, model/layout/keys tests; then I run it
    and drive it with dockctl before job 4.
-4. **Dock and Developer pages, hook-up** (H rest, J): the Dock page, the Developer tab, Edit
+4. Dock and Developer pages, hook-up (H rest, J): the Dock page, the Developer tab, Edit
    settings…, the smoke script, README / BLOCK.md / CLAUDE.md current-facts updates. Done:
    builds, tests.
 
@@ -419,7 +419,7 @@ the end.
 - The test (2026-10-12, `tools\winui-test\`, results `_tmp\wt\results.md`): checks 1, 3–7 passed
   (3 after drawing the title bar with WinUI's TitleBar; 7 after two fixes below), 2 not run
   (needs a display-scale change). Codex Sol: (a), 0.8. Gemini Flash out of quota; Lite's (b) had
-  not read the results. **User chose (a), real WinUI 3 controls.**
+  not read the results. User chose (a), real WinUI 3 controls.
 - Runtime: reactor 0.100.0 asks for `Microsoft.WindowsAppRuntime.2` ≥ 2.4.0.0 (Store package).
   Windows' own copy is `Microsoft.WindowsAppRuntime.CBS.2` (2.4.1.100, `C:\Windows\SystemApps\
   Microsoft.WindowsAppRuntime.CBS.2_8wekyb3d8bbwe`). Using it takes (1) a vendored reactor
@@ -501,43 +501,43 @@ control `CommonStyles/{ToggleSwitch,Slider,Button,TextBox,RadioButton}_themereso
 to copy. `Samples/` holds C++ desktop apps (e.g. `FolderTreeAppCpp`) for the C++ helper route.
 
 ### Decisions
-1. **Look**: Windows 11 Settings (WinUI / Fluent): Segoe UI Variable, 28 px page titles, 14 px
+1. Look: Windows 11 Settings (WinUI / Fluent): Segoe UI Variable, 28 px page titles, 14 px
    regular labels, rounded cards with soft strokes, Fluent switches, sliders, buttons and focus
    rings; icons from Windows' icon font (Segoe Fluent Icons); Mica where it works.
-2. **How it is built is decided by the test below**: (a) the app's look half (drawing, layout,
+2. How it is built is decided by the test below: (a) the app's look half (drawing, layout,
    keys, nav: `paint.rs`, `layout.rs`, `keys.rs`, the UI part of `win.rs`) is replaced by real
    WinUI 3 controls, all at once, since islands can't be mixed per control into our drawn page;
    or (b) our own controls are redrawn with Direct2D (smooth at any scale; the library already
    uses it in `emoji.rs`) to WinUI's sizes and colours, one control at a time. The app's "brain"
    (`model.rs`, `work.rs`, `remote.rs`, writes, registry, dockctl paths) stays either way.
    Classic comctl32 controls are out (Windows 7–10 look, no proper dark mode).
-3. **Nav**: three entries, together at the top: Widgets, Dock, Developer, each with a Fluent
+3. Nav: three entries, together at the top: Widgets, Dock, Developer, each with a Fluent
    icon; rounded selection with the accent pill. A widget's page opens from its row on the
    Widgets page (">" chevron), titled "Widgets › Weather" with "Widgets" clickable to go back;
    Widgets stays selected in the nav. Edit settings… still opens the widget's page directly.
-4. **Widgets page rows**: widget icon (cloud, bus, music note, headset), name, status,
+4. Widgets page rows: widget icon (cloud, bus, music note, headset), name, status,
    description, Show on taskbar switch, chevron. Stop / Start / Restart stay on the row, smaller
-   and placed neatly, and are also at the top of the widget's page. "Quit" reads **"Stop"** in
+   and placed neatly, and are also at the top of the widget's page. "Quit" reads "Stop" in
    the app (the widget's own menu keeps "Quit"). Clicking the switch or a button doesn't open the
    page.
-5. **Accent**: the Windows accent colour and its lighter/darker shades, not the theme's lime.
-6. **Choices**: 2–3-option segments become drop-downs (WinUI ComboBox), like the other choices.
+5. Accent: the Windows accent colour and its lighter/darker shades, not the theme's lime.
+6. Choices: 2–3-option segments become drop-downs (WinUI ComboBox), like the other choices.
    (Old fault "Follow Win…" cut off goes with them.)
-7. **Numbers**: "feel" values (sizes, gaps, scales, opacity) stay sliders; counts and times
+7. Numbers: "feel" values (sizes, gaps, scales, opacity) stay sliders; counts and times
    (refresh minutes, number of departures, timeouts) become number boxes with up/down arrows.
    Sliders sit on the right of the row beside the name, the value to their left, with no box
    behind them (old fault). The unit is drawn beside the edited text, never inside it, and the
    caret never enters it (old fault "999 |min").
-8. **Reset**: the per-row Reset goes; one **"Restore defaults"** button per section.
-9. **Developer page**: a small warning bar at the top; one fold-out section per widget (Weather,
+8. Reset: the per-row Reset goes; one "Restore defaults" button per section.
+9. Developer page: a small warning bar at the top; one fold-out section per widget (Weather,
    Bus, Media, Discord) and one for diagnostics.
-10. **Focus ring** (old fault: a ring stayed on a nav entry with no key pressed): shown only
+10. Focus ring (old fault: a ring stayed on a nav entry with no key pressed): shown only
     after a key press in the window; a mouse click hides it; keys keep working either way. One
     rule for every ring in the app.
-11. **Other PCs** (the widgets may be installed elsewhere): if (a) is chosen, the app uses the
+11. Other PCs (the widgets may be installed elsewhere): if (a) is chosen, the app uses the
     Windows App Runtime copy that ships with Windows when it can; when none is usable, a short
     message with Microsoft's installer link, and Edit settings… falls back to Notepad.
-12. **Monitor of another scale**: the user has none; that acceptance check is marked "not done,
+12. Monitor of another scale: the user has none; that acceptance check is marked "not done,
     no such screen". 125% and 150% are checked on the one screen instead.
 
 ### The test (first; Codex Luna builds it in a throwaway folder, the app untouched)
