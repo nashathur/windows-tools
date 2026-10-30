@@ -9,10 +9,32 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from threading import RLock
 
 import psutil
 
 from .errors import PdfError
+
+_active_stages = set()
+_active_temps = set()
+_active_lock = RLock()
+
+
+def cleanup_active():
+    with _active_lock:
+        stages, temps = list(_active_stages), list(_active_temps)
+    temp_parent = Path(tempfile.gettempdir()) / "pdftools"
+    if temp_parent.exists():
+        temps.extend(temp_parent.glob(f"{os.getpid()}-*"))
+    for stage in stages:
+        try: stage.cleanup()
+        except OSError: pass
+    for path in temps:
+        try:
+            if Path(path).is_dir(): shutil.rmtree(path, ignore_errors=True)
+            else: Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def default_name(source, command, suffix=None, extension=None):
@@ -103,6 +125,9 @@ def sweep_temp(now=None, parent=None):
 def run_temp():
     folder = Path(tempfile.gettempdir()) / "pdftools" / f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
     folder.mkdir(parents=True)
+    with _active_lock: _active_temps.add(folder)
+    from . import watchdog
+    watchdog.register_path(folder)
     return folder
 
 
@@ -113,6 +138,9 @@ def temp_folder():
         yield folder
     finally:
         shutil.rmtree(folder, ignore_errors=True)
+        with _active_lock: _active_temps.discard(folder)
+        from . import watchdog
+        watchdog.unregister_path(folder)
 
 
 RENAME_REPLACES = os.name != "nt"  # POSIX os.rename silently replaces an existing target
@@ -229,6 +257,11 @@ class Staging:
 
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        with _active_lock: _active_stages.add(self)
+        from . import watchdog
+        watchdog.register_path(self.path)
+        if self.owned_temp is not None:
+            watchdog.register_path(self.owned_temp)
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -236,6 +269,12 @@ class Staging:
             self.cleanup()
         if self.owned_temp is not None:
             shutil.rmtree(self.owned_temp, ignore_errors=True)
+            with _active_lock: _active_temps.discard(self.owned_temp)
+        with _active_lock: _active_stages.discard(self)
+        from . import watchdog
+        watchdog.unregister_path(self.path)
+        if self.owned_temp is not None:
+            watchdog.unregister_path(self.owned_temp)
 
 
 def disk_budget(inputs, dest, temp, multiplier=3, estimate=None):

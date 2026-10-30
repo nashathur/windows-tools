@@ -22,8 +22,7 @@ from pdftools.commands import p2_selftest, p3c_helpers, p6_convert
 from tests.fixtures import sans_font
 from tests.fixtures.p6 import (PASSWORD, build_encrypted_pdf, build_fixtures, build_markdown_fixtures,
                                build_office_tripwires)
-
-TOOL_USAGE = {}
+from tests.tooling import TOOL_USAGE, require_tool as shared_require_tool, tool_info
 
 
 def tool_info(name):
@@ -74,16 +73,7 @@ class Phase6Tests(unittest.TestCase):
         return code, rows, err.getvalue()
 
     def require_tool(self, name):
-        path, version = tool_info(name)
-        if not path:
-            reason = version or "executable is absent"
-            if os.environ.get("PDFTOOLS_REQUIRE_TOOLS") == "1":
-                self.fail(f"required tool {name} is missing: {reason}")
-            print(f"SKIP {name}: {reason}", file=sys.stderr)
-            self.skipTest(reason)
-        usage = TOOL_USAGE.setdefault(name, {"version": version, "tests": set()})
-        usage["tests"].add(self.id())
-        return path, version
+        return shared_require_tool(self, name, f"{name} is required for this integration test")
 
     def test_selftest_missing_converter_packages_are_failures(self):
         failures = p2_selftest._missing_library_failures({

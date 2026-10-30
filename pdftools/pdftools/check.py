@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 
 import cv2
 import numpy as np
@@ -17,6 +18,7 @@ SSIM_MAX = 0.78
 GRAY_CHROMA_MAX = 2
 GRAY_LUMINANCE_MAX_DELTA = 24
 TEXT_SIMILARITY_MIN = 0.98
+TEXT_ORDER_MINIMUMS = {}
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,7 @@ class Features:
     """must_survive gives exact output counts; dropped gives source counts removed."""
     must_survive: dict = field(default_factory=dict)
     dropped: dict = field(default_factory=dict)
+    records: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -53,6 +56,7 @@ class OperationResult:
     cropboxes: list = field(default_factory=list)
     baseline: str | None = None  # PDF the check compares against instead of the input (e.g. a baked copy)
     keep_input: str | None = None  # warning code; nothing is published and the result points at the input (compress NO_GAIN)
+    measurements: list = field(default_factory=list)
 
 
 @dataclass
@@ -68,8 +72,36 @@ def normalize_words(words):
     text = " ".join(str(w) for w in words).replace("\u00ad", "")
     text = text.replace("ﬁ", "fi").replace("ﬂ", "fl").replace("ﬀ", "ff")
     text = text.replace("\u2010", "-").replace("\u2011", "-")
-    text = text.replace("- ", "")
-    return tuple(text.split())
+    words = text.split()
+    joined = []
+    for word in words:
+        if joined and joined[-1].endswith("-") and joined[-1][:-1].isalpha() and word[:1].isalpha():
+            joined[-1] = joined[-1][:-1] + word
+        else:
+            joined.append(word)
+    return tuple(joined)
+
+
+def feature_records(doc):
+    """Semantic records exposed by PyMuPDF, with all page numbers one based."""
+    bookmarks = [{"title": " ".join(str(row[1]).split()), "level": int(row[0]), "page": int(row[2])}
+                 for row in doc.get_toc()]
+    links = []
+    widgets = []
+    for page_no, page in enumerate(doc, 1):
+        for link in page.get_links():
+            if link.get("uri"):
+                kind, target = "uri", link["uri"]
+            elif link.get("kind") == pymupdf.LINK_GOTO:
+                kind, target = "page", int(link.get("page", -1)) + 1
+            else:
+                continue
+            links.append({"page": page_no, "rect": tuple(float(v) for v in link.get("from", ())),
+                          "kind": kind, "target": target})
+        for widget in page.widgets() or []:
+            widgets.append({"name": str(widget.field_name or ""), "type": str(widget.field_type_string or ""),
+                            "value": str(widget.field_value or ""), "page": page_no})
+    return {"bookmarks": bookmarks, "links": links, "widgets": widgets}
 
 
 def page_words(page):
@@ -303,6 +335,18 @@ def _placement_words(placement, page, policy, index, operation):
     return normalize_words(w[4] for w in words)
 
 
+def _placement_raw_tokens(placement, page, policy, index, operation):
+    words = page.get_text("words")
+    if policy == "crop" and operation and index < len(operation.cropboxes):
+        crop = pymupdf.Rect(operation.cropboxes[index])
+        words = [w for w in words if crop.contains(pymupdf.Point((w[0] + w[2]) / 2, (w[1] + w[3]) / 2))]
+    if placement.dest_rect:
+        region = _source_region(placement)
+        if region is not None:
+            words = [w for w in words if region.contains(pymupdf.Point((w[0] + w[2]) / 2, (w[1] + w[3]) / 2))]
+    return tuple(token for word in words for token in str(word[4]).split())
+
+
 def _source_region(placement):
     if not placement.dest_rect:
         return None
@@ -360,13 +404,22 @@ def compare(source, output, policy="placements", operation=None, *, source_docs=
     if policy not in BUILTIN_POLICIES:
         raise ValueError(f"unknown invariant policy: {policy}")
     findings = []
+    measurements = []
     render_cache = {}
+    active_page_no = [None]
 
     def rendered(page, dpi=RENDER_DPI, clip=None, *, annots=False, unrotated=False):
         key=(id(page.parent), page.number, page.xref, dpi, annots, unrotated,
              tuple(clip) if clip is not None else None)
         if key not in render_cache:
-            render_cache[key]=render_rgb(page, dpi, clip, annots=annots, unrotated=unrotated)
+            try:
+                render_cache[key]=render_rgb(page, dpi, clip, annots=annots, unrotated=unrotated)
+            except Exception as exc:
+                page_no = active_page_no[0] or (getattr(page, "number", -1) + 1)
+                if not any(f.code == "PAGE_UNREADABLE" and f.page == page_no for f in findings):
+                    findings.append(Finding("invariant", "PAGE_UNREADABLE", "page rendering failed", page_no,
+                                            {"error": str(exc)[:300]}))
+                render_cache[key] = np.ones((1, 1, 3), dtype=np.uint8) * 255
         return render_cache[key]
     stats_cache = {}
 
@@ -388,16 +441,52 @@ def compare(source, output, policy="placements", operation=None, *, source_docs=
     if len(output) != expected_pages:
         findings.append(Finding("invariant", "PAGE_COUNT", "page count differs from the page map",
                                 details={"expected": expected_pages, "output": len(output)}))
-    for i in range(len(output)):
+    for i in range(min(len(output), expected_pages)):
         # Rendered RGB arrays are large; retain only those needed for this page.
         render_cache.clear()
         b = output[i]
+        active_page_no[0] = i + 1
         raw_placements = operation.pages[i] if operation and i < len(operation.pages) else [Placement(None, i)]
         if not isinstance(raw_placements, (list, tuple)):
             raw_placements = [raw_placements]
         placements = [_placement_object(value, i) for value in raw_placements]
         page_sources = [_placement_source(placement, source, source_docs) for placement in placements]
         page_sources = [page for page in page_sources if page is not None]
+        try:
+            # Validate every extraction path used by the checker before inspecting this page.
+            # A failure must never leave a fallback render that can compare as a blank page.
+            b.get_text("words")
+            b.get_text("dict")
+            b.get_text("rawdict")
+            tier_stats(b)
+            if any(f.code == "PAGE_UNREADABLE" and f.page == i + 1 for f in findings):
+                continue
+            stats(b)
+            if any(f.code == "PAGE_UNREADABLE" and f.page == i + 1 for f in findings):
+                continue
+            rendered(b, unrotated=True)
+            if any(f.code == "PAGE_UNREADABLE" and f.page == i + 1 for f in findings):
+                continue
+            for source_page in page_sources:
+                source_page.get_text("words")
+                source_page.get_text("dict")
+                source_page.get_text("rawdict")
+                tier_stats(source_page)
+                if any(f.code == "PAGE_UNREADABLE" and f.page == i + 1 for f in findings):
+                    break
+                stats(source_page)
+                if any(f.code == "PAGE_UNREADABLE" and f.page == i + 1 for f in findings):
+                    break
+                rendered(source_page, unrotated=True)
+                if any(f.code == "PAGE_UNREADABLE" and f.page == i + 1 for f in findings):
+                    break
+        except Exception as exc:
+            if not any(f.code == "PAGE_UNREADABLE" and f.page == i + 1 for f in findings):
+                findings.append(Finding("invariant", "PAGE_UNREADABLE", "text extraction or rendering failed",
+                                        i + 1, {"error": str(exc)[:300]}))
+            continue
+        if any(f.code == "PAGE_UNREADABLE" and f.page == i + 1 for f in findings):
+            continue
         if not page_sources and placements and all(p.source_page == "generated" for p in placements):
             continue
         if policy in {"placements", "rotate", "stamp", "annot_add", "annot_remove", "flatten", "flatten_raster", "crop", "rmblank", "structure", "gray", "compress_lossless", "compress_lossy", "ocr"}:
@@ -425,6 +514,16 @@ def compare(source, output, policy="placements", operation=None, *, source_docs=
                                                                     (w[1]+w[3])/2+b.cropbox.y0))
                                        for region in output_regions)]
         wb = normalize_words(w[4] for w in output_word_rows)
+        if policy in {"placements", "rotate", "crop", "rmblank", "structure", "gray", "compress_lossless", "compress_lossy"}:
+            raw_source = tuple(token for placement in placements
+                               if (page := _placement_source(placement, source, source_docs)) is not None
+                               for token in _placement_raw_tokens(placement, page, policy, i, operation))
+            raw_output = tuple(token for word in output_word_rows for token in str(word[4]).split())
+            score = SequenceMatcher(None, raw_source, raw_output).ratio()
+            measurements.append({"page": i + 1, "code": "TEXT_ORDER_SCORE", "score": score, "policy": policy})
+            if score < 0.90:
+                findings.append(Finding("new_warning", "TEXT_ORDER", "ordered text similarity is below 0.90",
+                                        i + 1, {"score": score, "limit": 0.90}))
         expected = operation.expected if operation else ExpectedChanges()
         source_cmp = wa if policy == "stamp" else _remove_words(wa, expected.text_removed)
         output_cmp = wb if policy == "stamp" else _remove_words(wb, expected.text_added)
@@ -505,6 +604,24 @@ def compare(source, output, policy="placements", operation=None, *, source_docs=
             if actual.get(feature) != count:
                 findings.append(Finding("invariant", "FEATURE_MISSING", f"{feature} count differs",
                                         details={"expected": count, "actual": actual.get(feature)}))
+    if operation and operation.features.records:
+        actual_records = feature_records(output)
+        for feature, expected_rows in operation.features.records.items():
+            expected_rows = list(expected_rows)
+            actual_rows = list(actual_records.get(feature, []))
+            missing, extra = [], []
+            used = set()
+            for expected_row in expected_rows:
+                match = next((index for index, actual_row in enumerate(actual_rows)
+                              if index not in used and _record_equal(feature, expected_row, actual_row)), None)
+                if match is None:
+                    missing.append(expected_row)
+                else:
+                    used.add(match)
+            extra = [row for index, row in enumerate(actual_rows) if index not in used]
+            if missing or extra:
+                findings.append(Finding("invariant", "FEATURE_RECORD_MISMATCH", f"{feature} records differ",
+                                        details={"feature": feature, "missing": missing[:20], "extra": extra[:20]}))
     if operation and operation.features.dropped:
         actual = _feature_counts(output)
         for feature, count in operation.features.dropped.items():
@@ -527,7 +644,24 @@ def compare(source, output, policy="placements", operation=None, *, source_docs=
                                     details={"expected_delta": operation.annotation_delta, "actual_delta": delta}))
     if policy == "flatten_raster":
         findings.append(Finding("new_warning", "TEXT_RASTERIZED", "text checks are disabled for raster output"))
+    if operation is not None:
+        operation.measurements.extend(measurements)
+    if not any(f.tier == "invariant" for f in findings):
+        for row in measurements:
+            policy_name = row["policy"]
+            previous = TEXT_ORDER_MINIMUMS.get(policy_name)
+            TEXT_ORDER_MINIMUMS[policy_name] = (row["score"] if previous is None
+                                                else min(previous, row["score"]))
     return findings
+
+
+def _record_equal(feature, expected, actual):
+    if feature != "links":
+        return expected == actual
+    if any(expected.get(key) != actual.get(key) for key in ("page", "kind", "target")):
+        return False
+    left, right = expected.get("rect", ()), actual.get("rect", ())
+    return len(left) == len(right) and all(abs(float(a) - float(b)) <= 1 for a, b in zip(left, right))
 
 
 def inspect(path_or_doc):

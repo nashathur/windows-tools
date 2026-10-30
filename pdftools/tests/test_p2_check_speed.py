@@ -43,6 +43,8 @@ class CompareSpeedTest(unittest.TestCase):
         with pymupdf.open(self.fixtures["calibration_table"]) as source, \
                 pymupdf.open(self.fixtures["calibration_table_changed"]) as output:
             self.assertEqual(self._findings(compare(source, output, "placements")), [
+                {"tier": "new_warning", "code": "TEXT_ORDER", "page": 1,
+                 "details": {"score": 0.8, "limit": 0.9}},
                 {"tier": "invariant", "code": "TEXT_CHANGED", "page": 1,
                  "details": {"source_words": 5, "output_words": 5}},
                 {"tier": "invariant", "code": "TILES_CHANGED", "page": 1,

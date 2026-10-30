@@ -8,7 +8,7 @@ import pymupdf
 import clierr
 
 from . import crypt, io
-from .check import OperationResult, compare
+from .check import OperationResult, compare, feature_records
 from .errors import PdfError
 
 
@@ -54,6 +54,19 @@ def open_input(path, password=None):
     return doc
 
 
+def _open_candidate(path, password=None):
+    """Open a staged candidate from bytes so a malformed PDF cannot pin its staging path on Windows."""
+    try:
+        doc = pymupdf.open(stream=Path(path).read_bytes(), filetype="pdf")
+    except Exception as exc:
+        raise PdfError("BAD_INPUT", f"cannot open input: {path}", "check that the file is valid", detail=str(exc)) from exc
+    if doc.needs_pass and not doc.authenticate(password or ""):
+        doc.close()
+        raise PdfError("WRONG_PASSWORD", "PDF requires a valid password", "supply --password-file or --password-env")
+    doc._name = str(Path(path))
+    return doc
+
+
 def estimate_seconds(page_count, seconds_per_page, *, sample_pages=2):
     return max(0.0, float(page_count) * float(seconds_per_page))
 
@@ -77,6 +90,79 @@ def _json_page_map(value):
     return value
 
 
+def _preserved_feature_records(operation, spec, docs, inputs, source, source_records, source_cropboxes):
+    """Fill undeclared semantic records when the operation promises feature preservation."""
+    policy = spec.check_policy
+    preserve = {"rotate", "stamp", "structure", "gray", "crop", "compress_lossless",
+                "compress_lossy", "ocr"}
+    if policy not in preserve | {"placements"} or not docs:
+        return
+    page_map = {}
+    if operation.pages:
+        for output_no, row in enumerate(operation.pages, 1):
+            placements = row if isinstance(row, (tuple, list)) else [row]
+            for placement in placements:
+                if isinstance(placement, dict):
+                    path, page = placement.get("source_doc"), placement.get("source_page")
+                    transform = tuple(placement.get("transform", (1, 0, 0, 1, 0, 0)))
+                else:
+                    path, page = placement.source_doc, placement.source_page
+                    transform = placement.transform
+                key = str(Path(path).resolve()) if path else str(source)
+                if isinstance(page, int):
+                    page_map.setdefault((key, page + 1), []).append((output_no, transform))
+    else:
+        page_map = {(str(path), page_no): [(page_no, (1, 0, 0, 1, 0, 0))]
+                    for path, doc in zip(inputs, docs) for page_no in range(1, doc.page_count + 1)}
+    identity = (len(inputs) == 1 and len(page_map) == docs[0].page_count and
+                all(page_map.get((str(inputs[0]), page_no)) ==
+                    [(page_no, (1, 0, 0, 1, 0, 0))]
+                    for page_no in range(1, docs[0].page_count + 1)))
+    if policy == "placements" and not identity:
+        return
+    expected = operation.features.records
+    for path, records in zip(inputs, source_records):
+        key = str(path)
+        for feature, rows in records.items():
+            if feature in expected:
+                continue
+            mapped_rows = []
+            for item in rows:
+                row = dict(item)
+                page = row.get("page")
+                targets = page_map.get((key, page), []) if page is not None else []
+                if page is not None and not targets:
+                    continue
+                if feature == "bookmarks":
+                    row["page"] = targets[0][0]
+                    mapped_rows.append(row)
+                elif feature == "links":
+                    target_rows = page_map.get((key, row["target"]), []) if row.get("kind") == "page" else []
+                    if row.get("kind") == "page" and not target_rows:
+                        continue
+                    row["target"] = target_rows[0][0] if target_rows else row.get("target")
+                    for output_page, transform in targets:
+                        mapped = dict(row, page=output_page)
+                        a, b, c, d, e, f = transform
+                        x0, y0, x1, y1 = mapped["rect"]
+                        points = [(a*x+c*y+e, b*x+d*y+f) for x, y in
+                                  ((x0,y0),(x1,y0),(x0,y1),(x1,y1))]
+                        if policy == "crop" and output_page <= len(operation.cropboxes):
+                            source_page = page - 1
+                            old_box = source_cropboxes[inputs.index(Path(key))][source_page]
+                            new_box = operation.cropboxes[output_page - 1]
+                            dx, dy = old_box[0] - new_box[0], old_box[1] - new_box[1]
+                            points = [(x + dx, y + dy) for x, y in points]
+                        mapped["rect"] = (min(x for x, _ in points), min(y for _, y in points),
+                                          max(x for x, _ in points), max(y for _, y in points))
+                        mapped_rows.append(mapped)
+                elif feature == "widgets":
+                    mapped_rows.extend(dict(row, page=output_page) for output_page, _ in targets)
+                else:
+                    mapped_rows.append(row)
+            expected.setdefault(feature, []).extend(mapped_rows)
+
+
 def measure_seconds_per_page(path, render=True):
     start = time.perf_counter()
     with open_input(path) as doc:
@@ -95,7 +181,10 @@ def run_each(paths, run_one, command, context):
     records, failed = [], 0
     for path in paths:
         try:
-            records.append(run_one(Path(path)))
+            record = run_one(Path(path))
+            records.append(record)
+            if isinstance(record, dict) and record.get("verdict") in {"unchecked", "failed"}:
+                failed += 1  # a published _UNCHECKED file is a failed file for the summary and exit 4
         except clierr.Fail as exc:
             failed += 1
             records.append({"type": "error", "command": command, "input": str(path), "code": exc.code,
@@ -137,6 +226,8 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
                            "supply a valid --owner-password-file") from exc
         raise
     doc = docs[0] if docs else None
+    from . import watchdog
+    watchdog.rearm(doc.page_count if doc else 0)
     context.input_docs = {str(path): item for path, item in zip(inputs, docs)}
     warnings = []
     try:
@@ -200,9 +291,12 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
                         docs[index] = open_input(clear_input)
                     context.input_docs = {str(path): item for path, item in zip(inputs, docs)}
                     doc = docs[0]
+                source_records = [feature_records(item) for item in docs]
+                source_cropboxes = [[tuple(page.cropbox) for page in item] for item in docs]
                 candidate_op = writer(doc, stage.path)
                 if isinstance(candidate_op, OperationResult):
                     op = candidate_op
+                _preserved_feature_records(op, spec, docs, inputs, source, source_records, source_cropboxes)
                 source_pages = doc.page_count if doc else None
                 for item in docs:
                     item.close()
@@ -228,8 +322,10 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
                         candidate.save(encrypted_path, encryption=pymupdf.PDF_ENCRYPT_AES_256,
                                        owner_pw=owner_pw, user_pw=user_pw,
                                        permissions=encrypt_output.get("permissions", -1), garbage=3, deflate=True)
+                    watchdog.unregister_path(stage.path)
                     stage.path.unlink(missing_ok=True)
                     stage.path = encrypted_path
+                    watchdog.register_path(stage.path)
                     check_password = owner_pw
                 elif encrypted:
                     decision = crypt.write_decision(crypt.Encryption(encrypted=True,
@@ -244,20 +340,24 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
                     clear_path = stage.path.with_name(stage.path.stem + ".clear.part.pdf")
                     with open_input(stage.path, password) as candidate:
                         candidate.save(clear_path, garbage=3, deflate=True)
+                    watchdog.unregister_path(stage.path)
                     stage.path.unlink(missing_ok=True)
                     stage.path = clear_path
+                    watchdog.register_path(stage.path)
                     encrypted_path = stage.path.with_name(stage.path.stem + ".encrypted.part.pdf")
                     with pymupdf.open(stage.path) as candidate:
                         candidate.save(encrypted_path, encryption=pymupdf.PDF_ENCRYPT_AES_256,
                                        owner_pw=decision["owner_password"], user_pw=decision["user_password"] or "",
                                        permissions=decision["permissions"], garbage=3, deflate=True)
+                    watchdog.unregister_path(stage.path)
                     stage.path.unlink(missing_ok=True)
                     stage.path = encrypted_path
+                    watchdog.register_path(stage.path)
                 with ExitStack() as stack:
                     check_docs = {str(path): stack.enter_context(open_source(path, pw(path))) for path in inputs} if source_pdf else {}
                     if source_pdf and op.baseline:
                         check_docs[str(source)] = stack.enter_context(open_input(Path(op.baseline)))
-                    outdoc = stack.enter_context(open_input(stage.path, check_password))
+                    outdoc = stack.enter_context(_open_candidate(stage.path, check_password))
                     result_pages = outdoc.page_count
                     if source_pdf:
                         findings = compare(check_docs[str(source)], outdoc, spec.check_policy, op,
@@ -272,7 +372,7 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
                         finding_codes.add(finding.code)
                         clierr.warn(f"pdf {spec.name}", finding.code,
                                     (f"page {finding.page}: " if finding.page else "") + finding.message,
-                                    "review the output and measurement log")
+                                    "review the output")
                 if getattr(args, "verbose", getattr(args, "v", False)):
                     for finding in findings:
                         if finding.tier == "pre_existing":
@@ -283,7 +383,9 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
                     log = clierr.write_log("pdf", "WARN", f"{spec.name} invariant check failed",
                         "review the measurements", sections={"findings": json.dumps([
                             {"tier": f.tier, "code": f.code, "page": f.page, "message": f.message,
-                             "details": f.details} for f in findings], ensure_ascii=False, default=str)},
+                             "details": f.details} for f in findings], ensure_ascii=False, default=str),
+                            **({"measurements": json.dumps(op.measurements, ensure_ascii=False, default=str)}
+                               if op.measurements else {})},
                         log_name=spec.name)
                 if invariant_failures:
                     if security or spec.name in {"sanitize", "redact"}:
@@ -325,6 +427,12 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
 
 def write_non_pdf(source, spec, args, writer, *, kind=None, password=None):
     source = Path(source).resolve()
+    try:
+        with pymupdf.open(source) as measured:
+            from . import watchdog
+            watchdog.rearm(measured.page_count)
+    except Exception:
+        pass
     output_arg = getattr(args, "output", None)
     extension = Path(output_arg).suffix if output_arg else (".png" if spec.output_kind == "image" else "." + spec.output_kind)
     output = io.resolve_output(source, spec.name, getattr(args, "output", None), spec.suffix,

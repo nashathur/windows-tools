@@ -557,7 +557,8 @@ def img2pdf(args, context):
             try:
                 tools.run_tool([ocrmypdf, "--skip-text", "--output-type", "pdf", "--jobs", str(os.cpu_count() or 1),
                                 "-l", "eng+ind", str(stage.path), str(ocr_path)],
-                               timeout=max(120, 60 * len(files)), cwd=temp, temp=temp, secret_env=args._secret_env)
+                               timeout=max(120, 60 * len(files)), cwd=temp, temp=temp, secret_env=args._secret_env,
+                               env=tools.dev_tool_env(temp))
             except clierr.Fail as exc:
                 raise _tool_error(exc)
             stage.path.unlink(missing_ok=True)

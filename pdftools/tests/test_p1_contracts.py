@@ -69,6 +69,16 @@ class ContractsTest(unittest.TestCase):
         job.write_text(json.dumps({"version": 1, "input": "input.pdf", "steps": steps}), encoding="utf-8")
         args, _ = load_job(job, dict(commands, batch=fake))
         self.assertEqual((args.command, args.steps, args.file), ("batch", steps, (job.parent / "input.pdf").resolve()))
+        # `pdf <command> --job FILE`: the command line names the command; a one-step batch stays a batch
+        args, _ = load_job(job, dict(commands, batch=fake), command="batch")
+        self.assertEqual(args.command, "batch")
+        job.write_text(json.dumps({"version": 1, "input": "input.pdf", "steps": [{"cmd": "info"}]}), encoding="utf-8")
+        self.assertEqual(load_job(job, commands, command="info")[0].command, "info")
+        job.write_text(json.dumps({"version": 1, "input": "input.pdf"}), encoding="utf-8")
+        self.assertEqual(load_job(job, commands, command="info")[0].command, "info")
+        job.write_text(json.dumps({"version": 1, "command": "info", "input": "input.pdf"}), encoding="utf-8")
+        with self.assertRaises(BadArg):  # job and command line disagree
+            load_job(job, commands, command="text")
         malformed = {"version": 1, "command": [], "input": [], "output": {},
                      "password_file": [], "password_env": {}, "owner_password_file": 1,
                      "owner_password_env": [], "steps": [{}, 7]}
@@ -152,14 +162,15 @@ class ContractsTest(unittest.TestCase):
         # organize declares -o as type=Path, which drops the separator; both markers must still mean "folder".
         for folder, argv in ((self.root / "argv-out", ["organize", str(self.fixtures["plain"]), "1", "-o", str(self.root / "argv-out") + "\\"]),
                              (self.root / "slash-out", ["organize", str(self.fixtures["plain"]), "1", "-o", str(self.root / "slash-out") + "/"]),
-                             (self.root / "job-out", ["--job", str(job)])):
+                             (self.root / "job-out", ["--job", str(job)]),
+                             (self.root / "job-out", ["organize", "--job", str(job)])):  # `pdf <command> --job FILE`
             out = io_module.StringIO()
             with patch.object(clierr, "LOG_ROOT", self.root / "logs"), contextlib.redirect_stdout(out), \
                     contextlib.redirect_stderr(io_module.StringIO()):
                 code = cli.main(["--json", *argv])
             record = json.loads(out.getvalue().splitlines()[0])
             self.assertEqual(code, 0, record)
-            self.assertEqual(Path(record["path"]), folder / "plain_organized.pdf")
+            self.assertEqual(Path(record["path"]).parent, folder)  # a repeated run gets the _2 name in the same folder
 
     def test_find_tool_order_and_windows_only_fixed_paths(self):
         from pdftools import tools

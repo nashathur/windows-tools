@@ -52,7 +52,8 @@ def build_parser(commands=None):
     return parser
 
 
-def load_job(path, commands, *, cwd=None, secret_store=None):
+def load_job(path, commands, *, cwd=None, secret_store=None, command=None):
+    """command: the command name given on the command line before --job (`pdf batch --job FILE`), if any."""
     path = Path(path)
     base = Path(cwd or os.getcwd()) if str(path) == "-" else path.resolve().parent
     try:
@@ -94,6 +95,8 @@ def load_job(path, commands, *, cwd=None, secret_store=None):
     if job.get("version") != 1:
         problems.append("version must be 1")
     name = job.get("command", job.get("cmd"))
+    if name is None and command == "batch":
+        name = "batch"
     if name is None and len(steps) > 1:
         name = "batch"  # batch validates its own steps and receives them raw as args.steps
     if len(steps) > 1 and name != "batch":
@@ -105,6 +108,10 @@ def load_job(path, commands, *, cwd=None, secret_store=None):
         else:
             name = steps[0].get("cmd")
             step_values = {k: v for k, v in steps[0].items() if k != "cmd"}
+    if name is None:
+        name = command
+    elif command is not None and name != command:
+        problems.append(f"the job runs {name} but the command line names {command}")
     if not isinstance(name, str) or name not in commands:
         problems.append(f"unknown command: {name}")
     allowed_global = {"version", "command", "cmd", "input", "steps", "output", "password_file", "password_env",
@@ -260,13 +267,14 @@ def main(argv=None):
             else:
                 remaining.append(argsv[i]); i += 1
         if job_path is not None:
-            if remaining:
-                raise BadArg("with --job only global flags are allowed on the command line")
+            cli_command = remaining[0] if len(remaining) == 1 and remaining[0] in commands else None
+            if remaining and cli_command is None:
+                raise BadArg("with --job only the command name and global flags are allowed on the command line")
             if any(x.split("=", 1)[0] in ("--password-file", "--password-env", "--password",
                                            "--owner-password-file", "--owner-password-env", "--owner-password")
                    for x in original_args):
                 raise BadArg("password sources must be in the job when --job is used")
-            args, job = load_job(job_path, commands, secret_store=store)
+            args, job = load_job(job_path, commands, secret_store=store, command=cli_command)
             password = password or store.password
             args.json = global_flags["--json"]
             args.verbose = global_flags["-v"]
@@ -293,7 +301,12 @@ def main(argv=None):
             args.output = io.folder_marker(args.output, raw_output)
         context = Context(password, args.json, store.env_names, store.owner_password)
         context.secret_store = store
-        record = commands[args.command].run(args, context)
+        from . import watchdog
+        watchdog.arm(args.command, args.json)
+        try:
+            record = commands[args.command].run(args, context)
+        finally:
+            watchdog.disarm()
         if library_warnings:
             clierr.write_log("pdftools", "INFO", "PDF library warnings", "review the warning section",
                              secrets=secrets, sections={"library warnings": "\n".join(library_warnings)},

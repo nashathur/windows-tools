@@ -234,6 +234,10 @@ class RunEachTest(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             cli.emit(records, True)
         self.assertEqual(len([json.loads(line) for line in out.getvalue().splitlines()]), 4)
+        unchecked = lambda path: {"type": "result", "command": "meta", "path": str(path), "verdict": "unchecked"}
+        context = cli.Context(None, False, [], None)
+        records = run_each(["a.pdf"], unchecked, "meta", context)
+        self.assertEqual((records[-1]["ok"], records[-1]["failed"], context.exit_code), (0, 1, 4))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,1005 @@
+{
+  "commit": "aa89148aed549a93c5aba3ca85d81711c7e5803a",
+  "files": [
+    {
+      "path": "test/pdfs/160F-2019.pdf",
+      "sha256": "f41f0818365ffd14ca4e55c0556355193bd76632b970d60cc2dec554cac6f379",
+      "bytes": 328400
+    },
+    {
+      "path": "test/pdfs/90ms_rksj_h_sample.pdf",
+      "sha256": "d50ad3b93685e9d6061f5cc9957c49ca232a0dd0771aad71e4a615f87f2674be",
+      "bytes": 1039
+    },
+    {
+      "path": "test/pdfs/ArabicCIDTrueType.pdf",
+      "sha256": "1cad1de912ba29f89a6d8b08bc5b0f84382874ffedab2c8f9e05ef608c265bb1",
+      "bytes": 39370
+    },
+    {
+      "path": "test/pdfs/Brotli-Prototype-FileA.pdf",
+      "sha256": "88d7f8b3f6e8cb26fdde69bbcd27990f2f61f807472afce7b5dbe2ae8f4f3ff7",
+      "bytes": 1305278
+    },
+    {
+      "path": "test/pdfs/ContentStreamCycleType3insideType3.pdf",
+      "sha256": "131aec277c444c985d502e5f589f37735d275a8ea247c1beedba0781fbe99d40",
+      "bytes": 2440
+    },
+    {
+      "path": "test/pdfs/ContentStreamNoCycleType3insideType3.pdf",
+      "sha256": "cffddca28e1b55dba97257a3045bfc83f6daf800dcecbed58697057d493f5dd6",
+      "bytes": 2440
+    },
+    {
+      "path": "test/pdfs/Embedded_font.pdf",
+      "sha256": "4b7588e070cd37c7cfa2ce0a493ba9ec6d57fb36a2ca3c6ab50c74a7818a2f9a",
+      "bytes": 3323
+    },
+    {
+      "path": "test/pdfs/GHOSTSCRIPT-698804-1-fuzzed.pdf",
+      "sha256": "62e518ca7894e8b8b8ed9927da3007cdc5e9ccc5b111bbb22d6101d4a8d7490e",
+      "bytes": 627
+    },
+    {
+      "path": "test/pdfs/IdentityToUnicodeMap_charCodeOf.pdf",
+      "sha256": "81243ff4cca5f7898688008224247d88534cd03e76ac3cbbdc38f925cfbee18f",
+      "bytes": 651
+    },
+    {
+      "path": "test/pdfs/IndexedCS_negative_and_high.pdf",
+      "sha256": "818053a2bf343f31f4ad0b48eb2837eb3b43a4543c9feb6269a9f653fbcee59e",
+      "bytes": 1798
+    },
+    {
+      "path": "test/pdfs/PDFBOX-3148-2-fuzzed.pdf",
+      "sha256": "1c780335b494ac52eae9fa4d05f1bba88c18ca6b24e6e302b9f271de05e256aa",
+      "bytes": 244351
+    },
+    {
+      "path": "test/pdfs/PDFBOX-4352-0.pdf",
+      "sha256": "ede76ce3aaa8a5d9da0e6f7fadce8470083be748035da6db08ede9ea34813f40",
+      "bytes": 1481
+    },
+    {
+      "path": "test/pdfs/PDFJS-7562-reduced.pdf",
+      "sha256": "86fc03927aa3e1b216910de7b98c51aa42bab9baa359219ff4f422133188ed98",
+      "bytes": 13653
+    },
+    {
+      "path": "test/pdfs/Pages-tree-refs.pdf",
+      "sha256": "77c8817ea016296ea59e0991ea1a6d1440ef2480cdcd9acb59106938b649233f",
+      "bytes": 1098
+    },
+    {
+      "path": "test/pdfs/REDHAT-1531897-0.pdf",
+      "sha256": "f468fc2f922bb179f3cb9994c9476fb1840445fe6deb6cdcca42244ab0218786",
+      "bytes": 871
+    },
+    {
+      "path": "test/pdfs/S2.pdf",
+      "sha256": "57d874f2760ded2b70eb58b7b5e31df407d5641b7225576b77458b5dc5009543",
+      "bytes": 478490
+    },
+    {
+      "path": "test/pdfs/ShowText-ShadingPattern.pdf",
+      "sha256": "13ac785e8445fbf01d5a8200e0e899daa204cdbe723b02f38f8af61ac48707bb",
+      "bytes": 4671
+    },
+    {
+      "path": "test/pdfs/SimFang-variant.pdf",
+      "sha256": "e6c6e3fb472f06a3d812bef23afc026e90b33497408122b61d577e0f7df49418",
+      "bytes": 4108
+    },
+    {
+      "path": "test/pdfs/TAMReview.pdf",
+      "sha256": "a6db6d2f5e4f97e1e28a5919a875a40b89e38d0229b33cc023ca4d353f3ab3ec",
+      "bytes": 674629
+    },
+    {
+      "path": "test/pdfs/Test-plusminus.pdf",
+      "sha256": "2d572b042e50128127cc1c5a056da3f94b77854b6cca89ff074e1269b9172a45",
+      "bytes": 28401
+    },
+    {
+      "path": "test/pdfs/ThuluthFeatures.pdf",
+      "sha256": "752304c24a50834d111793fc038cafc892c071d04f214072729c41a178c161e7",
+      "bytes": 117677
+    },
+    {
+      "path": "test/pdfs/TrueType_without_cmap.pdf",
+      "sha256": "3e111eef52ce9c0d0b1da043290df4b49a5670c89891fcb3db6962edb12e35aa",
+      "bytes": 3989
+    },
+    {
+      "path": "test/pdfs/Type3WordSpacing.pdf",
+      "sha256": "8ac40dc49d40af8b5a50b442ced56b8db962c961a779a0284cd3a6207adc0bb7",
+      "bytes": 2693
+    },
+    {
+      "path": "test/pdfs/XiaoBiaoSong.pdf",
+      "sha256": "1ea20b84d94b90fa1ccb08bdd2e79e710071e0593fde6d547ab1cd4a3ebc0f88",
+      "bytes": 5652
+    },
+    {
+      "path": "test/pdfs/ZapfDingbats.pdf",
+      "sha256": "f0d3d15d1dd611a8ca6904389db4fa111ff53c506cb75177743a27fb5c4273fe",
+      "bytes": 17602
+    },
+    {
+      "path": "test/pdfs/acroform_calculation_order.pdf",
+      "sha256": "9081aad78cb6bb1871eb5c51addbe75ce73e4617a3e1fa15aa3da21232b6b755",
+      "bytes": 1041
+    },
+    {
+      "path": "test/pdfs/alphatrans.pdf",
+      "sha256": "234c0ab8e9458f4d17133b08d2b66170eeb92be2a80e1508aa5117a2bf568f63",
+      "bytes": 16910
+    },
+    {
+      "path": "test/pdfs/annotation-border-styles.pdf",
+      "sha256": "ba3a3c67030f9be2ad2c1989b78ec302501f71cecb4e5ebf193f6ce9ca51ff56",
+      "bytes": 89833
+    },
+    {
+      "path": "test/pdfs/annotation-button-widget.pdf",
+      "sha256": "f7b1c9c7b2ecb909f6b168cc1b137230076533f977a205472b212b7f0d3a78d7",
+      "bytes": 23785
+    },
+    {
+      "path": "test/pdfs/annotation-caret-ink.pdf",
+      "sha256": "afdc6fb72e8dcb8f0796a48388fc011e9db212e18d1d7b8cf95b327e88cf6ce9",
+      "bytes": 93680
+    },
+    {
+      "path": "test/pdfs/annotation-choice-widget.pdf",
+      "sha256": "2fcab2aed82afe9775359c1d166fb7aae77e99d25fe03be177e233d02d572538",
+      "bytes": 91556
+    },
+    {
+      "path": "test/pdfs/annotation-fileattachment.pdf",
+      "sha256": "b2f3751cd63e2402d95673f763e52fb105e6ce8e0b41406ca6d9965f5c894d43",
+      "bytes": 93322
+    },
+    {
+      "path": "test/pdfs/annotation-freetext.pdf",
+      "sha256": "318ed4bead93fa6ff023571b17ddca41e82fe2347b497ea24903a11e1892fb71",
+      "bytes": 86024
+    },
+    {
+      "path": "test/pdfs/annotation-highlight-without-appearance.pdf",
+      "sha256": "ea323f17899de03e7499d0e8531c49e873512a26b40058f357ca399312bf65d6",
+      "bytes": 16302
+    },
+    {
+      "path": "test/pdfs/annotation-highlight.pdf",
+      "sha256": "72b6387356ccfdfb95a0a5eff5e1ceb9b7667019807d7b04abaf64dad7ea143a",
+      "bytes": 92397
+    },
+    {
+      "path": "test/pdfs/annotation-ink-without-appearance.pdf",
+      "sha256": "663c7419206b1995c6ae651a1cbf8dbf9d89f0f6b3e61014cf545e21335e75b8",
+      "bytes": 6288
+    },
+    {
+      "path": "test/pdfs/annotation-line-without-appearance-empty-Rect.pdf",
+      "sha256": "920062508a60278f9dabb25992538b45ccf13deda97687365b81cf775d034bd5",
+      "bytes": 969
+    },
+    {
+      "path": "test/pdfs/annotation-line-without-appearance.pdf",
+      "sha256": "9408cc19a56ef122ea956799a2e5a63b2b3cc70bbd307ed76d2ba89fd9c54fc3",
+      "bytes": 14170
+    },
+    {
+      "path": "test/pdfs/annotation-line.pdf",
+      "sha256": "cea9ed8cf5726fa643da0c083bc8db8df790ab5e7ee9a2b62224aab73d9fa742",
+      "bytes": 84943
+    },
+    {
+      "path": "test/pdfs/annotation-link-text-popup.pdf",
+      "sha256": "06917202feda6b6bb8b57b048655f946f749bdff5a8bfcb35eb0116f38910312",
+      "bytes": 98997
+    },
+    {
+      "path": "test/pdfs/annotation-polyline-polygon-without-appearance.pdf",
+      "sha256": "710e7dbac4fcd2021e5a9cf7072e00284a1882d1ebacac43430b15c027902932",
+      "bytes": 91426
+    },
+    {
+      "path": "test/pdfs/annotation-polyline-polygon.pdf",
+      "sha256": "66303646dd550366994f6715678863536617093335825dda3c123616555b69e2",
+      "bytes": 88691
+    },
+    {
+      "path": "test/pdfs/annotation-square-circle-without-appearance.pdf",
+      "sha256": "d0a98bb14150b1bc2bc028876198098c99420ea10d30d43b4f9c5cb36bb023a7",
+      "bytes": 16007
+    },
+    {
+      "path": "test/pdfs/annotation-square-circle.pdf",
+      "sha256": "88ed9ed813c3585b3098b9f4eef5107426f7829044117cd87f77bdc38a8e3f72",
+      "bytes": 88740
+    },
+    {
+      "path": "test/pdfs/annotation-squiggly-without-appearance.pdf",
+      "sha256": "771698679397da9423bcb26e641c8cba173f00dc54f60656898143403e2bfbdd",
+      "bytes": 15589
+    },
+    {
+      "path": "test/pdfs/annotation-squiggly.pdf",
+      "sha256": "95a2af9d01c2e532711a1483d58a258e469f3ff0e7dd1c2ae45c70bd8f9bb6e8",
+      "bytes": 93644
+    },
+    {
+      "path": "test/pdfs/annotation-stamp.pdf",
+      "sha256": "76d566c092c23ccbec4bb488c40dc6daec8a381cb5386452b186728652436704",
+      "bytes": 88903
+    },
+    {
+      "path": "test/pdfs/annotation-strikeout-without-appearance.pdf",
+      "sha256": "9a99e1469ad4e285381016df440fada4d94b9384d051760b145fd63b794943a8",
+      "bytes": 15753
+    },
+    {
+      "path": "test/pdfs/annotation-strikeout.pdf",
+      "sha256": "ca7225dbdc6f8a26814cf0d67f5c509589e2cc09ace6bdb04a375a266db5b708",
+      "bytes": 91804
+    },
+    {
+      "path": "test/pdfs/annotation-text-widget.pdf",
+      "sha256": "9f091ceb368ad0406094efaa6c50d5033735ee52f383e0973dc53a7467089d7c",
+      "bytes": 93171
+    },
+    {
+      "path": "test/pdfs/annotation-text-without-popup.pdf",
+      "sha256": "2e0c788c795ab08178c12d26f73bebb6e18455a885568005770e8b6b947c4ceb",
+      "bytes": 24281
+    },
+    {
+      "path": "test/pdfs/annotation-tx.pdf",
+      "sha256": "c7be52654eaede8a9f33757168957f938f56e73fcd4c53539db5672dee426208",
+      "bytes": 11672
+    },
+    {
+      "path": "test/pdfs/annotation-tx2.pdf",
+      "sha256": "9612df43f8c48b574ddc7a81c0781b864235f7ff328dc9b9e646b924a8706650",
+      "bytes": 21285
+    },
+    {
+      "path": "test/pdfs/annotation-tx3.pdf",
+      "sha256": "15e3ac008cc848e593474aa312a9ef1fbecad1f69b4580361ffd2d334575bb91",
+      "bytes": 31642
+    },
+    {
+      "path": "test/pdfs/annotation-underline-without-appearance.pdf",
+      "sha256": "3a88f23b262ff72e613aecbdd75c2aa76bde7a5e84eef1acac04d355397876b6",
+      "bytes": 15304
+    },
+    {
+      "path": "test/pdfs/annotation-underline.pdf",
+      "sha256": "ef04b7049d5cab49c702887c423f20cfecf76d36905772209cc6781425d8f671",
+      "bytes": 92151
+    },
+    {
+      "path": "test/pdfs/annotation_hidden_noview.pdf",
+      "sha256": "97fd9418a5e24d326e66734462de0db215d40a6dd0e0734e12924fa364e5b390",
+      "bytes": 12114
+    },
+    {
+      "path": "test/pdfs/annotation_hidden_print.pdf",
+      "sha256": "d084450dfbb7d5c53593ed8f0a005553bd0ae797e34b3a1c8c00c7eec2fc5a9d",
+      "bytes": 6539
+    },
+    {
+      "path": "test/pdfs/arial_unicode_ab_cidfont.pdf",
+      "sha256": "049a4330710d8470896061acf7ee486735e94cef2769f6cc13fec3cb13bb65aa",
+      "bytes": 13110
+    },
+    {
+      "path": "test/pdfs/arial_unicode_en_cidfont.pdf",
+      "sha256": "1c4a08108d8074f543c04e9b2ea2b93a842e2b29eb05ee9d99766f430fd365ab",
+      "bytes": 15779
+    },
+    {
+      "path": "test/pdfs/asciihexdecode.pdf",
+      "sha256": "17cc92aa58ec48f75b01c6b6e7f8c8bade0a36f7295d0f833a16bafae854dc79",
+      "bytes": 743
+    },
+    {
+      "path": "test/pdfs/attachment.pdf",
+      "sha256": "9acec9f83f1557183c83a87111b85141e657849ac2aa92864ffd63cc91572379",
+      "bytes": 15299
+    },
+    {
+      "path": "test/pdfs/auth-event-ef-open.pdf",
+      "sha256": "144f617db7503a4d701d6383700add3254cb6a686741dd8f59b1284a82aca8ae",
+      "bytes": 2738
+    },
+    {
+      "path": "test/pdfs/autoprint.pdf",
+      "sha256": "1b6bee31ed8b88ec747c24308f9bd6b464043e6446c485a754507e7eeda92e90",
+      "bytes": 9138
+    },
+    {
+      "path": "test/pdfs/autoprint_will_print.pdf",
+      "sha256": "fea02abefab3942aaa8e5bb1365118a18bfed2879360c4cdc3d1c81b10961c88",
+      "bytes": 933
+    },
+    {
+      "path": "test/pdfs/axial_shading_many_inputs.pdf",
+      "sha256": "4d86a414969c1c849e6866193c2c41653463d694a02ffc91b0ba663a7d107ee8",
+      "bytes": 3336
+    },
+    {
+      "path": "test/pdfs/bad-PageLabels.pdf",
+      "sha256": "eff0ee7d1cf2e1a7ccfb25a8fc4c2bbea0ec23c838b61a199a57dbb732ddeaad",
+      "bytes": 798
+    },
+    {
+      "path": "test/pdfs/basicapi.pdf",
+      "sha256": "925853d98d67d5dae7473c635f932958e1695ce1029d23b2ecd2531cb65f1f14",
+      "bytes": 105779
+    },
+    {
+      "path": "test/pdfs/bigboundingbox.pdf",
+      "sha256": "6cd3d57b85891021af2de75ac304a6efc2894793dab7594968b0b5efcd1d0013",
+      "bytes": 76044
+    },
+    {
+      "path": "test/pdfs/bitmap-composite-and-xnor-halftone.pdf",
+      "sha256": "a88d42b10bd7c860abd3bf16432378d23a9fcf267a7008be047b608e1a332f4e",
+      "bytes": 1537
+    },
+    {
+      "path": "test/pdfs/bitmap-composite-and-xnor-refine.pdf",
+      "sha256": "c2046037b2617ffdde875d523bf56a428339d7a6f753c25f4f957317bc9ecc9a",
+      "bytes": 1891
+    },
+    {
+      "path": "test/pdfs/bitmap-composite-and-xnor-text.pdf",
+      "sha256": "aba6249b83158532ad87ccf47ba69737c9ba2b787c2f815767d239e910564235",
+      "bytes": 1243
+    },
+    {
+      "path": "test/pdfs/bitmap-composite-and-xnor.pdf",
+      "sha256": "4432b73b7efcae8eb960b409de37af218f366bd548709d74773dae4ac7c257ef",
+      "bytes": 1314
+    },
+    {
+      "path": "test/pdfs/bitmap-composite-or-xor-replace-halftone.pdf",
+      "sha256": "3ffb92c8a77140d06ea628514a1d44c116a5067d40e3cd3887455b8d40918202",
+      "bytes": 1849
+    },
+    {
+      "path": "test/pdfs/bitmap-composite-or-xor-replace-refine.pdf",
+      "sha256": "cc9510f5b113c8a2053fbc3891e0c8275bf0f59e1ca44522832e77d6a26cc145",
+      "bytes": 2343
+    },
+    {
+      "path": "test/pdfs/bitmap-composite-or-xor-replace-text.pdf",
+      "sha256": "f4fb077e7e541f01ce21983f7822bd2b43d98f8554bf9cb421a03c7daa6442a5",
+      "bytes": 1578
+    },
+    {
+      "path": "test/pdfs/bitmap-composite-or-xor-replace.pdf",
+      "sha256": "ba8dfa7f3879d2c851287769c0503cf84441e871a93e312e46253e9238dca737",
+      "bytes": 1630
+    },
+    {
+      "path": "test/pdfs/bitmap-customat-tpgdon.pdf",
+      "sha256": "91b35c6963b8135dde1f509b424d3cfe5b02d9cc023c802c412916c6b76cc938",
+      "bytes": 1057
+    },
+    {
+      "path": "test/pdfs/bitmap-customat.pdf",
+      "sha256": "9be6eb11af2e4078eb209cbf680bb415960f2275f7e120660d22e7edc09e2ede",
+      "bytes": 1051
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone-10bpp-mmr.pdf",
+      "sha256": "c164623c7745aa431f59fa4a088e5adf3ff640687469576c64c5b044102ddae0",
+      "bytes": 1710
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone-10bpp.pdf",
+      "sha256": "8a4577a1cdbdf342e2a61e18a239423452355c13733075af76fcd008f12eac5f",
+      "bytes": 1311
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone-composite.pdf",
+      "sha256": "e52ea26a9cadf0a1fbcd58c3ae411cf2bf14b05f172966283a6254296c4825a0",
+      "bytes": 1599
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone-grid.pdf",
+      "sha256": "5ba3f0ca836c6df256415b2ddd61286b819f5b6a3f5598e146601839302c0158",
+      "bytes": 1622
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone-refine.pdf",
+      "sha256": "f2efff25bcf1ee5d8ee87e3b7c54c7b75e8a1ad33c9e5be22386ed35648dfd7d",
+      "bytes": 1399
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone-skip-dummy.pdf",
+      "sha256": "6cdcfefd9200ddfbd37a15ce66ef50421d2fbcc9b396b2a9714b316f7c0a0ff4",
+      "bytes": 1287
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone-skip-grid-template1.pdf",
+      "sha256": "bafb6edc883b156dbc337b74b0230fbcc5c45f48e08123f3040872edb1c1ec69",
+      "bytes": 1606
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone-skip-grid-template2.pdf",
+      "sha256": "4aedf60701a9b35e17766e4c26a7326adb0b618c87fb487e7cdde8c909efdd11",
+      "bytes": 1597
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone-skip-grid-template3.pdf",
+      "sha256": "ad156587b727404d16794dafcc738319b8a2a601374895634b0d5ee8d8b34f1b",
+      "bytes": 1600
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone-skip-grid.pdf",
+      "sha256": "cfd77f057c98bb1af01fc108c5a9e0b09b438e0e4f1a31aa8b07ce7b275cc348",
+      "bytes": 1624
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone-template1.pdf",
+      "sha256": "f509758d869cc08a1b45b0fcee33794ae1f45887105ba6fa5a2c8f52598518fc",
+      "bytes": 1265
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone-template2.pdf",
+      "sha256": "6c3d7bdc9e1012cce3c80b27592fdcc7864734c628184e1b55245b678d0ec47f",
+      "bytes": 1299
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone-template3.pdf",
+      "sha256": "4f249e0d12ad232b96de05592c250498dd3fc661607a8fcbd721bdb5a79eb425",
+      "bytes": 1300
+    },
+    {
+      "path": "test/pdfs/bitmap-halftone.pdf",
+      "sha256": "c276d6cbc7d0709af448b532232c9f8b92424859974b38feaef0d8983bd6d7c0",
+      "bytes": 1287
+    },
+    {
+      "path": "test/pdfs/bitmap-initially-unknown-size.pdf",
+      "sha256": "97c0fe6757d24bc2469a8b3a1fab346550ae5e7289f6855e21ebc2ce421dbe6f",
+      "bytes": 1030
+    },
+    {
+      "path": "test/pdfs/bitmap-mmr.pdf",
+      "sha256": "32b70aeb63ca60f60c25c2d797b8f5af16043d66dce1bcb0b0f08a78acee95ed",
+      "bytes": 1122
+    },
+    {
+      "path": "test/pdfs/bitmap-p32-eof.pdf",
+      "sha256": "6c959401b0a43e94b4abc580d95b8373adcea87cb13612a3b9eece18767de576",
+      "bytes": 1490
+    },
+    {
+      "path": "test/pdfs/bitmap-randomaccess.pdf",
+      "sha256": "82079253a8c5af9683e5dc341e7416d8eb5901c48d6af850a79413e6f11711ec",
+      "bytes": 1026
+    },
+    {
+      "path": "test/pdfs/bitmap-refine-customat-tpgron.pdf",
+      "sha256": "7a17d8f6d26061f3110efd54f297a7e0e8d4652e3086cc99e3c171d31fd0810f",
+      "bytes": 1146
+    },
+    {
+      "path": "test/pdfs/bitmap-refine-customat.pdf",
+      "sha256": "161d25d77c9bf788515dd0fc1aaaf6e35e1c23495acffe9cf99a98d567d1c5de",
+      "bytes": 1146
+    },
+    {
+      "path": "test/pdfs/bitmap-refine-lossless.pdf",
+      "sha256": "f30056cb8e30203e3c16f00ffe28bc90bdb6af8aa72d58c14f19e71ec9c7cecf",
+      "bytes": 1128
+    },
+    {
+      "path": "test/pdfs/bitmap-refine-page-subrect.pdf",
+      "sha256": "74114e6f3925faf7145c0738168ecd3041c45c0ea69b2a91e7f105cdf7045bd0",
+      "bytes": 1110
+    },
+    {
+      "path": "test/pdfs/bitmap-refine-page.pdf",
+      "sha256": "7dbeb64018e183c77333996eeb5c2b9bcc90caaca8381ad42fb98a64c14025eb",
+      "bytes": 1127
+    },
+    {
+      "path": "test/pdfs/bitmap-refine-refine.pdf",
+      "sha256": "2ebb942ac5be0e066ab4ce204384a39b61692ca75fab0a4df4f36dae925e1f4d",
+      "bytes": 1203
+    },
+    {
+      "path": "test/pdfs/bitmap-refine-template1-tpgron.pdf",
+      "sha256": "921c1eab4ece655029bb524eb22136d21f305d13779f86fbe81086b62a22d4b3",
+      "bytes": 1230
+    },
+    {
+      "path": "test/pdfs/bitmap-refine-template1.pdf",
+      "sha256": "019b26e3de36cbdd829e2faef67866f4140abb17040cd0b626e5bceab272b68c",
+      "bytes": 1116
+    },
+    {
+      "path": "test/pdfs/bitmap-refine-tpgron.pdf",
+      "sha256": "6b17840d81375faafbe48e2150706f1a70271865ec18b9f2e6700e06dadbe86c",
+      "bytes": 1251
+    },
+    {
+      "path": "test/pdfs/bitmap-refine.pdf",
+      "sha256": "ec9e2f9601167ccb00f961e33dec5cc46a23bf08e132f9dce5d3aecb3f1cd9f9",
+      "bytes": 1128
+    },
+    {
+      "path": "test/pdfs/bitmap-stripe-initially-unknown-height.pdf",
+      "sha256": "fc2a20fc1cb5b4fd780e68be7b7ed95e63aa9b58ef290d7501b97212c206ff0f",
+      "bytes": 1271
+    },
+    {
+      "path": "test/pdfs/bitmap-stripe-last-implicit.pdf",
+      "sha256": "ff3b3a2465c764fd1705db05edfb3f11336e6a93535bad956e5d5aaebaecf4ae",
+      "bytes": 1256
+    },
+    {
+      "path": "test/pdfs/bitmap-stripe-single-no-end-of-stripe.pdf",
+      "sha256": "8bf3bbb2a48b0bc689b920fece52080582b15415eef3615e811ffb2cc8932966",
+      "bytes": 1026
+    },
+    {
+      "path": "test/pdfs/bitmap-stripe-single.pdf",
+      "sha256": "b6d9b0b9348e9f4c33ba192a32c913ecc446d212dc3df0108ed732cc399b5482",
+      "bytes": 1041
+    },
+    {
+      "path": "test/pdfs/bitmap-stripe.pdf",
+      "sha256": "b1e3c558a34537aeace4334cbcea6c42f82f4b815c8232df462ee8956e6faf82",
+      "bytes": 1271
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-big-segmentid.pdf",
+      "sha256": "2fb59d0fbb8396bc812d5ed9af8bc6b2b8a69051519b8449b360cb304ea4e0b8",
+      "bytes": 1176
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-context-reuse.pdf",
+      "sha256": "a6f05b48046b132054efe967c68ad5292b6835f78cce14bf2a613c9bce39b2c1",
+      "bytes": 1192
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-empty.pdf",
+      "sha256": "adf661486871b31773fc85750372dbd3051db664b17128791e1bf667becde7e2",
+      "bytes": 1133
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-negative-sbdsoffset.pdf",
+      "sha256": "5aa48933bc980565e1c0ea93d91c4fe5370e96d4a461198481aa86af908793e5",
+      "bytes": 1077
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-refine.pdf",
+      "sha256": "5e2ae6875ea8d0f1d2aecfaeff6aeac6acb8ff76eadef42e5f0fa7fc76c818b0",
+      "bytes": 1185
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-symbolrefine-textrefine.pdf",
+      "sha256": "2902534243c382770456f958fe7ba835f1916ea85f6219a3ba2b122f63db34c6",
+      "bytes": 1301
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-symbolrefineone-customat.pdf",
+      "sha256": "cd8792e011e41f56b07dd0ba14df10b89c36d4492937032c60656177f5d27da5",
+      "bytes": 1167
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-symbolrefineone-template1.pdf",
+      "sha256": "f175b6edddc6d40cbacc447b46a628c164a9a5ea0185b20f09f48bedbe7516c3",
+      "bytes": 1155
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-symbolrefineone.pdf",
+      "sha256": "670053e1dbd980602b44f052bc9c0ffa7e7835521fc0ee324261a4143b52f66c",
+      "bytes": 1164
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-symbolrefineseveral.pdf",
+      "sha256": "705133ec80d7e755ca206be508ad92840f11555520a5c117a3fe2886c30e2435",
+      "bytes": 1129
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-symhuff-texthuff.pdf",
+      "sha256": "af8f3c70dbe1c0f0da090c829cea6da5015ed9978dd13fd2d0b9b44ac715db2b",
+      "bytes": 1209
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-symhuff-texthuffB10B13.pdf",
+      "sha256": "1e0ad39f563c79b7e650347265dafebb1ccbfb20c9fbce62fc64575af9a13aa9",
+      "bytes": 1209
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-symhuffB5B3-texthuffB7B9B12.pdf",
+      "sha256": "7777647082ccdde57b94bbdbcf1e0a743537adb02faabd662414634c92815d57",
+      "bytes": 1213
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-symhuffcustom-texthuffcustom.pdf",
+      "sha256": "c0799af446d978d843ee0788a6dddb8c572a5e2b57414de4e7b2a742ec2d34a2",
+      "bytes": 1415
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-symhuffrefine-textrefine.pdf",
+      "sha256": "3e4eecb287e59b630d9799bf00d2085f890d23bbc6ae2bebfb86b10c00b8a6a3",
+      "bytes": 1417
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-symhuffrefineone.pdf",
+      "sha256": "a38677054cb800d0a8b1bac32d21f9ad9e6102bcd650fc3735015d05e1778cc9",
+      "bytes": 1298
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-symhuffrefineseveral.pdf",
+      "sha256": "6d3050b223ce7bda0c948635c9bf67c04eac6c21b6e214d988cda9e1599e257a",
+      "bytes": 1244
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-symhuffuncompressed-texthuff.pdf",
+      "sha256": "347a83cce9504ff8414fe028d8db2b311ebe800cab0116469c90456dd889218b",
+      "bytes": 6177
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-textbottomleft.pdf",
+      "sha256": "0bc02085b750d0413fa3360825cc23b5e5a449b2e3f08fa084c3b00b64e03683",
+      "bytes": 1112
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-textbottomlefttranspose.pdf",
+      "sha256": "a9c552ce38b76935843861f8491bcb2df3af3833baa354e035e2026c286b7f98",
+      "bytes": 1097
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-textbottomright.pdf",
+      "sha256": "e50632eb44e2dc3dc411e4265844ccf6fdd146b496b8c84e3d81a5c9adf858a5",
+      "bytes": 1112
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-textbottomrighttranspose.pdf",
+      "sha256": "27b036ccba3f9e068677ef8bf203cf66bc6fef1eb091188119a1b7f474344d26",
+      "bytes": 1097
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-textcomposite.pdf",
+      "sha256": "a3f3985d4adcff6f5fbd2df7fad5382f43ac1dd2f4f868cb854a7a067bdeaf86",
+      "bytes": 1319
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-texthuffrefine.pdf",
+      "sha256": "945dc0c5ad52ff055c857baa35bfb83e1283ec5ac8f9a031d81e320d41f47a89",
+      "bytes": 1270
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-texthuffrefineB15.pdf",
+      "sha256": "0668b10ff9061f028185a8b2c014184ceaa3c23cddaf058c91f2d068b2e20def",
+      "bytes": 1270
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-texthuffrefinecustom.pdf",
+      "sha256": "d150d22c02ae175c031e77aea704813cce57c33c4dd6ed3f22fa7494bb29e453",
+      "bytes": 1396
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-texthuffrefinecustomdims.pdf",
+      "sha256": "fef10e63ce72c3285a804767499a0a814a75d24f919659e8e69596cd2095114f",
+      "bytes": 1318
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-texthuffrefinecustompos.pdf",
+      "sha256": "03b17dfc51931f8f9f35a2fabfe98e36bb61fc7e604e455c6c6d6fca3d6e6603",
+      "bytes": 1318
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-texthuffrefinecustomposdims.pdf",
+      "sha256": "342d06ad5f3d6843ea77d9a03117f5a3df663d22375a68e50a71109eaea6c4c1",
+      "bytes": 1371
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-texthuffrefinecustomsize.pdf",
+      "sha256": "1a2a7861127869e6c779b65b898ec41e5045f1107242923aa8109c8c412cdec1",
+      "bytes": 1295
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-textrefine-customat.pdf",
+      "sha256": "2c86c9cde4e623f2ba3c94d6b9e067298b25adeebd96ab704cbe908c22de5c8b",
+      "bytes": 1132
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-textrefine-negative-delta-width.pdf",
+      "sha256": "53fa2b3ccef2999986369ea19c245dbada17c17f959e0c0d98f926e2fdf2fb1a",
+      "bytes": 1130
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-textrefine.pdf",
+      "sha256": "c6dc6a57d164c86c8aa59e6136f8b166a4697213ef6d5669bed6a7f6227bed0b",
+      "bytes": 1128
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-texttopright.pdf",
+      "sha256": "e5b6eb678be01e99db7a6316fa99070bebf29489ae61054bdde04c9c26c6b9dd",
+      "bytes": 1109
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-texttoprighttranspose.pdf",
+      "sha256": "2e6522bf6fbbf01fbd8c05b00915b9f5c2783cbdf1815b53b027f49fb91cdad7",
+      "bytes": 1097
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol-texttranspose.pdf",
+      "sha256": "926887bcb2397304842c777a703219296d9b396d924922d492103327ab99a661",
+      "bytes": 1097
+    },
+    {
+      "path": "test/pdfs/bitmap-symbol.pdf",
+      "sha256": "39bf73b128947979f9a6080791ad03e206ea5756f4b4d37b6609e154d4f875b2",
+      "bytes": 1109
+    },
+    {
+      "path": "test/pdfs/bitmap-template1-customat-tpgdon.pdf",
+      "sha256": "071fd70fdad79ea30a2bfbaafcee63f7da0e2b723ffeef5949d583bae39ffd58",
+      "bytes": 1020
+    },
+    {
+      "path": "test/pdfs/bitmap-template1-customat.pdf",
+      "sha256": "9fbdff065b72818b2e8cef051586b4807afefc3f68773117a0d7fca217c7eb42",
+      "bytes": 1015
+    },
+    {
+      "path": "test/pdfs/bitmap-template1-tpgdon.pdf",
+      "sha256": "e8e715223bceac2b95b186e7220594793a57333c8d0da64cde2060027b9e91d4",
+      "bytes": 1206
+    },
+    {
+      "path": "test/pdfs/bitmap-template1.pdf",
+      "sha256": "25ab482ef6ba07335fd4927ac3ab22b231044345b48e024b5ed2399b048bc677",
+      "bytes": 1015
+    },
+    {
+      "path": "test/pdfs/bitmap-template2-customat-tpgdon.pdf",
+      "sha256": "f062d3e4f6bed408216ed042a113aca71ff30cb859b314c26b3d7259cfa5ca07",
+      "bytes": 1065
+    },
+    {
+      "path": "test/pdfs/bitmap-template2-customat.pdf",
+      "sha256": "389e2719d8432f7a4d0a579e49f2fba3a6e085a007c046023666e66432105554",
+      "bytes": 1055
+    },
+    {
+      "path": "test/pdfs/bitmap-template2-tpgdon.pdf",
+      "sha256": "f54b9f8a913f7f9389ea3fbe6ff3afd148753be651d5f6ed8caebd67acbc6271",
+      "bytes": 1176
+    },
+    {
+      "path": "test/pdfs/bitmap-template2.pdf",
+      "sha256": "f37d525a05dfbfc5936b56c0fb7b7af382d0fa2da56a1a305c99850d5982912b",
+      "bytes": 1018
+    },
+    {
+      "path": "test/pdfs/bitmap-template3-customat-tpgdon.pdf",
+      "sha256": "a536e4f1dbe09f27f5e355bfad252e96d223cce761a9f58cf47fcfb507133f4d",
+      "bytes": 1079
+    },
+    {
+      "path": "test/pdfs/bitmap-template3-customat.pdf",
+      "sha256": "8db3cd4ebd4d75a0a45c685ce243af13855bb6a3642b3a3810b0e7ce29786389",
+      "bytes": 1070
+    },
+    {
+      "path": "test/pdfs/bitmap-template3-tpgdon.pdf",
+      "sha256": "1d8514a3c8664ac84b1434ccac539f30fec3a02dccbd1da612a7925394cb2a48",
+      "bytes": 1197
+    },
+    {
+      "path": "test/pdfs/bitmap-template3.pdf",
+      "sha256": "98b5e78016e3415990e9f3c99b5ed2940ed869826d9ddf04385f8abdf543cf13",
+      "bytes": 1033
+    },
+    {
+      "path": "test/pdfs/bitmap-tpgdon.pdf",
+      "sha256": "7d9c22dcee6a357e6290de04b57a19ffc42a6fd5d802d62a4cbd75a59b078924",
+      "bytes": 1211
+    },
+    {
+      "path": "test/pdfs/bitmap-trailing-7fff-stripped-harder-refine.pdf",
+      "sha256": "17e08dc35c1fe2c6a9ce5db25ee53805248ccb9a8ae528a339d37d764f29dc9a",
+      "bytes": 1887
+    },
+    {
+      "path": "test/pdfs/bitmap-trailing-7fff-stripped-harder.pdf",
+      "sha256": "47fa9873c6250a75552b60771fed2494f14eb4a20bdacf558ee00f9136835be9",
+      "bytes": 15181
+    },
+    {
+      "path": "test/pdfs/bitmap-trailing-7fff-stripped.pdf",
+      "sha256": "1fb303a7eaa11933f3f1e5c3b554375649ea4a5f1226efa97a7534cac768b8fb",
+      "bytes": 1049
+    },
+    {
+      "path": "test/pdfs/blendmode.pdf",
+      "sha256": "39ce34c2d32738c7c94970fd76559ecb9efd671f5ab99e515a853674e7a824ce",
+      "bytes": 50567
+    },
+    {
+      "path": "test/pdfs/bomb_giant.pdf",
+      "sha256": "a33bc9ff49df11644e5790add536df87b702684b729999539df32ae655fd6dd1",
+      "bytes": 123242
+    },
+    {
+      "path": "test/pdfs/boundingBox_invalid.pdf",
+      "sha256": "f85be7aaf217f8f1864b910501d4aeea53f3d7a503df5b81dd6aaa267e5968ad",
+      "bytes": 1263
+    },
+    {
+      "path": "test/pdfs/bug1001080.pdf",
+      "sha256": "98523b6e09b1c1f9ffb5a6911f49d9b40703b0faa191661c5ba376beb428951d",
+      "bytes": 12423
+    },
+    {
+      "path": "test/pdfs/bug1011159.pdf",
+      "sha256": "4fef58de1f25259bd113e2d07656bfa67440a7d7e214a6a395d6745faceae4a3",
+      "bytes": 18316
+    },
+    {
+      "path": "test/pdfs/bug1019475_1.pdf",
+      "sha256": "1fa292aea756ae921715c72e5962d3e2fde96de200b8aedfc3eb22a2fe72902c",
+      "bytes": 68512
+    },
+    {
+      "path": "test/pdfs/bug1019475_2.pdf",
+      "sha256": "232e7f5c654422d6bdc863a7d63c5ff401e5128e818c4770d3b0f8293b4bf307",
+      "bytes": 27694
+    },
+    {
+      "path": "test/pdfs/bug1020226.pdf",
+      "sha256": "50e91d373aa313537972519c65b050f8d4d5bd996859fa20756432c2029c3ff6",
+      "bytes": 184
+    },
+    {
+      "path": "test/pdfs/bug1020858.pdf",
+      "sha256": "89385d91604eb25b1d2fae81a8b04748840be710bba5f972acb67f53ea49f543",
+      "bytes": 1312
+    },
+    {
+      "path": "test/pdfs/bug1027533.pdf",
+      "sha256": "80d5111dda8dd3f63297d278b83cce0325c44274b3efabe60f88539db0aa329d",
+      "bytes": 8900
+    },
+    {
+      "path": "test/pdfs/bug1028735.pdf",
+      "sha256": "db81a78cd6e3908dacad4aa2dce4275766c0dbcc8ca506b11f8adc579f809864",
+      "bytes": 22886
+    },
+    {
+      "path": "test/pdfs/bug1046314.pdf",
+      "sha256": "a0bea37e3a032d4378c809dffc33a0766f7d364ba7b0bbe514a219ce4034e4d2",
+      "bytes": 39249
+    },
+    {
+      "path": "test/pdfs/bug1050040.pdf",
+      "sha256": "4a71cb411950617e23b383f93c5c5e87c231a6bb6cd1e191fa0597ff2d0d73ce",
+      "bytes": 40946
+    },
+    {
+      "path": "test/pdfs/bug1057544.pdf",
+      "sha256": "9810fd997ebfda631dcf88bc5669e718cc8162b3f318d4da22ef29b4b5c977f1",
+      "bytes": 31609
+    },
+    {
+      "path": "test/pdfs/bug1065245.pdf",
+      "sha256": "00beff9834bc18913a93f0c7bc0572187845c665e29a1ff3aa0bc3b8121feee5",
+      "bytes": 2188
+    },
+    {
+      "path": "test/pdfs/bug1068432.pdf",
+      "sha256": "dbf4fef174433666aa41ab2d6091f9415fa5369e11fb77020482b49f975e1412",
+      "bytes": 2360
+    },
+    {
+      "path": "test/pdfs/bug1108301.pdf",
+      "sha256": "37881e37a8586bd167838ca72ec497335eaaafbf1df512469b3bce8d9c3c9d11",
+      "bytes": 48421
+    },
+    {
+      "path": "test/pdfs/bug1132849.pdf",
+      "sha256": "f57f4e01cb83671f895014cd521946346b3da0bd628225c9128719de2d029431",
+      "bytes": 72583
+    },
+    {
+      "path": "test/pdfs/bug1146106.pdf",
+      "sha256": "63bdac77b56f72a04e654440e624e50d77e420632a03f97dca971616658acdbc",
+      "bytes": 4517
+    },
+    {
+      "path": "test/pdfs/bug1151216.pdf",
+      "sha256": "441cbcfd89d499a78c1881eb6800c3e95957a5f5a5c7c81c9e92d74ada952a56",
+      "bytes": 17254
+    },
+    {
+      "path": "test/pdfs/bug1157493.pdf",
+      "sha256": "7ac04650391b976d24047ca4553c91546b455345392c06811c5389dac194d96a",
+      "bytes": 68735
+    },
+    {
+      "path": "test/pdfs/bug1175962.pdf",
+      "sha256": "9f1822292931c1360760ea005e6e444626b330b577e953ab6d1cba411bb26dde",
+      "bytes": 20894
+    },
+    {
+      "path": "test/pdfs/bug1186827.pdf",
+      "sha256": "979ab4de6732354a540f0d110039e3c4c73e55fa8db7097592167a8e7e5ebd2d",
+      "bytes": 45013
+    },
+    {
+      "path": "test/pdfs/bug1200096.pdf",
+      "sha256": "523f5f0bcaf82fc303c2cf0d9ee9cf5d75465a5ef1547e143ee1a3cb600913de",
+      "bytes": 117519
+    },
+    {
+      "path": "test/pdfs/bug1245391_reduced.pdf",
+      "sha256": "b08d98aa07899ec84b3e2b7714f9a1228919d63733ee3734ea01806263770563",
+      "bytes": 351793
+    },
+    {
+      "path": "test/pdfs/bug1250079.pdf",
+      "sha256": "cd979da78dff6fd1c32f28a76f76388b2da1697f49395cc5ba29c88bfe2a4f65",
+      "bytes": 711
+    },
+    {
+      "path": "test/pdfs/bug1252420.pdf",
+      "sha256": "9c3f238560397b03843976e833b99b7b865f8344413791204f57e82d523ce197",
+      "bytes": 78413
+    },
+    {
+      "path": "test/pdfs/bug1308536.pdf",
+      "sha256": "5b8936523b4a0da1580da01bfdbd33cecb59bcb3a4f571a0ec413f5a8a7dd11a",
+      "bytes": 6753
+    },
+    {
+      "path": "test/pdfs/bug1337429.pdf",
+      "sha256": "abfe1e2bdc37ebeb09a1d5fc1be5f04255310b5f9b74518ecf7f4bed29e408bd",
+      "bytes": 58689
+    },
+    {
+      "path": "test/pdfs/bug1365930.pdf",
+      "sha256": "7bb8264a454b28c47ed769d3e979970453f387e24b31766198490ed89f192408",
+      "bytes": 21795
+    },
+    {
+      "path": "test/pdfs/bug1392647.pdf",
+      "sha256": "2ef23082afd417c317a38ef7e1b76fb3dc1f1030f09d4033ee87cd200fb09f84",
+      "bytes": 13139
+    },
+    {
+      "path": "test/pdfs/bug1473809.pdf",
+      "sha256": "99b99de1b5ef23fd63fb42f9b9e57bf6c7a86c2aa5e096c98e3e465fc7cac97a",
+      "bytes": 178088
+    },
+    {
+      "path": "test/pdfs/bug1513120_reduced.pdf",
+      "sha256": "bf2beb8f7cb17d5c93460342bfdf2c9f99fbe1fdd8a1359a57e4f04472b77627",
+      "bytes": 30014
+    },
+    {
+      "path": "test/pdfs/bug1529502.pdf",
+      "sha256": "3de7b3adebd6f2c347acec41cc121e3cc59fb75d03ba3e2c1f1750b38822e3ed",
+      "bytes": 42652
+    },
+    {
+      "path": "test/pdfs/bug1538111.pdf",
+      "sha256": "9f9990be0b363fbb1ad344a6e3f1a0af0a79745a2061d51f8f2e95593aded286",
+      "bytes": 2068
+    }
+  ]
+}

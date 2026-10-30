@@ -33,6 +33,7 @@ import clierr
 from pdftools import cli, tools
 from pdftools.commands import p3c_helpers, p6_images
 from pdftools.errors import PdfError
+from tests.tooling import require_tool as shared_require_tool
 
 QUADRANTS = ((255, 0, 0), (0, 200, 0), (0, 0, 255), (255, 255, 0))  # TL, TR, BL, BR
 
@@ -101,31 +102,7 @@ class Base(unittest.TestCase):
         return rows[0]
 
     def require_tool(self, name):
-        path = tool_path(name)
-        if not path:
-            reason = f"{name} executable is absent"
-            if os.environ.get("PDFTOOLS_REQUIRE_TOOLS") == "1":
-                self.fail(f"required tool {name} is missing: {reason}")
-            print(f"SKIP {name}: {reason}", file=sys.stderr)
-            self.skipTest(reason)
-        return path
-
-    def tesseract_env(self):
-        """PATH plus a tessdata folder with the configs beside the languages.
-
-        The conda package keeps the languages in share/tessdata and the configs (hocr, pdf, txt) in
-        Library/share/tessdata, so ocrmypdf fails with TesseractConfigError unless they are joined.
-        """
-        prefix = Path(sys.prefix)
-        env = {"PATH": str(Path(tool_path("tesseract")).parent) + os.pathsep + str(Path(tool_path("ocrmypdf")).parent)
-               + os.pathsep + os.environ["PATH"]}
-        if not (prefix / "share" / "tessdata" / "configs").is_dir():
-            joined = self.root / "tessdata"
-            shutil.copytree(prefix / "Library" / "share" / "tessdata" / "configs", joined / "configs")
-            for lang in ("eng", "ind", "osd"):
-                shutil.copyfile(prefix / "share" / "tessdata" / f"{lang}.traineddata", joined / f"{lang}.traineddata")
-            env["TESSDATA_PREFIX"] = str(joined)
-        return env
+        return shared_require_tool(self, name, f"{name} is required for this integration test")[0]
 
     def save(self, image, name, fmt=None, **kwargs):
         path = self.root / name
@@ -406,8 +383,7 @@ class Img2PdfRouteTable(Base):
         image = Image.new("RGB", (900, 200), "white")
         ImageDraw.Draw(image).text((30, 60), "HELLO WORLD", fill="black", font=ImageFont.load_default(size=90))
         path = self.save(image, "text.png")
-        with mock.patch.dict(os.environ, self.tesseract_env()):
-            self.ok("img2pdf", path, "--ocr", "-o", self.root / "ocr.pdf")
+        self.ok("img2pdf", path, "--ocr", "-o", self.root / "ocr.pdf")  # real env: tools.dev_tool_env joins tessdata
         with pymupdf.open(self.root / "ocr.pdf") as doc:
             self.assertIn("HELLO", doc[0].get_text().upper())
 

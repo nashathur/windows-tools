@@ -10,7 +10,7 @@ from pathlib import Path
 import pymupdf
 
 from .. import io
-from ..check import Features, OperationResult, Placement, compare
+from ..check import Features, OperationResult, Placement, compare, feature_records
 from ..errors import BadArg, PdfError
 from ..pipeline import announce_estimate, open_input, write_pdf
 from ..registry import command
@@ -234,7 +234,75 @@ def _operation(rows, docs):
         expected["labels"] = len(source.get_page_labels())
     elif source.get_page_labels():
         dropped["labels"] = len(source.get_page_labels())
-    return OperationResult(pages=placements, features=Features(must_survive=dict(expected), dropped=dropped))
+    records = {"bookmarks": [], "links": [], "widgets": []}
+    page_map = {}
+    for out_page, row in enumerate(rows, 1):
+        if row["page"] != "blank":
+            page_map.setdefault((row["source"], row["page"]), []).append(out_page)
+    source_records_by_path = {}
+    for path, (doc, _) in docs.items():
+        source_records = feature_records(doc)
+        source_records_by_path[path] = source_records
+        for bookmark in source_records["bookmarks"]:
+            targets = page_map.get((path, bookmark["page"] - 1), [])
+            if targets:
+                records["bookmarks"].append({**bookmark, "page": targets[0]})
+    used_names = set()
+    source_names = {}
+    for path, source_records in source_records_by_path.items():
+        for widget in source_records["widgets"]:
+            original = widget["name"]
+            if (path, original) in source_names:
+                continue
+            name, suffix = original, 2
+            while name in used_names:
+                name = f"{original}#{suffix}"; suffix += 1
+            source_names[(path, original)] = name
+            used_names.add(name)
+    page_occurrences = Counter()
+    copied_names = {}
+    for out_page, row in enumerate(rows, 1):
+        if row["page"] == "blank":
+            continue
+        path = row["source"]
+        page_key = (path, row["page"])
+        page_occurrences[page_key] += 1
+        copy_no = page_occurrences[page_key]
+        source_records = source_records_by_path[path]
+        for link in source_records["links"]:
+            if link["page"] != row["page"] + 1:
+                continue
+            mapped = dict(link, page=out_page)
+            if link["kind"] == "page":
+                targets = page_map.get((path, link["target"] - 1), [])
+                if not targets:
+                    continue
+                mapped["target"] = targets[0]
+            records["links"].append(mapped)
+        for widget in source_records["widgets"]:
+            if widget["page"] == row["page"] + 1:
+                record = dict(widget, page=out_page)
+                base = source_names[(path, widget["name"])]
+                if copy_no > 1:
+                    copy_key = (path, row["page"], widget["name"], copy_no)
+                    if copy_key not in copied_names:
+                        candidate = f"{base}#{copy_no}"
+                        suffix = copy_no
+                        while candidate in used_names:
+                            suffix += 1
+                            candidate = f"{base}#{suffix}"
+                        copied_names[copy_key] = candidate
+                        used_names.add(candidate)
+                    record["name"] = copied_names[copy_key]
+                else:
+                    record["name"] = base
+                records["widgets"].append(record)
+    previous = 0
+    for bookmark in records["bookmarks"]:
+        bookmark["level"] = max(1, min(bookmark["level"], previous + 1))
+        previous = bookmark["level"]
+    return OperationResult(pages=placements, features=Features(must_survive=dict(expected), dropped=dropped,
+                                                               records=records))
 
 
 def _page_map(rows):
@@ -471,7 +539,10 @@ def _restore_catalog_features(source_path, output_path, password=None, rows=None
 
 
 def _write_rows(docs, rows, target, *, top_level_toc=False, input_occurrences=(), passwords=None):
-    if len(docs) == 1 and all(row["page"] != "blank" for row in rows):
+    # select shares one page object between repeated pages, so a per-occurrence top-level bookmark would
+    # resolve to the first copy; that case takes the insert_pdf route below.
+    repeated = len({row["page"] for row in rows}) < len(rows)
+    if len(docs) == 1 and all(row["page"] != "blank" for row in rows) and not (top_level_toc and repeated):
         path = next(iter(docs))
         source = docs[path][0]
         restore_catalog = _catalog_features_present(source)
@@ -629,6 +700,27 @@ def _execute(args, context, recipe, *, extra_inputs=(), command_name="organize")
         if getattr(args, "toc", False):
             occurrence_paths = [str(p) for p in occurrences if any(row["source"] == str(p) for row in rows)]
             operation.features.must_survive["bookmarks"] = operation.features.must_survive.get("bookmarks", 0) + len(occurrence_paths)
+            bookmarks = []
+            groups = []
+            previous_source, previous_page = None, None
+            for out_no, row in enumerate(rows, 1):
+                if row["page"] == "blank": continue
+                if row["source"] != previous_source or (previous_page is not None and row["page"] <= previous_page):
+                    group = [len(groups), row["source"], {}]; groups.append(group)
+                previous_source, previous_page = row["source"], row["page"]
+                group[2].setdefault(row["page"], out_no)
+            for _, source_path, destinations in groups:
+                bookmarks.append({"title": Path(source_path).stem, "level": 1,
+                                  "page": min(destinations.values())})
+                for level, title, page_no in docs[source_path][0].get_toc():
+                    if page_no - 1 in destinations:
+                        bookmarks.append({"title": " ".join(str(title).split()), "level": level + 1,
+                                          "page": destinations[page_no - 1]})
+            previous = 0
+            for bookmark in bookmarks:
+                bookmark["level"] = max(1, min(bookmark["level"], previous + 1))
+                previous = bookmark["level"]
+            operation.features.records["bookmarks"] = bookmarks
         spec = _spec(command_name)
         def writer(_doc, staged):
             _write_rows(docs, rows, staged, top_level_toc=getattr(args, "toc", False),

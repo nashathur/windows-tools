@@ -1,2 +1,4 @@
 tests/fixtures/out/
 reports/
+tests/corpus/
+tests/corpus_local.json

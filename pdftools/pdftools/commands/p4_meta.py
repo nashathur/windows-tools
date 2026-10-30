@@ -278,7 +278,10 @@ def bookmarks(args, context):
             raise PdfError("BAD_PAGE","bookmark target is outside the document","choose a page within the input document")
         doc.set_toc([] if args.clear else [[int(r["level"]), r["title"], int(r["page"])] for r in toc])
         doc.save(target)
-        return OperationResult(features=Features(must_survive={"bookmarks":0 if args.clear else len(toc)}))
+        expected = [] if args.clear else [{"title": " ".join(str(r["title"]).split()),
+                                           "level": int(r["level"]), "page": int(r["page"])} for r in toc]
+        return OperationResult(features=Features(must_survive={"bookmarks": len(expected)},
+                                                records={"bookmarks": expected}))
     result=write_pdf(path, _spec_named("bookmarks"), args, context, writer, operation=OperationResult())
     if result.get("type")=="result" and Path(result.get("path","")).is_file():
         with pymupdf.open(result["path"]) as check_doc:

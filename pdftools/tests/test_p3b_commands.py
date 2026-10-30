@@ -57,6 +57,38 @@ class Phase3bCommandsTest(unittest.TestCase):
                              ["station", "station#2"])
         self.assertIn("out 1", record["page_map"])
 
+    def test_identity_organize_preserves_shared_multpage_field_name(self):
+        source = self.root / "shared-field.pdf"
+        with pymupdf.open(self.fixtures["main"]) as doc:
+            doc.save(source)
+        with pikepdf.open(source, allow_overwriting_input=True) as pdf:
+            fields = pdf.Root["/AcroForm"]["/Fields"]
+            widget = fields[0]
+            parent = pdf.make_indirect(pikepdf.Dictionary({
+                "/FT": widget["/FT"], "/T": widget["/T"], "/V": widget["/V"],
+                "/DA": widget["/DA"], "/Ff": widget.get("/Ff", 0),
+            }))
+            clone = pdf.make_indirect(pikepdf.Dictionary({key: value for key, value in widget.items()
+                                                          if key not in {"/Parent", "/P"}}))
+            clone["/Rect"] = pikepdf.Array([30, 120, 180, 145])
+            for child in (widget, clone):
+                child["/Parent"] = parent
+                for key in ("/T", "/FT", "/V", "/DA", "/Ff"):
+                    if key in child: del child[key]
+            parent["/Kids"] = pikepdf.Array([widget, clone])
+            fields[0] = parent
+            clone["/P"] = pdf.pages[1].obj
+            if "/Annots" not in pdf.pages[1].obj:
+                pdf.pages[1].obj["/Annots"] = pikepdf.Array()
+            pdf.pages[1].obj["/Annots"].append(clone)
+            pdf.save(source)
+        output = self.root / "shared-field-organized.pdf"
+        code, record, err = self.run_cli(["organize", source, "1-4", "-o", output])
+        self.assertEqual(code, 0, (record, err))
+        with pymupdf.open(output) as doc:
+            names = [widget.field_name for page in doc[:2] for widget in (page.widgets() or [])]
+        self.assertEqual(names, ["station", "station"])
+
     def test_organize_blank_as_first_item_uses_input_page_one_size(self):
         output = self.root / "blank-first.pdf"
         code, record, err = self.run_cli(["organize", self.fixtures["main"], "blank,1", "-o", output])
@@ -400,9 +432,11 @@ class Phase3bCommandsTest(unittest.TestCase):
             doc.save(source)
         output = self.root / "same-source-toc.pdf"
         code, record, err = self.run_cli(["merge", source, source, "--toc", "-o", output])
-        self.assertEqual(code, 0, (record, err))
+        self.assertEqual((code, record["verdict"]), (0, "ok"), (record, err))
         with pymupdf.open(output) as doc:
-            self.assertEqual([entry[1] for entry in doc.get_toc() if entry[0] == 1], ["unbookmarked", "unbookmarked"])
+            pages = len(doc) // 2
+            self.assertEqual([(entry[1], entry[2]) for entry in doc.get_toc() if entry[0] == 1],
+                             [("unbookmarked", 1), ("unbookmarked", pages + 1)])
 
     def test_merge_job_per_input_passwords_resolve_relative_to_job(self):
         secured = self.root / "private.pdf"

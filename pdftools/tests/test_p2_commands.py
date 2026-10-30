@@ -104,12 +104,15 @@ class Phase2CommandTest(unittest.TestCase):
         self.assertEqual(record["data"]["failures"], [])
 
     def test_selftest_quiet_and_caps(self):
+        caps = p2_selftest._capabilities()
+        missing_libraries = p2_selftest._missing_library_failures(caps["libraries"])
         out, err = io.StringIO(), io.StringIO()
         with patch("clierr.LOG_ROOT", self.root / "logs"), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = cli.main(["selftest"])
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1 if missing_libraries else 0)
         self.assertEqual(out.getvalue(), "")
-        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(len([line for line in err.getvalue().splitlines() if line.startswith("WARN pdf selftest ")]),
+                         len(missing_libraries))
         out, err = io.StringIO(), io.StringIO()
         with patch("clierr.LOG_ROOT", self.root / "logs"), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = cli.main(["selftest", "--caps"])
@@ -154,6 +157,7 @@ class Phase2CommandTest(unittest.TestCase):
                 patch("shutil.which", return_value="fake.exe"), \
                 patch("subprocess.run", side_effect=TimeoutExpired("fake.exe", 4)), \
                 patch.object(p2_selftest, "output_formats", return_value=[]), \
+                patch.object(p2_selftest, "_missing_library_failures", return_value=[]), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             result = p2_selftest.selftest(args, context)
         self.assertIsNone(result)
