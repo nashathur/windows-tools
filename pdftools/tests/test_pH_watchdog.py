@@ -80,7 +80,9 @@ class WatchdogTest(unittest.TestCase):
                 temp_root = root / "tmp" / "pdftools"
                 before_temp = set(temp_root.iterdir()) if temp_root.exists() else set()
                 proc, elapsed = self.run_child(command_name, source, root)
-                self.assertEqual(proc.returncode, 1, (proc.stdout, proc.stderr))
+                # Windows: TerminateProcess(..., 1); POSIX: the SIGTERM status (PLAN Hardening item 4)
+                expected = 1 if os.name == "nt" else -__import__("signal").SIGTERM
+                self.assertEqual(proc.returncode, expected, (proc.stdout, proc.stderr))
                 self.assertLess(elapsed, 15)
                 self.assertEqual(sum(line.startswith("ERROR pdf ") and " TIMEOUT:" in line for line in proc.stderr.splitlines()), 1, proc.stderr)
                 rows = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
