@@ -623,6 +623,7 @@ pypdfium2 stays for `p8_qa.Pdf` and the crops: the equation and lost-text checks
 #### Tests (phase 8)
 
 - Ported: eqread's `parse_answer`, `for_check`, `merge_formulas`, `doubtful`, `wanted` cases; the one-ERROR-line cases for `md`, `mdread`, `mdqa`, `mdfix` (incl. the unmatched-block case), `mdexport`.
+- Typeset equations: pymupdf.layout does not see hand-drawn Helvetica equations as formulas, and the browser cannot start inside Codex's sandbox, so `tests\fixtures\data\p8_typeset.pdf` is committed: `md2pdf` of `p8_typeset.md` beside it (regenerate with `pdf.cmd md2pdf p8_typeset.md` when the Markdown changes); the layout model finds 3 of its 4 display equations (the one-line `f = 2Ω sin φ` reads as text). `p8.py` merges its page into the fixture book.
 - Fixtures (`tests\fixtures\p8.py`, pymupdf only): a born-digital book with an outline (two chapters, a part-title page, front matter with text, one outline entry pointing one page early), display equations with numbers and a bold vector, a table, a two-column page, a `/Rotate 90` page with an equation, and one scanned page made from a rendered page.
 - `md --list` plan, repair note and part numbering; `split --bookmarks --level auto` on the same fixture (S3; every page in exactly one part).
 - `md` end to end with a fake `p8_codex.ask` that answers from a table of known LaTeX (one wrong reading first, to exercise passes 2–3 and `doubtful`); readings reused on rerun; `--force`; `--no-read` marks equations unread; source hash mismatch is `BAD_ARG`.
