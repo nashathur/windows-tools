@@ -31,7 +31,7 @@ def command(name, phase, input_kind, output_kind, suffix, rewrites_pdf, check_po
     phase = str(phase)
     if not name or not isinstance(name, str):
         raise ValueError("command name must be a non-empty string")
-    if phase not in {"1", "2", "3a", "3b", "3c", "4", "5", "6", "7"}:
+    if phase not in {"1", "2", "3a", "3b", "3c", "4", "5", "6", "7", "8"}:
         raise ValueError(f"unknown command phase: {phase}")
     if input_kind not in INPUT_KINDS:
         raise ValueError(f"unknown input kind: {input_kind}")
