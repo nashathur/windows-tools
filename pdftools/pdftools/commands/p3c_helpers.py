@@ -147,9 +147,8 @@ def _render(doc, page, args):
     rect = page.rect
     clip = None
     if args.clip:
-        # get_pixmap clips the already rotated display list, so convert displayed
-        # millimetres back to page space and then into displayed PyMuPDF space.
-        clip = coords.display_to_pymupdf(page, pymupdf.Rect(args.clip)) * page.rotation_matrix
+        # get_pixmap clips in displayed points; coords owns the full inverse map.
+        clip = coords.to_displayed_points(page, coords.display_to_pymupdf(page, pymupdf.Rect(args.clip)))
         clip &= rect
         if clip.is_empty:
             raise PdfError("BAD_ARG", "--clip does not intersect the page", "choose a displayed-mm box inside the page")
@@ -334,7 +333,7 @@ def toimg(args, context):
             page = doc[n]
             rect = page.rect
             if args.clip:
-                clip = coords.display_to_pymupdf(page, pymupdf.Rect(args.clip)) * page.rotation_matrix
+                clip = coords.to_displayed_points(page, coords.display_to_pymupdf(page, pymupdf.Rect(args.clip)))
                 rect = clip & rect
                 if rect.is_empty:
                     raise PdfError("BAD_ARG", "--clip does not intersect the page", "choose a displayed-mm box inside the page")
@@ -591,7 +590,7 @@ def compare_command(args, context):
                 for difference in differences:
                     box = coords.display_to_pymupdf(output_page, pymupdf.Rect(difference["box_mm"]))
                     if not box.is_empty:
-                        annot = output_page.add_rect_annot(box)
+                        annot = output_page.add_rect_annot(coords.pymupdf_to_annotation(output_page,box))
                         annot.set_colors(stroke=(1, 0, 0))
                         annot.set_border(width=1)
                         annot.update()

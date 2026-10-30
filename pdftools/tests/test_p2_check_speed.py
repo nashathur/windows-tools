@@ -113,7 +113,7 @@ class CompareSpeedTest(unittest.TestCase):
         output[0, 0, 3] = 9
         output[0, 1, 3] = 9
         self.assertEqual(check.tile_differences(source, output, tile_px=10), [
-            {"box_mm": (0.0, 0.0, 7.2, 7.2), "fraction": 0.02, "max_delta": 9},
+            {"box_mm": (0.0, 0.0, 2.54, 2.54), "fraction": 0.02, "max_delta": 9},
         ])
 
 

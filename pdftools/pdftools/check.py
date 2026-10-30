@@ -111,7 +111,7 @@ def page_words(page):
 def render_rgb(page, dpi=RENDER_DPI, clip=None, *, annots=False, unrotated=False):
     matrix = pymupdf.Matrix(dpi / 72, dpi / 72)
     if unrotated:
-        matrix = page.derotation_matrix * matrix
+        matrix = coords.unrotated_render_matrix(page,matrix)
     pix = page.get_pixmap(matrix=matrix, clip=clip, alpha=False, annots=annots)
     return np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n).copy()
 
@@ -147,15 +147,17 @@ def tile_differences(source, output, page_no=1, tile_px=None, page=None):
         return []
     tiled_delta = np.pad(delta, ((0, pad_h), (0, pad_w), (0, 0)), constant_values=0)
     maxima = tiled_delta.reshape(rows, tile_px, cols, tile_px, delta.shape[2]).max(axis=(1, 3, 4))
-    origin = page.cropbox if page is not None else pymupdf.Rect(0, 0, 0, 0)
     changed = []
     for row, col in zip(changed_rows.tolist(), changed_cols.tolist()):
         x, y = col * tile_px, row * tile_px
-        box_mm = pymupdf.Rect(origin.x0 + x * 72 / RENDER_DPI, origin.y0 + y * 72 / RENDER_DPI,
-                              origin.x0 + min(x + tile_px, w) * 72 / RENDER_DPI,
-                              origin.y0 + min(y + tile_px, h) * 72 / RENDER_DPI)
+        box_points = pymupdf.Rect(x * 72 / RENDER_DPI, y * 72 / RENDER_DPI,
+                                  min(x + tile_px, w) * 72 / RENDER_DPI,
+                                  min(y + tile_px, h) * 72 / RENDER_DPI)
         if page is not None:
-            box_mm = coords.pymupdf_to_display(page, box_mm)
+            box_mm = coords.pymupdf_to_display(page,coords.cropbox_to_pymupdf(
+                page,coords.unrotated_points_to_cropbox(page,box_points)))
+        else:
+            box_mm=coords.displayed_points_to_mm(box_points)
         changed.append({"box_mm": tuple(box_mm), "fraction": float(fractions[row, col]),
                         "max_delta": int(maxima[row, col])})
     return changed
@@ -180,12 +182,11 @@ def page_stats(page, renderer=render_rgb):
     pix = renderer(page, 50)
     gray = cv2.cvtColor(pix, cv2.COLOR_RGB2GRAY)
     images = page.get_image_info(xrefs=True)
-    unit = coords._user_unit(page)
     image_dpi = []
     for info in images:
-        rect = pymupdf.Rect(info["bbox"])
-        dpi_x = info["width"] * 72 / max(rect.width * unit, 0.01)
-        dpi_y = info["height"] * 72 / max(rect.height * unit, 0.01)
+        size = coords.physical_size(page, pymupdf.Rect(info["bbox"]))
+        dpi_x = info["width"] * 72 / max(size.x, 0.01)
+        dpi_y = info["height"] * 72 / max(size.y, 0.01)
         image_dpi.append(round(min(dpi_x, dpi_y), 1))
     spans = [span for block in page.get_text("dict").get("blocks", []) for line in block.get("lines", [])
              for span in line.get("spans", [])]
@@ -208,12 +209,11 @@ def _tier_stats(page, renderer=render_rgb):
     pix = renderer(page, 50)
     gray = cv2.cvtColor(pix, cv2.COLOR_RGB2GRAY)
     images = page.get_image_info(xrefs=True)
-    unit = coords._user_unit(page)
     image_dpi = []
     for info in images:
-        rect = pymupdf.Rect(info["bbox"])
-        dpi_x = info["width"] * 72 / max(rect.width * unit, 0.01)
-        dpi_y = info["height"] * 72 / max(rect.height * unit, 0.01)
+        size = coords.physical_size(page, pymupdf.Rect(info["bbox"]))
+        dpi_x = info["width"] * 72 / max(size.x, 0.01)
+        dpi_y = info["height"] * 72 / max(size.y, 0.01)
         image_dpi.append(round(min(dpi_x, dpi_y), 1))
     spans = [span for block in page.get_text("dict").get("blocks", []) for line in block.get("lines", [])
              for span in line.get("spans", [])]
@@ -326,7 +326,7 @@ def _placement_source(placement, default_doc, source_docs):
 def _placement_words(placement, page, policy, index, operation):
     words = page.get_text("words")
     if policy == "crop" and operation and index < len(operation.cropboxes):
-        crop = pymupdf.Rect(operation.cropboxes[index])
+        crop = coords.cropbox_to_pymupdf(page,pymupdf.Rect(operation.cropboxes[index]))
         return normalize_words(w[4] for w in words if crop.contains(pymupdf.Point((w[0]+w[2])/2, (w[1]+w[3])/2)))
     if placement.dest_rect:
         region = _source_region(placement)
@@ -338,7 +338,7 @@ def _placement_words(placement, page, policy, index, operation):
 def _placement_raw_tokens(placement, page, policy, index, operation):
     words = page.get_text("words")
     if policy == "crop" and operation and index < len(operation.cropboxes):
-        crop = pymupdf.Rect(operation.cropboxes[index])
+        crop = coords.cropbox_to_pymupdf(page,pymupdf.Rect(operation.cropboxes[index]))
         words = [w for w in words if crop.contains(pymupdf.Point((w[0] + w[2]) / 2, (w[1] + w[3]) / 2))]
     if placement.dest_rect:
         region = _source_region(placement)

@@ -94,7 +94,8 @@ def pages(args, context):
         for page in doc:
             text = page.get_text("text").strip()
             first = next((line.strip() for line in text.splitlines() if line.strip()), "")
-            width, height = page.rect.width * coords.MM_PER_POINT, page.rect.height * coords.MM_PER_POINT
+            size_mm = coords.displayed_points_to_mm(page.rect)
+            width, height = size_mm.width, size_mm.height
             name = _page_size_name(width, height)
             label = page.get_label() or str(page.number + 1)
             rows.append({"number": page.number + 1, "label": label,

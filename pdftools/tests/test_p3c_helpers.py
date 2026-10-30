@@ -137,6 +137,27 @@ class Phase3cTests(unittest.TestCase):
             self.assertEqual(image.size, (72, 36))
             self.assertEqual(list(image.getdata()), list(full_image.crop((0, 0, 72, 36)).getdata()))
 
+    def test_toimg_clip_coordinate_grid_with_crop_and_userunit(self):
+        for rotation in (0,90,180,270):
+            for unit in (1,2):
+                with self.subTest(rotation=rotation,unit=unit):
+                    source=self.root/f"clip-{rotation}-{unit}.pdf"
+                    doc=pymupdf.open();page=doc.new_page(width=500,height=400)
+                    page.insert_text((70,100),"clip-grid")
+                    doc.xref_set_key(page.xref,"CropBox","[20 30 420 330]")
+                    if unit!=1:doc.xref_set_key(page.xref,"UserUnit",str(unit))
+                    page.set_rotation(rotation);doc.save(source);doc.close()
+                    full=self.root/f"full-{rotation}-{unit}.png"
+                    clipped=self.root/f"part-{rotation}-{unit}.png"
+                    self.assertEqual(self.run_cli(["toimg",str(source),"--dpi","72","--pages","1","-o",str(full)])[0],0)
+                    clip=(0,0,25.4*unit,12.7*unit)
+                    clip_args=",".join(str(value) for value in clip)
+                    self.assertEqual(self.run_cli(["toimg",str(source),"--dpi","72","--clip",clip_args,
+                                                   "--pages","1","-o",str(clipped)])[0],0)
+                    with Image.open(full) as whole,Image.open(clipped) as part:
+                        self.assertEqual(part.size,(72*unit,36*unit))
+                        self.assertEqual(list(part.getdata()),list(whole.crop((0,0,*part.size)).getdata()))
+
     def test_toimg_gray_and_bw_threshold(self):
         gray, bw, high_threshold = (self.root / "gray.png", self.root / "bw.png",
                                     self.root / "bw-high-threshold.png")

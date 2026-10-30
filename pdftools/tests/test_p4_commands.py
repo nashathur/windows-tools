@@ -521,6 +521,92 @@ class Phase4CommandsTest(unittest.TestCase):
         with pymupdf.open(image_pdf) as src,pymupdf.open(auto) as dst:
             self.assertLess(dst[0].cropbox.width,src[0].cropbox.width)
 
+    def test_crop_margin_coordinate_grid(self):
+        for rotation in (0,90,180,270):
+            for unit in (1,2):
+                with self.subTest(rotation=rotation,unit=unit):
+                    source=self.root/f"crop-{rotation}-{unit}.pdf"
+                    doc=pymupdf.open();page=doc.new_page(width=500,height=400)
+                    page.insert_text((70,150),"crop-grid")
+                    doc.xref_set_key(page.xref,"CropBox","[20 30 420 330]")
+                    if unit!=1:doc.xref_set_key(page.xref,"UserUnit",str(unit))
+                    page.set_rotation(rotation);doc.save(source);doc.close()
+                    output,_=self.success("crop",source,"--margins","5","5","5","5",
+                                          "-o",self.root/f"crop-out-{rotation}-{unit}.pdf")
+                    with pymupdf.open(source) as before,pymupdf.open(output) as after:
+                        expected=(before[0].rect.width-10*coords.MM_PER_POINT**-1,
+                                  before[0].rect.height-10*coords.MM_PER_POINT**-1)
+                        self.assertAlmostEqual(after[0].rect.width,expected[0],places=1)
+                        self.assertAlmostEqual(after[0].rect.height,expected[1],places=1)
+                        self.assertEqual(after[0].get_text().strip(),"crop-grid")
+
+    def test_cut_grid_uses_displayed_panels(self):
+        for rotation in (0,90,180,270):
+            for unit in (1,2):
+                with self.subTest(rotation=rotation,unit=unit):
+                    source=self.root/f"cut-{rotation}-{unit}.pdf"
+                    doc=pymupdf.open();page=doc.new_page(width=500,height=400)
+                    for label,point in (("A",(70,100)),("B",(250,100)),("C",(70,250)),("D",(250,250))):
+                        page.insert_text(point,label,fontsize=20)
+                    doc.xref_set_key(page.xref,"CropBox","[20 30 420 330]")
+                    if unit!=1:doc.xref_set_key(page.xref,"UserUnit",str(unit))
+                    page.set_rotation(rotation);doc.save(source);doc.close()
+                    code,record,err=self.run_cli("cut",source,"--grid","2x2","-o",self.root/f"cut-out-{rotation}-{unit}.pdf")
+                    if code!=0 and record.get("path"):
+                        with pymupdf.open(record["path"]) as failed:
+                            texts=[page.get_text().strip() for page in failed]
+                        self.fail((record.get("findings"),texts,err))
+                    self.assertEqual(code,0,(record,err));output=Path(record["path"])
+                    with pymupdf.open(source) as before,pymupdf.open(output) as after:
+                        self.assertEqual(len(after),4)
+                        for page in after:
+                            self.assertAlmostEqual(page.rect.width,before[0].rect.width/2,places=1)
+                            self.assertAlmostEqual(page.rect.height,before[0].rect.height/2,places=1)
+
+    def test_cut_rotated_and_ordinary_pages_have_panel_media_boxes(self):
+        for rotation in (0, 90):
+            with self.subTest(rotation=rotation):
+                source=self.root/f"cut-panel-{rotation}.pdf"
+                doc=pymupdf.open();page=doc.new_page(width=400,height=300)
+                page.insert_text((100 if rotation==90 else 300,100),"right-panel",fontsize=12)
+                page.set_rotation(rotation);doc.save(source);doc.close()
+                output=self.root/f"cut-panel-out-{rotation}.pdf"
+                code,record,err=self.run_cli("cut",source,"--grid","2x1","-o",output)
+                self.assertEqual(code,0,(record,err))
+                with pymupdf.open(output) as result:
+                    self.assertEqual(len(result),2)
+                    for panel in result:
+                        self.assertAlmostEqual(panel.mediabox.width,200 if rotation==0 else 400,places=2)
+                        self.assertAlmostEqual(panel.mediabox.height,300 if rotation==0 else 150,places=2)
+                    words=result[1].get_text("words")
+                    self.assertEqual([word[4] for word in words],["right-panel"])
+                    self.assertAlmostEqual(words[0][0],100,delta=0.1)
+                    self.assertAlmostEqual(words[0][1],87.1,delta=0.5)
+
+    def test_annotate_box_coordinate_grid(self):
+        for rotation in (0,90,180,270):
+            for unit in (1,2):
+                with self.subTest(rotation=rotation,unit=unit):
+                    source=self.root/f"annot-{rotation}-{unit}.pdf"
+                    doc=pymupdf.open();page=doc.new_page(width=500,height=400)
+                    doc.xref_set_key(page.xref,"CropBox","[20 30 420 330]")
+                    if unit!=1:doc.xref_set_key(page.xref,"UserUnit",str(unit))
+                    page.set_rotation(rotation);doc.save(source);doc.close()
+                    wanted=(30,40,60,55)
+                    output,_=self.success("annotate",source,"--box",f"1,{','.join(map(str,wanted))}",
+                                          "-o",self.root/f"annot-out-{rotation}-{unit}.pdf")
+                    with pymupdf.open(output) as result:
+                        page=result[0];annot=next(iter(page.annots()))
+                        pix=page.get_pixmap(matrix=pymupdf.Matrix(1,1),alpha=False,annots=True)
+                        import numpy as np
+                        rgb=np.frombuffer(pix.samples,dtype=np.uint8).reshape(pix.height,pix.width,pix.n)
+                        ink=np.where(np.any(rgb[:,:,:3]<245,axis=2))
+                        self.assertTrue(len(ink[0]),"annotation should render visible ink")
+                        actual=(ink[1].min(),ink[0].min(),ink[1].max(),ink[0].max())
+                        expected=tuple(value*72/25.4 for value in wanted)
+                        self.assertTrue(all(abs(value-target)<=3 for value,target in zip(actual,expected)),
+                                        (actual,expected,rotation,unit))
+
     def test_flatten_raster_checks_against_annotation_inclusive_baseline(self):
         from pdftools.check import ExpectedChanges,OperationResult,Placement
         from pdftools.commands.p4_layout import _flatten_policy

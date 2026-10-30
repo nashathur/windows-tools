@@ -126,6 +126,35 @@ class Phase3aCommandsTest(unittest.TestCase):
         for got, want in zip(actual["bbox_mm"], expected):
             self.assertAlmostEqual(got, want, delta=0.001)
 
+    def test_json_and_pages_coordinate_grid_with_userunit(self):
+        from pdftools import coords
+        for rotation in (0,90,180,270):
+            for unit in (1,1.5,2):
+                with self.subTest(rotation=rotation,unit=unit):
+                    source=self.root/f"json-grid-{rotation}-{unit}.pdf"
+                    doc=pymupdf.open();page=doc.new_page(width=500,height=400)
+                    page.insert_text((70,150),"Grid coordinate label")
+                    doc.xref_set_key(page.xref,"CropBox","[20 30 420 330]")
+                    if unit!=1:doc.xref_set_key(page.xref,"UserUnit",str(unit))
+                    page.set_rotation(rotation);doc.save(source);doc.close()
+                    code,report,_=self.run_cli("json",source)
+                    self.assertEqual(code,0,report)
+                    span=json.loads(report["data"])["pages"][0]["spans"][0]
+                    x0,y0,x1,y1=span["bbox_pymupdf"]
+                    width,height=400*unit,300*unit
+                    if rotation==90: expected=(height-y1,x0,height-y0,x1)
+                    elif rotation==180: expected=(width-x1,height-y1,width-x0,height-y0)
+                    elif rotation==270: expected=(y0,width-x1,y1,width-x0)
+                    else: expected=(x0,y0,x1,y1)
+                    expected=tuple(value*25.4/72 for value in expected)
+                    for got,want in zip(span["bbox_mm"],expected):
+                        self.assertAlmostEqual(got,want,delta=.001)
+                    code,pages,_=self.run_cli("pages",source)
+                    self.assertEqual(code,0,pages)
+                    shown_width,shown_height=((height,width) if rotation in (90,270) else (width,height))
+                    self.assertIn(f"{shown_width*25.4/72:.2f}",pages["data"])
+                    self.assertIn(f"{shown_height*25.4/72:.2f} mm",pages["data"])
+
     def test_html_outputs_per_page_xhtml(self):
         code, record, _ = self.run_cli("html", self.fixtures["source"])
         self.assertEqual(code, 0)

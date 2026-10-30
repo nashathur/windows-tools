@@ -37,8 +37,7 @@ def thumb(args, context):
                 raise PdfError("BAD_PAGE", f"page {args.page} is outside 1-{doc.page_count}", "choose an existing page")
             page = doc[args.page - 1]
             if args.crop:
-                factor = coords.MM_PER_POINT
-                clip = pymupdf.Rect(*(value / factor for value in args.crop))
+                clip = coords.displayed_mm_to_points(args.crop)
             else:
                 clip = None
             dimensions = clip or page.rect

@@ -58,7 +58,7 @@ def _annot_policy(source,output,operation):
 
 def _anchor(page, position, margin):
     r = page.rect
-    m = margin / coords.MM_PER_POINT
+    m = coords.mm_to_points(margin)
     positions = {"top-left": (r.x0+m, r.y0+m), "top-center": (r.width/2, r.y0+m),
                  "top-right": (r.x1-m, r.y0+m), "middle-left": (r.x0+m, r.height/2),
                  "center": (r.width/2, r.height/2), "middle-right": (r.x1-m, r.height/2),
@@ -173,8 +173,8 @@ def headfoot(args, context):
         regions = {}; date = datetime.date.today().isoformat()
         for i, page in enumerate(doc):
             parts = []
-            for value, y in ((args.header, args.margin/coords.MM_PER_POINT),
-                             (args.footer, page.rect.height-args.margin/coords.MM_PER_POINT)):
+            for value, y in ((args.header, coords.mm_to_points(args.margin)),
+                             (args.footer, page.rect.height-coords.mm_to_points(args.margin))):
                 if not value: continue
                 text = value.format(n=i+1,total=doc.page_count,date=date,file=path.name)
                 rect = pymupdf.Rect(24,y-args.fontsize,page.rect.width-24,y+args.fontsize)
@@ -248,7 +248,8 @@ def annotate(args, context):
             try:
                 p,x,y=args.at.split(","); page_value=float(p); page_no=int(page_value)
                 if page_value!=page_no or not 1<=page_no<=doc.page_count: raise ValueError("page number out of range")
-                point=coords.display_to_pymupdf(doc[page_no-1],(float(x),float(y),float(x),float(y)))[:2]
+                page=doc[page_no-1]
+                point=coords.display_to_pymupdf(page,(float(x),float(y),float(x),float(y)))[:2]
             except Exception as exc: raise PdfError("BAD_ARG","invalid --at coordinate","use an integral page,x_mm,y_mm within the document") from exc
             doc[page_no-1].add_text_annot(point,args.note); added=1
         elif args.textbox is not None:

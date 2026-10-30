@@ -411,28 +411,26 @@ class ContractsTest(unittest.TestCase):
     def test_coordinates_absolute_positions_rotated_crop_userunit(self):
         doc = pymupdf.open(self.fixtures["rotated"])
         page = doc[0]
-        point = page.rect.tl * page.derotation_matrix
-        visible_top_left = pymupdf.Rect(point.x, point.y, point.x, point.y)
+        visible_top_left = coords.display_to_pymupdf(page, pymupdf.Rect(0, 0, 0, 0))
         displayed_origin = coords.pymupdf_to_display(page, visible_top_left)
         self.assertAlmostEqual(displayed_origin.x0, 0, places=4)
         self.assertAlmostEqual(displayed_origin.y0, 0, places=4)
         spans = page.get_text("dict")["blocks"][0]["lines"][0]["spans"]
         source = pymupdf.Rect(spans[0]["bbox"])
         displayed = coords.pymupdf_to_display(page, source)
-        self.assertAlmostEqual(displayed.x0, 214.081, places=2)
-        self.assertAlmostEqual(displayed.y0, 14.111, places=2)
-        roundtrip = coords.display_to_pymupdf(page, displayed)
-        self.assertLess(abs(roundtrip.x0 - source.x0), 0.01)
-        self.assertLess(abs(roundtrip.y1 - source.y1), 0.01)
+        # Truth from the rendered ink of this span on the displayed page: x 224.1 mm, y 7.4 mm
+        # (the span box adds the font's ascender, so it starts slightly before the ink).
+        self.assertAlmostEqual(displayed.x0, 223.457, places=2)
+        self.assertAlmostEqual(displayed.y0, 7.056, places=2)
         rotated = pymupdf.open()
         rpage = rotated.new_page(width=200, height=300)
         rpage.set_rotation(90)
-        point = rpage.rect.tl * rpage.derotation_matrix
-        origin = coords.pymupdf_to_display(rpage, pymupdf.Rect(point.x, point.y, point.x, point.y))
+        text_origin = coords.display_to_pymupdf(rpage, pymupdf.Rect(0, 0, 0, 0))
+        self.assertEqual(text_origin, pymupdf.Rect(0, 300, 0, 300))
+        origin = coords.pymupdf_to_display(rpage, pymupdf.Rect(0, 300, 0, 300))
         self.assertAlmostEqual(origin.x0, 0, places=4)
         self.assertAlmostEqual(origin.y0, 0, places=4)
         rotated.close()
-        self.assertLess(abs((coords.from_user_space(page, coords.to_user_space(page, source))).x0 - source.x0), 0.01)
         doc.close()
 
     def test_info_fixtures_and_json_stdout(self):

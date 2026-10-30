@@ -192,12 +192,14 @@ def flatten(args,context):
             for i,page in enumerate(doc):
                 for annot in page.annots() or []:
                     dropped["annotations"]=dropped.get("annotations",0)+1
-                    regions.append({"page":i+1,"rect":tuple(coords.pymupdf_to_display(page,annot.rect))})
+                    rect=coords.annotation_to_pymupdf(page,annot)
+                    regions.append({"page":i+1,"rect":tuple(coords.pymupdf_to_display(page,rect))})
         if forms:
             for page in doc:
                 for widget in page.widgets() or []:
                     dropped["widgets"]=dropped.get("widgets",0)+1
-                    regions.append({"page":page.number+1,"rect":tuple(coords.pymupdf_to_display(page,widget.rect))})
+                    rect=coords.annotation_to_pymupdf(page,widget)
+                    regions.append({"page":page.number+1,"rect":tuple(coords.pymupdf_to_display(page,rect))})
                     if widget.field_value:field_values.append(str(widget.field_value))
         acro=doc.xref_get_key(doc.pdf_catalog(),"AcroForm")
         need_type,need_value=doc.xref_get_key(doc.pdf_catalog(),"AcroForm/NeedAppearances")
@@ -231,19 +233,19 @@ def crop(args,context):
             if i in chosen:
                 if args.margins:
                     top,right,bottom,left=args.margins
-                    displayed=coords.pymupdf_to_display(page,page.cropbox)
+                    displayed=coords.pymupdf_to_display(page,coords.cropbox_to_pymupdf(page,page.cropbox))
                     shown=pymupdf.Rect(displayed.x0+left,displayed.y0+top,displayed.x1-right,displayed.y1-bottom)
                     box=coords.display_to_pymupdf(page,shown)
-                    box=box*pymupdf.Matrix(1,0,0,1,page.cropbox.x0,page.cropbox.y0)
+                    box=coords.pymupdf_to_cropbox(page,box)
                 else:
                     boxes=[pymupdf.Rect(item[1]) for item in page.get_bboxlog() if item[0] not in {"ignore-text","ignore-path","ignore-image"}]
                     rect=boxes[0] if boxes else page.rect
                     for content_box in boxes[1:]: rect |= content_box
                     shown=coords.pymupdf_to_display(page,rect)
-                    display_page=coords.pymupdf_to_display(page,page.cropbox)
+                    display_page=coords.pymupdf_to_display(page,coords.cropbox_to_pymupdf(page,page.cropbox))
                     shown=(shown+(-args.pad,-args.pad,args.pad,args.pad)) & display_page
                     box=coords.display_to_pymupdf(page,shown)
-                    box=box*pymupdf.Matrix(1,0,0,1,page.cropbox.x0,page.cropbox.y0)
+                    box=coords.pymupdf_to_cropbox(page,box)
                 if box.is_empty or box.width<=0 or box.height<=0: raise PdfError("BAD_ARG","crop box has no area","reduce the margins or padding")
                 page.set_cropbox(box)
             cropboxes.append(tuple(page.cropbox)); maps.append([Placement(None,i)])
@@ -256,7 +258,7 @@ def _sheet_size(value, fallback):
     named={"a3":(841.89,1190.55),"a4":(595.28,841.89),"letter":(612,792)}
     if value.lower() in named: return named[value.lower()]
     try:
-        w,h=(float(x)/coords.MM_PER_POINT for x in value.lower().split("x")); return w,h
+        w,h=(coords.mm_to_points(x) for x in value.lower().split("x")); return w,h
     except Exception: raise PdfError("BAD_ARG",f"invalid sheet size: {value}","use a3, a4, letter, or WxH in mm")
 
 
@@ -274,17 +276,26 @@ def cut(args,context):
                 for row in range(rows):
                     for col in range(cols): boxes.append(pymupdf.Rect(source.rect.x0+source.rect.width*col/cols,source.rect.y0+source.rect.height*row/rows,source.rect.x0+source.rect.width*(col+1)/cols,source.rect.y0+source.rect.height*(row+1)/rows))
             elif args.v is not None:
-                x=args.v/coords.MM_PER_POINT
+                x=coords.mm_to_points(args.v)
                 if not source.rect.x0<x<source.rect.x1: raise PdfError("BAD_ARG","vertical cut must be inside the page","choose a displayed mm position within the page")
                 boxes=[pymupdf.Rect(source.rect.x0,source.rect.y0,x,source.rect.y1),pymupdf.Rect(x,source.rect.y0,source.rect.x1,source.rect.y1)]
                 if args.rtl: boxes.reverse()
             else:
-                y=args.h/coords.MM_PER_POINT
+                y=coords.mm_to_points(args.h)
                 if not source.rect.y0<y<source.rect.y1: raise PdfError("BAD_ARG","horizontal cut must be inside the page","choose a displayed mm position within the page")
                 boxes=[pymupdf.Rect(source.rect.x0,source.rect.y0,source.rect.x1,y),pymupdf.Rect(source.rect.x0,y,source.rect.x1,source.rect.y1)]
             for box in boxes:
-                page=out.new_page(width=box.width,height=box.height); page.show_pdf_page(page.rect,doc,i,clip=box)
-                maps.append([Placement(None,i,(1,0,0,1,-box.x0,-box.y0),tuple(page.rect))])
+                source_clip,panel_box,dest_rect,matrix=coords.cut_panel_geometry(source,box)
+                out.insert_pdf(doc,from_page=i,to_page=i)
+                page=out[-1]
+                pdf_box=coords.cropbox_to_pdf_space(source,panel_box)
+                box_text="["+" ".join(f"{value:g}" for value in pdf_box)+"]"
+                out.xref_set_key(page.xref,"MediaBox",box_text)
+                out.xref_set_key(page.xref,"CropBox",box_text)
+                for annot in list(page.annots() or []):page.delete_annot(annot)
+                for link in page.get_links():page.delete_link(link)
+                for widget in list(page.widgets() or []):page.delete_widget(widget)
+                maps.append([Placement(None,i,matrix,tuple(dest_rect))])
         out.save(target); out.close(); return OperationResult(pages=maps,features=Features(dropped=dropped))
     return _write_layout(args.file.resolve(),"cut",args,context,writer)
 
@@ -317,7 +328,7 @@ def nup(args,context):
         cols,rows=grids[args.grid]; default=(doc[0].rect.height,doc[0].rect.width) if args.grid in (2,8,32) else (doc[0].rect.width,doc[0].rect.height)
         w,h=_sheet_size(args.sheet,default)
         if (w>h)!=(cols>rows): w,h=h,w
-        gap=args.gap/coords.MM_PER_POINT
+        gap=coords.mm_to_points(args.gap)
         cellw=(w-gap*(cols+1))/cols;cellh=(h-gap*(rows+1))/rows
         if min(cellw,cellh)<=0: raise PdfError("BAD_ARG","gap leaves no room for pages","reduce --gap")
         out=pymupdf.open(); maps=[];regions=[]
