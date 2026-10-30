@@ -552,7 +552,7 @@ Failure policy for both: if the check fails, nothing is published (exit 3, verdi
 
 ### Phase 8: pdf2md merge
 
-Moves `C:\Tools\pdf2md` (book, convert, eqread, qa, postprocess, fix, export, inspect_pdf, validate_math.js; its README describes each) into pdftools; the detailed spec is written once phase 5 is committed, before wave 5 starts. Settled so far:
+Moves `C:\Tools\pdf2md` (book, convert, eqread, qa, postprocess, fix, export, inspect_pdf, validate_math.js; its README describes each) into pdftools. Settled points first, then the detailed spec:
 - PDF → Markdown becomes pdftools commands: extraction (pymupdf4llm with the layout model, text layer first), equation reading by Codex with pdf2md's three-pass check, QA, fixes and project export. A local-only run (equations left as the PDF's text) stays available.
 - `book.py`'s chapter planning (outline level of about 25 pages, repair of outline entries that point to the wrong page, front matter as its own part) also serves `split` (`--level`, outline repair).
 - One OCR path: pages without a text layer go through `ocr` before extraction, replacing pdf2md's own Tesseract call; `inspect_pdf.py` is replaced by `info`.
@@ -560,6 +560,78 @@ Moves `C:\Tools\pdf2md` (book, convert, eqread, qa, postprocess, fix, export, in
 - Model reading costs tokens per pixel, so it gets as few pixels as possible: the PDF's text layer first, then Tesseract, and Codex only for cropped regions that need it (equations, low-confidence tables), each crop sized to legibility and turned upright, with no other image cleanup.
 - Tables get a structure check: row and column counts of each Markdown table against the source table.
 - Afterwards `C:\Tools\pdf2md` and the `pdf2md` skill are retired, and the global CLAUDE.md "PDF → Markdown" rule points to the pdftools skill.
+
+#### Where pdf2md's code goes
+
+| pdf2md | pdftools | Change |
+|---|---|---|
+| `inspect_pdf.py` | `info` (pages, text layer per page, outline count) and `bookmarks --list` (outline with pages); `md --list` shows the chapter plan | not moved |
+| `book.py` planning (`outline`, `plan_chapters`, `fix_starts`, `add_uncovered`, `slug`) | shared `pdftools\chapters.py` (S3) | ported from pypdfium2 to pymupdf (`get_toc`, `get_text`); same rules and constants (`TARGET_PAGES = 25`, title-on-page test, 200 chars × 2 pages for an uncovered part) |
+| `book.py` run loop and `00_index.md`, `convert.py` | `commands\p8_md.py` (`md`) and `commands\p8_extract.py` | `--page-range` (0-based) becomes `--pages` (1-based, `pages.py`); Tesseract via pymupdf4llm replaced by `ocr` (below) |
+| `eqread.py` | `commands\p8_eqread.py` (`md` and `mdread`) | Codex through `commands\p8_codex.py` (below); passes, sheets, judge/pick/doubtful/wanted, prompt and answer format unchanged |
+| `qa.py` | `commands\p8_qa.py` (`md` and `mdqa`) | KaTeX through shared `mathcheck.py` (S2); lost-text runs through shared `wordalign.py` (S1); table structure check added; the `Pdf` class keeps pypdfium2 |
+| `postprocess.py` | `commands\p8_post.py` | KaTeX through `mathcheck.py`; otherwise unchanged; not a command |
+| `fix.py` | `commands\p8_fix.py` (`mdfix`) | fixes-file format and matching unchanged |
+| `export.py` | `commands\p8_export.py` (`mdexport`) | missing-text recovery through `wordalign.py` |
+| `validate_math.js`, `package.json`, `node_modules\` | `md2pdf.js --validate` (S2) with `C:\Tools\pdftools\node_modules` (katex 0.19.1) | pdf2md's own Node install dropped |
+| `tests\test_errors.py` | `tests\test_p8_*.py` | EqreadTests ported as they are; the one-ERROR-line cases become pdftools standing cases per command |
+| `marker\` | not moved | retired with the folder |
+
+pypdfium2 stays for `p8_qa.Pdf` and the crops: the equation and lost-text checks were calibrated on PDFium's text layer (`get_text_bounded`, char boxes, font names) and the Measured results depend on it. Everything else uses pymupdf. PDFium is not thread-safe, so all PDFium access stays on one thread (as in eqread). Heavy imports (pymupdf4llm, `pymupdf.layout`, pypdfium2, rapidfuzz) happen inside functions, so the registry's module import keeps every other command's start-up fast.
+
+#### Shared routines (Claude lands each on main, one at a time; both builders rebase after each)
+
+- S1 `pdftools\wordalign.py`: `norm_word`, `align(source_words, target_words)` → matched source indices and consumed target indices (the SequenceMatcher alignment and long-token recovery now inside `p6_convert._compare_source`, moved unchanged), and `missing_runs(pdf_tokens, md_text, min_words=7)` built on `align`: PDF body-font words aligned in order against the Markdown words, in both the plain and the glued-single-letter view; a PDF word counts as present when either alignment matches it or it lies in an unmatched gap of at most 2 words between matched ones; a run of 7 or more absent words is then looked up unordered, as qa's 3-word triple test does, and only a run that also fails that lookup is missing (reading order differs between a two-column page and its Markdown). `check --source` and `md2pdf` keep their results (phase 6 tests unchanged); `p8_qa.lost_prose` and `p8_export.recover_lost_text` use `missing_runs`.
+- S2 `pdftools\mathcheck.py`: `validate(items, temp)` → `{id: error}` for `[{id, latex, display}]`, running `md2pdf.js --validate FILE` through `tools.run_tool` with `NODE_PATH` set; `md2pdf.js` gets one `validateTex(katex, tex, display)` (`throwOnError: true, strict: "ignore"`), used by `--validate` and by the renderer's math extension, so a formula md2pdf can render is exactly a formula QA accepts.
+- S3 `pdftools\chapters.py`: `plan(doc, level=None, chunk=None, cover_all=False)` → `[{title, start, end, repaired_from}]` (0-based pages) plus the outline-repair notes. `split --bookmarks` uses it: `--level N` (1 = top level, the default, as now) or `--level auto` (the ~25-page level); entries pointing at the wrong page are repaired with `WARN OUTLINE_REPAIRED` naming each; `cover_all=True`, so every page lands in a part: pages before the first entry or between entries that hold real text become their own part (`front_matter`, or the outline title at that page), the rest join the following part (pages before the first entry when none follows: the first part). The 3b split row and its tests change accordingly.
+- S4 `watchdog.paused` takes a lock around its counter, so the parallel Codex runs (up to 3 threads in `tools.run_tool`) pause and resume the time limit correctly.
+
+#### Commands
+
+| Command | Behaviour |
+|---|---|
+| `md FILE` | PDF → Markdown folder `<stem>_md\` beside the input (`-o FOLDER`): plan parts, OCR pages without text, extract, read equations and weak tables with Codex, QA, `00_index.md`. `--list` prints the plan and the estimate and converts nothing. `--parts 2,5-7` (numbers from `--list`), `--level N|auto` (default auto), `--chunk N` (N-page parts); a PDF of at most 40 pages, or one without an outline, is one part unless `--level` or `--chunk` is given (a paper is not split into its sections), `--pages` (one part from a page range), `--no-read` (local only: equations stay as the PDF's text, marked "equation not read yet"), `--no-qa`, `--force` (reconvert finished parts), `--lang` (OCR languages, default `eng+ind`), password flags |
+| `mdread FOLDER` | read again what is unread or doubtful after a change (eqread's resume rules), then QA |
+| `mdqa FOLDER` | QA only, rewrites `qa_report.md/json` |
+| `mdfix FOLDER FIXES` | `fix.py`'s fixes file; `--dry-run`; `review_notes.md` log; a block that does not match → `FIX_FAILED` (exit 1) after applying the others |
+| `mdexport FOLDER` | lean project files into `<folder>_project\` (`-o`): missing-text recovery, uncertain equations marked, image links and HTML leftovers dropped, source line with the PDF pages; `--title`, `--skip` (default `index`); per-file ~tokens in the record |
+
+- Part folders `NN_<slug>\` hold pdf2md's files unchanged in name and shape (`<name>.src.md`, `<name>.md`, `<name>.pages.json`, `<name>.blocks.json`, `eqs.json`, `eqs\`, `sheets\`, `crops\`, `qa_report.md/json`, `qa_autofix.txt`), so a rerun resumes pdf2md-made folders too. Front matter is part 0 so numbers match the book.
+- `md` writes inside its output folder in place (resume needs it), each file written to a temp name and replaced; it never writes outside that folder. `.pdftools-md.json` in the folder records the source path, size and SHA-256; a rerun on a folder made from another PDF, or a folder without that file and without pdf2md's files, is `BAD_ARG`. The input PDF is never modified.
+- Encrypted input: opened with the password sources; the Markdown is an export (`WARN DECRYPTED_EXPORT`); the password is never written to the folder. Signature gate: not applied (export).
+- Result record: one `result` (kind `folder`) with `parts: [{n, title, pages, equations, doubtful, unread, qa_likely, qa_lower, qa_visual, tables_flagged}]`, `note` = `<k> parts, <e> equations (<d> marked doubtful), QA likely <q>`; verdict `ok` only when nothing is doubtful, unread, likely or flagged, else `warn` with `EQ_DOUBTFUL`, `EQ_UNREAD`, `QA_LIKELY`, `TABLE_FLAGGED`, `OCR_LOW_QUALITY`/`OCR_EMPTY` (from `ocr`). A part that fails is reported in its entry and the others continue; any failed part → exit 4. As with pdf2md, the verdict is final: the skill tells Claude not to read crops, sheets or chapter files.
+- Long runs: `pipeline.announce_estimate` with pdf2md's constants (0.4 s/page extraction, 300 s per part of Codex, 3 parts at a time); over 90 s the skill runs it in the background.
+
+#### OCR and pixels sent to Codex
+
+- Pages of the chosen parts without a text layer are OCRed first by phase 5's `ocr` code, called in-process the way `batch` calls steps, into `<folder>\source_ocr.pdf` (kept; reused while the source hash matches). Extraction, crops and QA then read that copy; `pages.json` lists the `ocr_pages`. pymupdf4llm's own OCR is switched off (check its option in the installed version; a test asserts extraction starts no tesseract).
+- QA treats `ocr_pages` as scanned, as pdf2md did with pages without a text layer: only the LaTeX and numbering checks run there, their equations are read blind and need two agreeing readings, and export does not recover text from them.
+- Pages `ocr` reports as `OCR_LOW_QUALITY` or `OCR_EMPTY` carry that into `md`: QA lists them as low-confidence pages at the top of the part's report, the part entry carries the codes, and the run's verdict cannot be `ok` while any remain.
+- Codex sees only crops: display equations (pdf2md's column-wide ink crop), and tables flagged below. A crop is rendered as the page is displayed (`/Rotate` applied), and a crop whose text lines run vertically (pymupdf line `dir`) is turned upright before it goes on a sheet. Size: rendered at 200 dpi (the calibrated crop resolution), then downscaled so the median text line (ink-band height) is about 24 px (target 20–30 px); a crop already at or below that, or a scan whose own resolution gives less, is never upscaled. Sheets also downscale crops wider than 1410 px. No other image change: no thresholding, denoising or contrast, even when `ocr` used Sauvola or `--clean` (those touch only Tesseract's copy); crops of OCR pages come from the published page image.
+- Tesseract text with high confidence is used without a Codex read (tables below); equations always go to Codex, since Tesseract does not read math.
+- Codex runs through `p8_codex.ask(prompt_path, folder, role, effort, images)`, with pdf2md's pass roles (pass 1 `quick` medium, pass 2 `review` high, pass 3 `review` xhigh), through `tools.run_tool` (timeout 3600 s, so the watchdog pauses). Same prompts, passes and answer format on both machines:
+  - Windows: `ask.ps1 -PromptFile <prompt> -Dir <folder> -Role <role> -Effort <effort>`, as eqread does now; answer from `<prompt>.answer.md`.
+  - Linux (the workshop, where PowerShell is absent): `codex exec` directly, read-only sandbox, working folder `<folder>`, the role's model and the pass's effort, each sheet attached as an image, prompt on stdin, last message written to `<prompt>.answer.md` (exact flags checked against `codex exec --help` in the installed version). The role → model table is read from the `$roles` block of `codex\ask.ps1` in the same repository, so it stays defined once.
+  - `WARN CODEX_UNAVAILABLE` and `--no-read` behaviour only when neither route is found (no ask.ps1 or PowerShell on Windows, no `codex` on PATH on Linux).
+  - Tests replace `p8_codex.ask`; no test calls Codex. One test checks the Linux argv built for a pass (model and effort from a sample `$roles` block, images attached, read-only).
+
+#### Tables
+
+- Structure check (QA): each Markdown table's row count (separator excluded) and column count against the source table in the layout model's table box. Source counts: on pages with a born-digital text layer, `page.find_tables(clip=box)`; on `ocr_pages`, ruling lines detected in the page image (OpenCV `imgproc`: binarize, horizontal and vertical morphological opening, count the line runs); when neither yields a table, the table is "not checkable" and gets a lower-confidence QA note instead of a guessed count. A mismatch is a likely issue `table structure: Markdown R×C, PDF R×C`.
+- Codex reads a table (in pass 1 alongside the equations; sheet label `T<n>`, answer a one-line-per-row Markdown table) when its structure check fails, or when it is on an OCR page and either not checkable or below confidence: mean Tesseract word confidence in the box under 85 (`tesseract` TSV on the crop, through `tools.dev_tool_env`). A table on an OCR page that passes the structure check with confidence 85 or more keeps Tesseract's text. A reading replaces the extracted table only when its structure matches the source counts and its cell words cover at least 98 % of the PDF words in the box (`wordalign.align`); on OCR pages, when two readings agree on structure and 95 % of cell words. Otherwise the extracted table stays, followed by `*(table may be garbled; see PDF p. N)*`, and counts as `TABLE_FLAGGED`.
+
+#### Tests (phase 8)
+
+- Ported: eqread's `parse_answer`, `for_check`, `merge_formulas`, `doubtful`, `wanted` cases; the one-ERROR-line cases for `md`, `mdread`, `mdqa`, `mdfix` (incl. the unmatched-block case), `mdexport`.
+- Fixtures (`tests\fixtures\p8.py`, pymupdf only): a born-digital book with an outline (two chapters, a part-title page, front matter with text, one outline entry pointing one page early), display equations with numbers and a bold vector, a table, a two-column page, a `/Rotate 90` page with an equation, and one scanned page made from a rendered page.
+- `md --list` plan, repair note and part numbering; `split --bookmarks --level auto` on the same fixture (S3; every page in exactly one part).
+- `md` end to end with a fake `p8_codex.ask` that answers from a table of known LaTeX (one wrong reading first, to exercise passes 2–3 and `doubtful`); readings reused on rerun; `--force`; `--no-read` marks equations unread; source hash mismatch is `BAD_ARG`.
+- QA: a symbol swap, an accent swap (qa_autofix), a lost paragraph (and not one from two-column order), a KaTeX error, a numbering gap, a table structure mismatch (born-digital, and on the scanned page by ruling lines), a table with no detectable structure reported "not checkable".
+- OCR: the scanned page goes through `ocr` once (second run reuses `source_ocr.pdf`), its equations are unverifiable and read blind; no tesseract call from extraction; a low-dpi scanned page makes its part low-confidence and the verdict `warn`; a clear scanned table with matching ruling lines is not sent to Codex.
+- Crops: an equation crop's median line height lands in 20–30 px and is never upscaled; a `/Rotate 90` page's crop is upright; crop pixels equal the page render (no thresholding) on a page OCRed with `--clean`.
+- `mdexport`: recovered text marked with its page, uncertain equations marked, token estimate; `mdfix` applies, skips and logs.
+- Corpus sweep: `md --no-read --no-qa` joins `tests\corpus.py` COMMANDS (one part per file, outcome categories as for the other commands).
+- Reference regression (Windows, not in the unittest suite: `tests\p8_reference.py`): before pdf2md is retired, its `book.py --list` plan and a `--no-read` run of Cushman-Roisin & Beckers chapters 2 and 3 (`C:\Users\thurs\Downloads\introduction to gfd (CRB Full).pdf`) are saved as the baseline; `md` must give the same plan, the same equation boxes and crops (by SHA-1), and no more QA likely or lost-text issues. One full run with Codex then has to match pdf2md's Measured table (no numbered equations missing, no PDF words lost, at most the 3 marked equations per chapter).
 
 ## Hardening (phase H)
 
