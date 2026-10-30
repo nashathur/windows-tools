@@ -35,13 +35,13 @@ Each phase is its own build, Claude diff read, Codex phase review and commit. A 
 | 2 | 2 | alone |
 | 3 | 3a, 3b, 3c, 4, 6 | in parallel, 2–3 at a time (review is the bottleneck) |
 | 4 | 5, H | in parallel, after 3b and 4 are merged |
-| 5 | 7 | after H (7's security postconditions build on H's validator tests) |
-| 6 | 8 | after 7 |
+| 5 | 7, 8 | in parallel, after wave 4 is committed (7's security postconditions build on H's validator tests; 8 needs phase 5's `ocr`) |
 
 So that parallel builds never edit the same file:
 - Commands self-register: each module in `pdftools\commands\` declares its commands with a decorator (`@command(name, phase, input_kind, output_kind, suffix, rewrites_pdf, check_policy)` plus an argument-builder function); `registry.py` imports every module in `pdftools\commands\` (pkgutil) and `cli.py` builds parsers from the registry. Adding a command never edits `registry.py` or `cli.py`.
 - Each phase owns: `pdftools\commands\p<phase>_*.py`, `tests\test_p<phase>_*.py`, `tests\fixtures\p<phase>.py` (fixture builders; `make_fixtures.py` discovers them), `skill_parts\p<phase>.md` (its SKILL.md section). `tools\build_skill.py` (phase 2) assembles `SKILL.md` from `skill_parts\` in phase order.
-- Shared code (phases 1–2: everything outside `commands\`, `tests\test_p*`, `tests\fixtures\p*`, `skill_parts\`) is frozen for wave 3 and 4 builders: a builder that needs a change there stops and reports it; Claude makes the change on main and the builders rebase.
+- Shared code (phases 1–2: everything outside `commands\`, `tests\test_p*`, `tests\fixtures\p*`, `skill_parts\`) is frozen for wave 3, 4 and 5 builders: a builder that needs a change there stops and reports it; Claude makes the change on main and the builders rebase. Shared changes land one at a time on main, and every running builder rebases after each one. In wave 4, phase H owns the shared code (its hardening items are shared-code changes) and phase 5 owns only its own files.
+- Wave 5: phase 7 owns `commands\p7_*`, `tests\test_p7_*`, `tests\fixtures\p7.py` and `skill_parts\p7.md`; phase 8 owns the same four for p8, plus everything moved in from `C:\Tools\pdf2md` and the retirement of that folder and its skill. Phase 8 extends 3b's `split` (`--level`, outline repair) and 6's `md2pdf` and `check --source` (shared word alignment and KaTeX validator); phase 7 does not touch those modules. The shared routines phase 8 introduces (word alignment, KaTeX validator, the chapter planning `split` uses) are shared code: Claude lands them on main before or during the wave, never inside a builder's worktree. Phase 7 asks for any shared change it needs the same way.
 - Phase 2 also delivers `textmatch.py` and `pages.py`, so phase 7 does not depend on phase 4's code.
 - Commands split across phases: 3a adds the folder branch of `info` in `commands\p1_info.py` (no other phase touches it). Phase 6 extends 3c's `toimg` module (other formats) and 3a's `check` module (`--source`), so phase 6 starts after 3a and 3c are committed; 3c keeps its `toimg` writers in a format → writer table so phase 6 only adds entries.
 - A module with several commands defines `add_arguments_<name>(parser)` per command (the registry prefers it over `add_arguments`); never dispatch on `parser.prog`, which job parsing does not set.
@@ -541,7 +541,7 @@ Failure policy for both: if the check fails, nothing is published (exit 3, verdi
 
 ### Phase 8: pdf2md merge
 
-Moves `C:\Tools\pdf2md` (book, convert, eqread, qa, postprocess, fix, export, inspect_pdf, validate_math.js; its README describes each) into pdftools; the detailed spec is written when phase 7 is committed. Settled so far:
+Moves `C:\Tools\pdf2md` (book, convert, eqread, qa, postprocess, fix, export, inspect_pdf, validate_math.js; its README describes each) into pdftools; the detailed spec is written once phase 5 is committed, before wave 5 starts. Settled so far:
 - PDF → Markdown becomes pdftools commands: extraction (pymupdf4llm with the layout model, text layer first), equation reading by Codex with pdf2md's three-pass check, QA, fixes and project export. A local-only run (equations left as the PDF's text) stays available.
 - `book.py`'s chapter planning (outline level of about 25 pages, repair of outline entries that point to the wrong page, front matter as its own part) also serves `split` (`--level`, outline repair).
 - One OCR path: pages without a text layer go through `ocr` before extraction, replacing pdf2md's own Tesseract call; `inspect_pdf.py` is replaced by `info`.
