@@ -64,7 +64,7 @@ class ContractsTest(unittest.TestCase):
                 load_job(job, commands)
         # several steps without a command go to batch, which receives them raw
         fake = Command("batch", "5", "pdf", "pdf", "", True, "report",
-                       lambda p: p.add_argument("file", nargs="?", type=Path), None)
+                       lambda p: (p.add_argument("file", nargs="?", type=Path), p.add_argument("pipeline", nargs="?")), None)
         steps = [{"cmd": "rotate", "by": 90}, {"cmd": "numbers"}]
         job.write_text(json.dumps({"version": 1, "input": "input.pdf", "steps": steps}), encoding="utf-8")
         args, _ = load_job(job, dict(commands, batch=fake))

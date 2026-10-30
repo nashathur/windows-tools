@@ -116,7 +116,7 @@ def load_job(path, commands, *, cwd=None, secret_store=None):
         commands[name].add_arguments(parser)
         command_dest = {a.dest for a in parser._actions if a.dest != "help"}
         required_dest = {a.dest for a in parser._actions if a.dest != "help" and
-                         (a.required or not a.option_strings)}
+                         (a.required or (not a.option_strings and a.nargs not in ("?", "*")))}
     unknown = set(job) - allowed_global - command_dest
     if unknown:
         problems.extend(f"unknown job key: {key}" for key in sorted(unknown))
