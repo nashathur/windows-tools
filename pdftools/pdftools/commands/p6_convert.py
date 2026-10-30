@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import difflib
 import html
 import html.entities as html_entities
 import json
@@ -289,7 +288,7 @@ def add_arguments_md2pdf(parser):
 
 
 def _node_env(**extra):
-    return {**os.environ, "NODE_PATH": str(NODE_MODULES), **extra}
+    return {**os.environ, "NODE_PATH": os.environ.get("NODE_PATH", str(NODE_MODULES)), **extra}
 
 
 def _markdown_diagnostics(warnings, source_warnings, problems):
@@ -394,7 +393,8 @@ _BOTTOM_MARGIN = 20 / 25.4 * 72  # md2pdf.css @page margin
 
 
 def _norm_word(word):
-    return re.sub(r"[^\w'-]", "", word, flags=re.UNICODE).casefold()
+    from ..wordalign import norm_word
+    return norm_word(word)
 
 
 def _nospace(text):
@@ -452,36 +452,8 @@ def _compare_source(doc, blocks, source_images, pdf_path, markdown_path):
     for index, block in enumerate(blocks):
         text = block.get("text", "")
         source.extend((index, w) for w in (_norm_word(x) for x in text.split()) if w)
-    matcher = difflib.SequenceMatcher(None, [w for _, w in source], [w for _, w in pdf_words], autojunk=False)
-    matched, consumed = set(), set()
-    for a, b, size in matcher.get_matching_blocks():
-        matched.update(range(a, a + size))
-        consumed.update(range(b, b + size))
-    # A very long token (URL) may be broken across PDF lines into several words. Only
-    # recover it inside the corresponding gap between already aligned source/PDF spans.
-    aligned = [(a, b, size) for a, b, size in matcher.get_matching_blocks() if size]
-    for position in range(len(source)):
-        token = source[position][1]
-        if position in matched or len(token) < 12:
-            continue
-        previous = [(a + size, b + size) for a, b, size in aligned if a + size <= position]
-        following = [(a, b) for a, b, size in aligned if a > position]
-        source_floor, pdf_floor = max(previous, default=(0, 0), key=lambda pair: pair[0])
-        source_ceiling, pdf_ceiling = min(following, default=(len(source), len(pdf_words)), key=lambda pair: pair[0])
-        if not source_floor <= position < source_ceiling:
-            continue
-        for start in range(pdf_floor, pdf_ceiling):
-            if start in consumed:
-                continue
-            combined = ""
-            end = start
-            while end < pdf_ceiling and end not in consumed and len(combined) < len(token):
-                combined += pdf_words[end][1]
-                end += 1
-            if combined == token:
-                matched.add(position)
-                consumed.update(range(start, end))
-                break
+    from ..wordalign import align
+    matched, _ = align([w for _, w in source], [w for _, w in pdf_words])
 
     per_block = {}
     for position, (index, _) in enumerate(source):
