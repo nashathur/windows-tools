@@ -126,5 +126,24 @@ class WatchdogTest(unittest.TestCase):
                 children = psutil.Process().children(recursive=True)
                 self.assertFalse([child for child in children if any("supervisor.py" in part for part in child.cmdline())])
 
+    def test_concurrent_pauses_send_one_pair_per_overlap(self):
+        import threading
+        from unittest.mock import patch
+        from pdftools import watchdog
+        barrier = threading.Barrier(3)
+        def worker():
+            for _ in range(40):
+                with watchdog.paused():
+                    barrier.wait(timeout=3)
+        with patch.object(watchdog, "_armed", True), patch.object(watchdog, "_pause_count", 0), \
+                patch.object(watchdog, "_send") as send:
+            threads = [threading.Thread(target=worker) for _ in range(3)]
+            for thread in threads: thread.start()
+            for thread in threads: thread.join(timeout=8)
+            self.assertFalse(any(thread.is_alive() for thread in threads))
+            self.assertEqual(watchdog._pause_count, 0)
+            messages = [call.args[0]["op"] for call in send.call_args_list]
+            self.assertEqual(messages, ["pause", "resume"])
+
 
 if __name__ == "__main__": unittest.main()
