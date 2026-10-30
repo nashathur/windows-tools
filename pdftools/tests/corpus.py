@@ -141,7 +141,8 @@ def _files():
 
 # (command, args after the input file); test_pH_corpus parses each through the real CLI parser
 COMMANDS = [("info",), ("text",), ("organize", "rev"), ("rotate", "--pages", "1-", "--by", "90"),
-            ("numbers",), ("compress", "--level", "lossless"), ("sanitize",), ("redact", "--text", "the")]
+            ("numbers",), ("compress", "--level", "lossless"), ("sanitize",), ("redact", "--text", "the"),
+            ("md", "--no-read", "--no-qa")]
 
 
 def sweep(update=False):
