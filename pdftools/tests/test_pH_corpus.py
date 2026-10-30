@@ -32,6 +32,16 @@ class CorpusTest(unittest.TestCase):
         self.assertEqual(categorize(-9, '{"type":"result","verdict":"ok"}\n'), "crash")
         self.assertEqual(categorize(4, '{"type":"result","verdict":"ok"}\n'), "crash")
 
+    def test_every_swept_command_line_parses(self):
+        sys.path.insert(0, str(ROOT.parent / "common"))
+        from corpus import COMMANDS
+        from pdftools.cli import build_parser
+        parser = build_parser()
+        for argv in COMMANDS:
+            with self.subTest(argv=argv):
+                extra = [] if argv[0] in {"info", "text"} else ["-o", "out" + os.sep]
+                parser.parse_args([argv[0], "input.pdf", *argv[1:], *extra])  # BadArg on a wrong argv
+
     def test_standalone_entry_point_loads_common_before_discovery(self):
         # independent of whether this machine has fetched the public corpus
         env = dict(os.environ, PDFTOOLS_CORPUS_PUBLIC=str(Path(tempfile.gettempdir()) / "pdftools-no-manifest.json"))

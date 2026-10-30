@@ -139,9 +139,13 @@ def _files():
     return files
 
 
+# (command, args after the input file); test_pH_corpus parses each through the real CLI parser
+COMMANDS = [("info",), ("text",), ("organize", "rev"), ("rotate", "--pages", "1-", "--by", "90"),
+            ("numbers",), ("compress", "--level", "lossless")]
+
+
 def sweep(update=False):
-    commands = [("info",), ("text",), ("organize", "rev"), ("rotate", "--by", "90"),
-                ("numbers",), ("compress", "--level", "lossless")]
+    commands = COMMANDS
     from pdftools.registry import discover, get
     discover()
     outcomes = {}
