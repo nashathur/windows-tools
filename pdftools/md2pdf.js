@@ -9,6 +9,15 @@ const { pathToFileURL, fileURLToPath } = require('url');
 // Printable A4 width in CSS px: 210 mm page minus two 20 mm margins (see md2pdf.css).
 const PRINT_WIDTH = Math.floor((210 - 40) / 25.4 * 96);
 
+function validateTex(katex, tex, display) {
+  try {
+    katex.renderToString(tex, { displayMode: !!display, throwOnError: true, strict: 'ignore' });
+    return null;
+  } catch (error) {
+    return String(error.message || error).replace(/^KaTeX parse error:\s*/, '');
+  }
+}
+
 function readMarkdown(file) {
   return fs.readFileSync(file, 'utf8').replace(/^﻿/, '');
 }
@@ -18,11 +27,10 @@ function readMarkdown(file) {
 function mathExtensions(katex, state) {
   const render = (tex, displayMode) => {
     const options = { displayMode, strict: 'ignore' };
-    // KaTeX 0.19 marks a failed formula only by colour; the throwing call tells us it failed.
-    try { return katex.renderToString(tex, { ...options, throwOnError: true }); } catch (_) {
-      state.errors += 1;
-      return katex.renderToString(tex, { ...options, throwOnError: false });
-    }
+    const error = validateTex(katex, tex, displayMode);
+    if (error === null) return katex.renderToString(tex, { ...options, throwOnError: true });
+    state.errors += 1;
+    return katex.renderToString(tex, { ...options, throwOnError: false });
   };
   return {
     extensions: [
@@ -297,6 +305,16 @@ async function render(source, output, marked, katex) {
 
 async function main() {
   const marked = require('marked'), katex = require('katex');
+  if (process.argv[2] === '--validate') {
+    const items = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+    const failures = [];
+    for (const item of items) {
+      const error = validateTex(katex, item.latex, item.display);
+      if (error !== null) failures.push({ id: item.id, error });
+    }
+    process.stdout.write(JSON.stringify(failures));
+    return;
+  }
   if (process.argv[2] === '--tokens') {
     const source = process.argv[3];
     if (process.argv[4]) namedEntities = JSON.parse(fs.readFileSync(process.argv[4], 'utf8'));
@@ -304,9 +322,9 @@ async function main() {
     return;
   }
   if (process.argv[2] === '--render') return render(process.argv[3], process.argv[4], marked, katex);
-  throw new Error('usage: md2pdf.js --tokens FILE | --render FILE OUTPUT');
+  throw new Error('usage: md2pdf.js --tokens FILE | --render FILE OUTPUT | --validate FILE');
 }
 
-module.exports = { rejectRemoteReparseTargets, blocks, htmlVisibleText };
+module.exports = { rejectRemoteReparseTargets, blocks, htmlVisibleText, validateTex };
 if (require.main === module)
   main().catch(error => { process.stderr.write(`md2pdf: ${error.message}\n`); process.exitCode = 1; });
