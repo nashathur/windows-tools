@@ -34,8 +34,10 @@ def _encryption_state(path, password=None, document=None):
     with pikepdf.open(path, password=password or "") as pdf:
         encrypted = bool(pdf.is_encrypted)
         allow = pdf.allow
+        # /P from the file itself: PyMuPDF reports full rights once the owner password has authenticated.
+        permissions = int(pdf.encryption.P) if encrypted else (document.permissions if document else 0)
         return crypt.Encryption(encrypted=encrypted, user_password=password,
-                                owner_password=None, permissions=document.permissions if document else 0,
+                                owner_password=None, permissions=permissions,
                                 restrictions_only=encrypted and not password and pdf.user_password_matched and
                                 not pdf.owner_password_matched), {
                                     "modify": bool(allow.modify_other),
@@ -328,8 +330,10 @@ def write_pdf(source, spec, args, context, writer, *, operation=None, inputs=Non
                     watchdog.register_path(stage.path)
                     check_password = owner_pw
                 elif encrypted:
+                    # The given user password stays the output's user password; with only an owner password
+                    # the user password cannot be recovered (AES-256), so the owner password opens it.
                     decision = crypt.write_decision(crypt.Encryption(encrypted=True,
-                        user_password=password, permissions=input_permissions,
+                        user_password=context.password or password, permissions=input_permissions,
                         restrictions_only=encrypted_input.restrictions_only), can_modify=can_modify,
                         can_assemble=can_assemble, ignore_restrictions=getattr(args, "ignore_restrictions", False),
                         owner_password=owner_secret,
