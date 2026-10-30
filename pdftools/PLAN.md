@@ -1,6 +1,6 @@
 # pdftools plan
 
-Local PDF toolkit that Claude runs on request: the pdfjar.com tool set plus folder helpers, as one CLI and one skill. Only Claude runs it (no GUI, no right-click menu). Commands may use Codex where it helps (see Privacy). Phase 8 brings every PDF capability under pdftools, pdf2md included. Status: phases 1, 2, 3a, 3b, 3c, 4 and 6 built. Plan reviews are finished; remaining issues are caught per phase in build, tests and the phase review.
+Local PDF toolkit that Claude runs on request: the pdfjar.com tool set plus folder helpers, as one CLI and one skill. Only Claude runs it (no GUI, no right-click menu). Commands may use Codex where it helps (see Privacy). Phase 8 brings every PDF capability under pdftools, pdf2md included. Status: phases 1–8 and H committed; pdf2md retired (folder and skill deleted). Plan reviews are finished; remaining issues are caught per phase in build, tests and the phase review.
 
 ## Deliverables
 
