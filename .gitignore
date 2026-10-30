@@ -15,6 +15,12 @@ src_backup*/
 local-llm/index/
 local-llm/_whisper/
 __pycache__/
+# widget caches they rebuild themselves (buswidget/data/line_colors.txt is hand-edited, so tracked)
+buswidget/data/schedule.tsv*
+buswidget/data/next_build.txt
+buswidget/data/pos.txt
+taskbar-media/progress.txt
+taskbar-media/logos/
 
 # scratch
 _tmp/
@@ -26,6 +32,7 @@ local-llm/shots/
 /jadx/
 /kuna/
 /kuna-test/
+/rust_asc/
 
 # settings app runtime copy (taken from Windows at start) and the throwaway WinUI test
 taskbar-dock/resources.pri

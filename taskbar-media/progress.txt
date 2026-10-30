@@ -1,3 +1,5 @@
 308046B0AF4A39CB	no
+MSEdge	yes
+Microsoft.ScreenSketch_8wekyb3d8bbwe!App	no
 Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic	yes
 SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify	yes
