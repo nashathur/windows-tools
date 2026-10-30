@@ -15,6 +15,7 @@ param(
     [string]$Resume,                          # session id to continue, in its recorded dir and sandbox
     [string]$Accept,                          # worktree path: apply its changes to the origin checkout, remove it
     [string]$Discard,                         # worktree path: remove it unapplied
+    [switch]$Workshop,                        # run in the WSL workshop's clone of windows-tools (pushed commits only)
     [switch]$Status                           # print other Codex jobs and exit
 )
 $hasSandbox = $PSBoundParameters.ContainsKey('Sandbox')
@@ -101,28 +102,66 @@ function Invoke-Git {   # returns git's stdout
     if ($run.StdOut) { $run.StdOut.TrimEnd() }
 }
 
+# The workshop (WSL distro, user agent) can't reach Windows, so Windows reaches in: files through the UNC share,
+# commands through wsl.exe running a script file (no quoting crosses PS 5.1). Jobs use their own clone, checked out
+# at the Windows HEAD (so only pushed commits work), apart from ~/src/windows-tools where workshop sessions edit.
+$wsRepo = '/home/agent/src/windows-tools-codex'
+$wsRuns = '/home/agent/codex-runs'
+$wsUnc = '\\wsl.localhost\workshop\home\agent\codex-runs'
+function Quote-Bash([string]$s) { "'" + $s.Replace("'", "'\''") + "'" }
+# Script names are generated ([a-z0-9-] only) and run with --exec, so no Linux shell parses the command line.
+function Write-WorkshopScript([string]$name, [string[]]$lines) {   # returns the script's Linux path
+    $null = Invoke-CliTool wsl.exe @('-d', 'workshop', '--exec', 'mkdir', '-p', $wsRuns) -Name workshop -Fix 'check that the workshop distro starts: wsl -d workshop'
+    # ~/.profile for PATH (codex, conda); not bash -l, whose ~/.bash_logout turns every exit code into 1.
+    $lines = @('. "$HOME/.profile"') + $lines
+    [IO.File]::WriteAllText("$wsUnc\$name.sh", (($lines -join "`n") + "`n"), (New-Object Text.UTF8Encoding $false))
+    "$wsRuns/$name.sh"
+}
+function Invoke-Workshop([string]$name, [string[]]$lines, [string]$fix) {   # returns stdout
+    $sh = Write-WorkshopScript $name (@('set -e') + $lines)
+    try { $run = Invoke-CliTool wsl.exe @('-d', 'workshop', '--exec', 'bash', $sh) -Name workshop -Fix $fix }
+    finally { Remove-Item -LiteralPath "$wsUnc\$name.sh" -ErrorAction SilentlyContinue }
+    if ($run.StdOut) { $run.StdOut.TrimEnd() }
+}
+
 # -Worktree records each worktree (path, origin checkout, start commit); -Accept/-Discard act only on recorded ones.
+# A workshop worktree has a Linux path; its origin is the Windows checkout its changes are applied to.
 function Get-WorktreeRecord($path) {
-    $wt = (Resolve-Path -LiteralPath $path).Path
-    $rec = Join-Path $runs "wt-$(Split-Path (Split-Path $wt -Parent) -Leaf).txt"
+    $ws = $path.StartsWith('/')
+    $wt = if ($ws) { $path.TrimEnd('/') } else { (Resolve-Path -LiteralPath $path).Path }
+    $leaf = if ($ws) { 'ws-' + ($wt -split '/')[-2] } else { Split-Path (Split-Path $wt -Parent) -Leaf }
+    $rec = Join-Path $runs "wt-$leaf.txt"
     if (-not (Test-Path $rec)) { Stop-Cli NOT_FOUND "$wt was not created by ask.ps1 -Worktree (no record $rec)" 'use a worktree path recorded by ask.ps1' }
     $r = Get-Content -Encoding UTF8 $rec
     if ($r[0] -ne $wt) { Stop-Cli BAD_INPUT "Record $rec is for $($r[0]), not $wt" 'use the worktree path recorded in its record file' }
-    [pscustomobject]@{ Wt = $wt; Origin = $r[1]; Base = $r[2]; File = $rec }
+    [pscustomobject]@{ Wt = $wt; Origin = $r[1]; Base = $r[2]; File = $rec; Workshop = $ws }
 }
 function Remove-Worktree($r) {
-    Invoke-Git -C $r.Origin worktree remove --force $r.Wt
-    $parent = Split-Path $r.Wt -Parent   # ~/.codex/worktrees/<id>: drop it too once empty
-    if (-not (Get-ChildItem -LiteralPath $parent -Force)) { Remove-Item -LiteralPath $parent }
+    if ($r.Workshop) {
+        $parent = $r.Wt.Substring(0, $r.Wt.LastIndexOf('/'))
+        $null = Invoke-Workshop "remove-$PID" @("git -C $wsRepo worktree remove --force $(Quote-Bash $r.Wt)",
+            "rmdir $(Quote-Bash $parent) 2>/dev/null || true") 'remove the worktree by hand: wsl -d workshop, then git worktree remove'
+    } else {
+        Invoke-Git -C $r.Origin worktree remove --force $r.Wt
+        $parent = Split-Path $r.Wt -Parent   # ~/.codex/worktrees/<id>: drop it too once empty
+        if (-not (Get-ChildItem -LiteralPath $parent -Force)) { Remove-Item -LiteralPath $parent }
+    }
     Remove-Item $r.File
 }
 
 if ($Accept) {
     $r = Get-WorktreeRecord $Accept
     # Diff from the start commit, so work Codex committed comes across too.
-    $patch = Join-Path $runs "accept-$(Get-Date -Format yyyyMMdd-HHmmss).patch"
-    Invoke-Git -C $r.Wt add -A
-    Invoke-Git -C $r.Wt diff --cached --binary $r.Base --output=$patch
+    $stamp = Get-Date -Format yyyyMMdd-HHmmss
+    $patch = Join-Path $runs "accept-$stamp.patch"
+    if ($r.Workshop) {
+        $null = Invoke-Workshop "accept-$PID" @("cd $(Quote-Bash $r.Wt)", 'git add -A',
+            "git diff --cached --binary $($r.Base) --output=$wsRuns/accept-$stamp.patch") 'check the worktree in the workshop'
+        Move-Item -LiteralPath "$wsUnc\accept-$stamp.patch" -Destination $patch
+    } else {
+        Invoke-Git -C $r.Wt add -A
+        Invoke-Git -C $r.Wt diff --cached --binary $r.Base --output=$patch
+    }
     if ((Get-Item $patch).Length -eq 0) { "no changes in $($r.Wt)" }
     else {
         $null = Invoke-CliTool git @('-C', $r.Origin, 'apply', '--whitespace=nowarn', $patch) -Name git `
@@ -189,13 +228,18 @@ if ($Search -and ($Review -or $Worktree -or $Sandbox -ne 'read-only')) {
 }
 if (-not $hasModel)  { $Model  = $roles[$Role].Model }
 if (-not $hasEffort) { $Effort = $roles[$Role].Effort }
+if ($Workshop) {
+    if ($Keep -or $Resume) { Stop-Cli BAD_ARG '-Workshop runs are one-shot: -Keep and -Resume work on Windows only.' 'drop -Keep/-Resume, or drop -Workshop' }
+    if ($Review -eq 'uncommitted') { Stop-Cli BAD_ARG 'The workshop sees only pushed commits, not uncommitted changes.' 'drop -Workshop to review uncommitted work on Windows' }
+    if ($Sandbox -eq 'workspace-write' -and -not $Worktree) { Stop-Cli BAD_ARG 'In the workshop Codex writes only in a -Worktree, whose changes -Accept brings to Windows.' 'add -Worktree' }
+}
 
 # A locked-out sandbox account fails every command, and Codex retries until the plan is spent:
 # after one lockout, refuse new runs for 30 minutes (after the argument checks, so bad calls still say why).
 # Since 2026-10-28 ~/.codex/config.toml runs `[windows] sandbox = "unelevated"` and the legacy sandbox accounts
 # are uninstalled (openai/codex#18620: parallel elevated runs lock them out); this stays as the safety net.
 $lockMarker = Join-Path $runs 'sandbox-locked.txt'
-if (Test-Path -LiteralPath $lockMarker) {
+if (-not $Workshop -and (Test-Path -LiteralPath $lockMarker)) {   # the Linux sandbox has no such accounts
     $until = (Get-Item -LiteralPath $lockMarker).LastWriteTime.AddMinutes(30)
     if ((Get-Date) -lt $until) {
         Write-CliWarn 'ask' SANDBOX_LOCKED "Codex sandbox account was locked out (1909); not starting Codex (marker $lockMarker)" "retry after $($until.ToString('HH:mm'))"
@@ -210,6 +254,18 @@ if ($PromptFile) { $PromptFile = (Resolve-Path -LiteralPath $PromptFile).Path }
 $base = if ($PromptFile) { $PromptFile } else { Join-Path $runs "review-$(Split-Path $Dir -Leaf)" }
 $Out = if ($Out) { Abs $Out } else { "$base.answer.md" }
 $log = "$base.log"
+if ($Workshop) {
+    # Same place in the workshop clone, at the same commit: Windows HEAD must be pushed, and the job checks it out on its own.
+    $root = (Invoke-Git -C $Dir rev-parse --show-toplevel) -replace '/', '\'
+    if ((Invoke-Git -C $root remote get-url origin) -notmatch 'nashathur/windows-tools(\.git)?$') {
+        Stop-Cli BAD_ARG "$Dir is not in the windows-tools repo, the only one the workshop has." 'drop -Workshop'
+    }
+    $wsHead = Invoke-Git -C $root rev-parse HEAD
+    $wsName = "job-$PID-$(Get-Date -Format HHmmssfff)"
+    $wsCheckout = "$wsRuns/$wsName"   # this job's own detached checkout, removed after the run
+    $wsDir = ($wsCheckout + '/' + ($Dir.Substring($root.Length).TrimStart('\') -replace '\\', '/')).TrimEnd('/')
+    $wsOut = "$wsRuns/$wsName.answer.md"
+}
 
 $preamble = @'
 You are working with Claude, which orchestrates this work and makes the final calls.
@@ -242,10 +298,11 @@ if ($Resume) {
         $args_ += '--worktree'
         $startCommit = Invoke-Git -C $Dir rev-parse HEAD   # the worktree branches from here
     }
-    $args_ += @('-s', $Sandbox, '-C', "`"$Dir`"", '--skip-git-repo-check', '--color', 'never')
+    # Start-Process joins arguments unquoted, so Windows paths carry their own quotes; workshop ones are bash-quoted later.
+    $args_ += @('-s', $Sandbox, '-C', $(if ($Workshop) { $wsDir } else { "`"$Dir`"" }), '--skip-git-repo-check', '--color', 'never')
 }
 if (-not ($Keep -or $Resume -or $Worktree)) { $args_ += '--ephemeral' }   # the CLI rejects --worktree with --ephemeral
-$args_ += @('-o', "`"$Out`"", '-c', "model_reasoning_effort=$Effort")
+$args_ += @('-o', $(if ($Workshop) { $wsOut } else { "`"$Out`"" }), '-c', "model_reasoning_effort=$Effort")
 if ($Model) { $args_ += @('-m', $Model) }
 
 # Stdin carries the prompt: with the role preamble on a fresh ask, bare as review focus instructions
@@ -317,8 +374,29 @@ $savedPythonPath = $env:PYTHONPATH
 try {
     # Lets tempfile work inside the unelevated sandbox (pyshim\sitecustomize.py says why); Codex's process only.
     $env:PYTHONPATH = (@("$PSScriptRoot\pyshim") + @($savedPythonPath | Where-Object { $_ })) -join ';'
-    $p = Start-Process -FilePath $exe.FullName -ArgumentList $args_ -WorkingDirectory $Dir -NoNewWindow -PassThru `
-        -RedirectStandardInput $stdin -RedirectStandardOutput "$log.out" -RedirectStandardError $log
+    if ($Workshop) {
+        # stdin (the prompt) passes through wsl.exe and bash to codex; the script file carries everything else.
+        $sh = Write-WorkshopScript $wsName @(
+            'set -e', 'export CODEX_CONSULT=1 GIT_TERMINAL_PROMPT=0',
+            # Parallel jobs share the clone, so the lock covers clone, fetch and adding this job's checkout; each job
+            # then runs in its own checkout, pinned at its commit. The clone stays detached so the fetch can move
+            # every local branch to GitHub's (for -Review base:<branch>). Git reads /dev/null: stdin is codex's.
+            "flock $wsRuns/repo.lock bash -c 'set -e",
+            "  [ -d $wsRepo/.git ] || { git clone -q https://github.com/nashathur/windows-tools.git $wsRepo; git -C $wsRepo checkout -q --detach; }",
+            "  git -C $wsRepo fetch -q --prune origin `"+refs/heads/*:refs/heads/*`"",
+            "  git -C $wsRepo cat-file -e $wsHead^{commit} 2>/dev/null || { echo `"ERROR Windows HEAD $($wsHead.Substring(0, 7)) is not on GitHub: push it first`" >&2; exit 3; }",
+            "  git -C $wsRepo worktree prune",
+            "  git -C $wsRepo worktree add -q --detach $wsCheckout $wsHead' < /dev/null",
+            "cd $(Quote-Bash $wsDir)",
+            "rc=0; codex $(($args_ | ForEach-Object { Quote-Bash $_ }) -join ' ') || rc=`$?",
+            "flock $wsRuns/repo.lock git -C $wsRepo worktree remove --force $wsCheckout < /dev/null || true",
+            'exit $rc')
+        $p = Start-Process -FilePath wsl.exe -ArgumentList @('-d', 'workshop', '--exec', 'bash', $sh) -NoNewWindow -PassThru `
+            -RedirectStandardInput $stdin -RedirectStandardOutput "$log.out" -RedirectStandardError $log
+    } else {
+        $p = Start-Process -FilePath $exe.FullName -ArgumentList $args_ -WorkingDirectory $Dir -NoNewWindow -PassThru `
+            -RedirectStandardInput $stdin -RedirectStandardOutput "$log.out" -RedirectStandardError $log
+    }
     $null = $p.Handle   # keeps ExitCode readable after exit (PS 5.1)
     while (-not $p.WaitForExit(1000)) {
         $lockLine = Find-Lockout
@@ -331,6 +409,7 @@ try {
     }
     if (-not $lockLine) { $lockLine = Find-Lockout -Final }
     Remove-Item -LiteralPath $stdin
+    if ($Workshop -and (Test-Path -LiteralPath "$wsUnc\$wsName.answer.md")) { Move-Item -LiteralPath "$wsUnc\$wsName.answer.md" -Destination $Out -Force }
     if ($lockLine) {
         [IO.File]::WriteAllText($lockMarker, (Get-Date).ToString('o'))
         $jobExit = 'sandbox locked'
@@ -345,13 +424,19 @@ try {
         if ($Keep -and $id) { Set-Content -Encoding UTF8 (Join-Path $runs "session-$id.txt") @($wd, $Sandbox) }
         "session: $id  (continue with -Resume $id)"
     }
-    if ($Worktree -and $wd) {
+    if ($Worktree -and $wd -and $Workshop) {
+        # The worktree's root (workdir may be a subfolder of it): ~/.codex/worktrees/<id>/<checkout name>.
+        if ($wd -match '^(.*/\.codex/worktrees/[^/]+/[^/]+)') { $wd = $Matches[1] }
+        Set-Content -Encoding UTF8 (Join-Path $runs "wt-ws-$(($wd -split '/')[-2]).txt") @($wd, $root, $wsHead)
+        "worktree (workshop): $wd  (review with wsl -d workshop -- git -C $wd diff $($wsHead.Substring(0, 7)); then -Accept or -Discard it)"
+    } elseif ($Worktree -and $wd) {
         Set-Content -Encoding UTF8 (Join-Path $runs "wt-$(Split-Path (Split-Path $wd -Parent) -Leaf).txt") @($wd, $Dir, $startCommit)
         "worktree: $wd  (review with git -C; then -Accept or -Discard it)"
     }
     $jobExit = if ($p.ExitCode -ne 0) { $p.ExitCode } elseif (-not (Test-Path -LiteralPath $Out)) { 'no answer' } else { 0 }
 } finally {
     $env:PYTHONPATH = $savedPythonPath
+    if ($Workshop) { Remove-Item -LiteralPath "$wsUnc\$wsName.sh" -ErrorAction SilentlyContinue }
     # Last, so a "finished" notice never precedes the worktree/session records it points to.
     $end = $job + @("ended=$((Get-Date).ToString('o'))", "exit=$jobExit")
     if ($Worktree -and $wd) { $end += "worktree=$wd" }

@@ -29,6 +29,10 @@ function Run-Case([string]$Name, [string[]]$Arguments, [int]$Exit, [string]$Code
 
 Run-Case 'conflict' @('-Accept','x','-Discard','y') 2 'BAD_ARG' 'use only -Accept or -Discard'
 Run-Case 'deep-write' @('-PromptFile',$PSCommandPath,'-Role','deep','-Worktree') 2 'BAD_ARG' 'drop write access or use -Role build'
+Run-Case 'ws-uncommitted' @('-Workshop','-Review','uncommitted') 2 'BAD_ARG' 'review uncommitted work on Windows'
+Run-Case 'ws-keep' @('-Workshop','-Keep','-PromptFile',$PSCommandPath) 2 'BAD_ARG' 'drop -Keep/-Resume'
+Run-Case 'ws-live' @('-Workshop','-Sandbox','workspace-write','-PromptFile',$PSCommandPath) 2 'BAD_ARG' 'add -Worktree'
+Run-Case 'ws-other-repo' @('-Workshop','-PromptFile',$PSCommandPath,'-Dir',($env:USERPROFILE + '\.claude')) 2 'BAD_ARG' 'drop -Workshop'
 
 Remove-Item -LiteralPath $root -Recurse -Force
 if ($failed) { exit 1 }
