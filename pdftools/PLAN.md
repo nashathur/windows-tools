@@ -1,6 +1,6 @@
 # pdftools plan
 
-Local PDF toolkit that Claude runs on request: the pdfjar.com tool set plus folder helpers, as one CLI and one skill. Only Claude runs it (no GUI, no right-click menu). The toolkit never sends file content off the PC (see Privacy). Status: phases 1, 2, 3a, 3b, 3c and 4 built. Plan reviews are finished; remaining issues are caught per phase in build, tests and the phase review.
+Local PDF toolkit that Claude runs on request: the pdfjar.com tool set plus folder helpers, as one CLI and one skill. Only Claude runs it (no GUI, no right-click menu). The toolkit never sends file content off the PC (see Privacy). Status: phases 1, 2, 3a, 3b, 3c, 4 and 6 built. Plan reviews are finished; remaining issues are caught per phase in build, tests and the phase review.
 
 ## Deliverables
 
@@ -571,6 +571,8 @@ pikepdf wraps qpdf, so the two count as one opinion; independent cross-checks us
 - Each wave runs in its own Claude Code session, started when the previous wave is committed; that session coordinates the wave's phases and ends when they are committed.
 - Within a wave, start every phase at once, split by file ownership: the parts of a phase that touch only its own files build in parallel from the start; only the parts that extend another phase's files (e.g. phase 6's `toimg` formats and `check --source`) wait until that phase is committed.
 - Each phase review is done twice and blind: Claude's own review and a Codex review (role `review`). Claude then compares them (findings both caught, only one caught, contradictions), verifies each finding against the code, and reports the comparison with the findings. When Codex is unavailable, its review waits; a Claude review never stands in for it.
-- Per phase: Codex (role `build`) in a worktree from this plan; Claude reads the diff and reruns the tests; one Codex review (role `review`) of the phase; findings in the CLAUDE.md Reviews format; commit after the user's OK.
+- Builds, test runs and Codex reviews of committed code run in the WSL workshop (global CLAUDE.md, "Two machines"), on the workshop's clone of `windows-tools` at the pushed Windows HEAD. A build is `ask.ps1 -Role build -Worktree -Workshop` from this plan; shared-code changes a builder asks for are committed on main and pushed before the builder is relaunched.
+- Per phase: Claude reads the workshop worktree's diff, then `ask.ps1 -Accept <path>` copies its changes into `C:\Tools` uncommitted, and the full suite runs once on Windows (env dev) before the commit. The Codex review (role `review`) runs in the workshop on committed code, `-Workshop -Review commit:<sha>` or `-Review custom` naming the commits; before the phase is committed and pushed it runs on Windows as `-Review custom` naming the phase's files. Findings go in the CLAUDE.md Reviews format; commit after the user's OK.
+- After the push, every phase's tests also pass in the workshop clone (`~/src/windows-tools`, `conda run -n dev python -m unittest discover -s pdftools/tests -q`).
 - A builder that finds the plan wrong or silent on something stops and reports it instead of guessing; Claude settles it and updates this plan.
 - `SKILL.md` updated at the end of each phase: that phase's commands, the rules (the verdict is the verification: no hand re-checks after `ok`, JSON jobs for anything beyond simple arguments, `thumb` only for `unchecked`/`failed` or on request, background for estimates over 90 s), common recipes; per-command options from `pdf.cmd <cmd> --help`. Form filling → `anthropic-skills:pdf`; PDF → Markdown → the `pdf2md` skill.
