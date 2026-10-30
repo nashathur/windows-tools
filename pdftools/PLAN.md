@@ -48,7 +48,7 @@ So that parallel builds never edit the same file:
 - Pipeline hooks added for phase 4 (`pipeline.write_pdf`): `encrypt_output={"user_password", "owner_password", "permissions"}` replaces the encryption matrix (`protect`; owner defaults to user), `decrypt_output=True` publishes unencrypted (`unlock`), `opener(path, password)` replaces `open_input` for inputs and the check (`repair`), `OperationResult.baseline` names a PDF the check uses instead of the input (`--flatten-annots`), `OperationResult.keep_input = "<CODE>"` publishes nothing and returns a `warn` result whose path is the input, with that warning (`compress` `NO_GAIN`), and `context.temp` is the run's temp folder for such scratch files.
 - `--each` (folders/globs, any command that offers it): one result record per file plus a `summary` record; a failing file is reported and skipped; exit 4 if any failed (as `batch --each`).
 
-Backlog (not a phase; each item needs its own spec first): `toword --mode math` (phase 8's Markdown + pandoc), `batch --jobs N`, composed batch checks, `img2pdf --scan` (below), `ocr` inversion of mostly-dark pages (OCRmyPDF has no option for it), automatic two-pages-per-sheet split for book scans (detect the gutter, extends `cut`; after unpaper's `--layout double`), animated GIF/WebP export, HEIC lossless export (`quality=-1`, `chroma=444`, after a round-trip test), `open --page` viewer arguments, `imgtext --surya`, PDF version conversion, PDF/A output, hidden-text and hidden-layer removal in `sanitize`.
+Backlog (not a phase; each item needs its own spec first): `toword --mode math` (phase 8's Markdown + pandoc), `batch --jobs N`, composed batch checks, `img2pdf --scan` (below), `ocr` inversion of mostly-dark pages (OCRmyPDF has no option for it), automatic two-pages-per-sheet split for book scans (detect the gutter, extends `cut`; after unpaper's `--layout double`), animated GIF/WebP export, HEIC lossless export (`quality=-1`, `chroma=444`, after a round-trip test), `open --page` viewer arguments, `imgtext --surya`, PDF version conversion, PDF/A output, hidden-text and hidden-layer removal in `sanitize`, a `tables` command (PDF tables to CSV/XLSX with the phase 8 row and column check; for BMKG data tables; until then `anthropic-skills:pdf`).
 
 `img2pdf --scan` (backlog, needs its own spec): photographed pages become scan-like pages. OpenCV page finding and perspective correction (the learnopencv document-scanner method) with three changes: corners are found on a downscaled copy and the warp is applied to the full-resolution original; corners are ordered by angle around their centre; the result is checked (page area share of the photo, near-A4 or Letter proportions, convex quadrilateral), and when the check fails the original image is kept with a `WARN` and an `unchecked` verdict. Then rotation from Tesseract's orientation detection, an optional adaptive-threshold "scan look", opt-in removal of black scanner edges and copy shadows (after unpaper's black filter and mask detection; it can eat content near the edge, so never by default), and no denoising by default.
 
@@ -56,14 +56,7 @@ Backlog (not a phase; each item needs its own spec first): `toword --mode math` 
 
 ### Launcher
 
-`C:\Tools\pdftools\pdf.cmd`:
-
-```bat
-@echo off
-set PYTHONUTF8=1
-set PYTHONIOENCODING=utf-8
-"C:\Users\thurs\miniconda3\Scripts\conda.exe" run -n dev --no-capture-output python C:\Tools\pdftools\pdf.py %*
-```
+`C:\Tools\pdftools\pdf.cmd` activates the dev env itself (env folders on PATH plus the variables from the env's `etc\conda\activate.d` and `env_vars.d`) and runs the env's `python.exe pdf.py`. `conda run` took ~3.7 s of each call (measured 2026-10-30: `info` 3.8 s → 1.0 s, `compress` 4.5 s → 1.6 s, `ocr` of one page 11.6 s → 8.4 s, same results). `tests\test_launcher.ps1` compares its environment with `conda run`'s and fails on any difference, e.g. after a package adds an activation script.
 
 - stdout and stderr are UTF-8 (`pdf.py` also reconfigures them, so direct runs match). The skill sets `[Console]::OutputEncoding = [Text.Encoding]::UTF8` and, before piping a job to `--job -`, `$OutputEncoding = [Text.Encoding]::UTF8` (PowerShell 5.1 pipes to native programs as ASCII otherwise; the UTF-8 pipe adds BOMs, which the job loader strips). Prefer `--job FILE`.
 - Tests use `unittest` (pytest is not in dev): `conda run -n dev python -m unittest discover -s pdftools\tests -q`; launcher: `pdftools\tests\test_launcher.ps1`.
@@ -175,7 +168,6 @@ Follows the global one-line error rule in `C:\Users\thurs\.claude\CLAUDE.md` and
 
 - Codes: the shared ones (`NOT_FOUND`, `LOCKED`, `BAD_ARG`, `BAD_INPUT`, `TOOL_FAILED`, `TIMEOUT`, `INTERRUPTED`, `INTERNAL`) plus `BAD_PAGE`, `ENCRYPTED`, `WRONG_PASSWORD`, `SIGNED`, `REDACTIONS_PENDING`, `DAMAGED` (fix: `repair`), `UNSUPPORTED`, `TOO_BIG`, `CHECK_FAILED`.
 - `WARN pdf <command> <CODE>: ... | fix: ...` for non-fatal issues.
-- `conda run` appends its own `ERROR conda.cli.main_run ... failed` line after a non-zero exit; it adds nothing and the skill tells Claude to ignore it.
 - Log in `C:\Tools\logs\pdftools\` (the helper's location; last 50 kept), named `<time>-<pid>-<command>.log`, sections `== command`, `== problems`, `== error`, `== traceback`, `== library warnings`, `== tool stderr (last 30 lines)`; all redacted.
 - External tools: the ERROR line quotes the most relevant stderr line (first with error/fatal/failed/exception).
 - `fix:` names the exact flag, command or file to try next; written for Claude.
@@ -675,4 +667,4 @@ pikepdf wraps qpdf, so the two count as one opinion; independent cross-checks us
 - Per phase: Claude reads the workshop worktree's diff, then `ask.ps1 -Accept <path>` copies its changes into `C:\Tools` uncommitted, and the full suite runs once on Windows (env dev) before the commit. The Codex review (role `review`) runs in the workshop on committed code, `-Workshop -Review commit:<sha>` or `-Review custom` naming the commits; before the phase is committed and pushed it runs on Windows as `-Review custom` naming the phase's files. Findings go in the CLAUDE.md Reviews format; commit after the user's OK.
 - After the push, every phase's tests also pass in the workshop clone (`~/src/windows-tools`, `conda run -n dev python -m unittest discover -s pdftools/tests -q`).
 - A builder that finds the plan wrong or silent on something stops and reports it instead of guessing; Claude settles it and updates this plan.
-- `SKILL.md` updated at the end of each phase: that phase's commands, the rules (the verdict is the verification: no hand re-checks after `ok`, JSON jobs for anything beyond simple arguments, `thumb` only for `unchecked`/`failed` or on request, background for estimates over 90 s), common recipes; per-command options from `pdf.cmd <cmd> --help`. Form filling → `anthropic-skills:pdf`; PDF → Markdown → the `pdf2md` skill until phase 8 is committed.
+- `SKILL.md` updated at the end of each phase: that phase's commands, the rules (the verdict is the verification: no hand re-checks after `ok`, JSON jobs for anything beyond simple arguments, `thumb` only for `unchecked`/`failed` or on request, background for estimates over 90 s), common recipes; per-command options from `pdf.cmd <cmd> --help`. Form filling, custom-layout PDFs from scratch and tables to a spreadsheet → `anthropic-skills:pdf`.

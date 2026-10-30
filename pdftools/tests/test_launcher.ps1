@@ -72,6 +72,25 @@ try {
         if ($process.ExitCode -ne $code) { throw "launcher exit $code became $($process.ExitCode)" }
         $process.Dispose()
     }
+
+    # pdf.cmd activates the env itself: it must set what conda run sets, apart from conda's own bookkeeping
+    $envStub = Join-Path $scratch 'envstub'
+    New-Item -ItemType Directory -Path $envStub | Out-Null
+    Set-Content -LiteralPath (Join-Path $envStub 'pdf.py') -Value 'import json, os; print(json.dumps(dict(os.environ)))' -Encoding ASCII
+    Set-Content -LiteralPath $launcher -Value $launcherText.Replace($root, $envStub) -Encoding ASCII
+    $mine = (& $launcher | ConvertFrom-Json)
+    $theirs = (& $conda run -n dev python (Join-Path $envStub 'pdf.py') | ConvertFrom-Json)
+    # deactivation backups (xml_catalog_files_libxml2) are bookkeeping too: nothing in pdftools reads them
+    $bookkeeping = '^(CONDA_(DEFAULT_ENV|EXE|PROMPT_MODIFIER|PYTHON_EXE|ROOT|SHLVL)|PROMPT|_CONDA_.*|__CONDA_.*|XML_CATALOG_FILES_LIBXML2|PATH)$'
+    $names = @($theirs.PSObject.Properties.Name) + @($mine.PSObject.Properties.Name) | Sort-Object -Unique
+    foreach ($name in $names) {
+        if ($name -match $bookkeeping) { continue }
+        if ($mine.$name -ne $theirs.$name) { throw "pdf.cmd sets $name='$($mine.$name)', conda run '$($theirs.$name)'" }
+    }
+    $prefix = $theirs.CONDA_PREFIX
+    $envDirs = { param($path) @($path -split ';' | Where-Object { $_ -like "$prefix*" }) }
+    if (((& $envDirs $mine.PATH) -join ';') -ne ((& $envDirs $theirs.PATH) -join ';')) { throw "pdf.cmd PATH env folders differ from conda run" }
+
     'PASS PowerShell 5.1 launcher tests'
 }
 finally {
