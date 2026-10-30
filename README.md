@@ -49,7 +49,7 @@ paths over 260 characters.
 ## Other tools
 
 - [`local-llm`](local-llm): An MCP server that lets Claude Code hand bulk work (summarizing, extraction, classification, transcription, search) to a local model via Ollama.
-- [`pdf2md`](pdf2md): PDF → Markdown with math (Marker), with automatic QA against the PDF text layer so only problem spots need review.
+- [`pdftools`](pdftools): One CLI for inspecting, checking, transforming and converting PDFs, including PDF → Markdown with equations read by Codex and QA against the PDF.
 - [`codex`](codex): A PowerShell wrapper for calling OpenAI Codex from Claude Code for builds and reviews.
 
 ## Notes
