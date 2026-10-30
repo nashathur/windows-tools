@@ -4,6 +4,9 @@ from dataclasses import dataclass
 
 INPUT_KINDS = frozenset({"pdf", "image", "folder", "text", "markdown", "docx", "any"})
 OUTPUT_KINDS = frozenset({"pdf", "image", "docx", "html", "txt", "json", "zip", "folder", "report"})
+# Argument dests whose values are secrets (redacted in every log and message), read by cli before parsing so
+# even a failed parse cannot log them.
+SECRET_ARGS = {"redact": ("text", "regex")}
 BUILTIN_POLICIES = frozenset({
     "report", "placements", "rotate", "stamp", "annot_add", "annot_remove", "flatten",
     "flatten_raster", "crop", "rmblank", "structure", "gray", "compress_lossless",

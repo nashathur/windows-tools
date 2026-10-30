@@ -10,7 +10,7 @@ import clierr
 
 from . import io
 from .errors import BadArg, library_warnings
-from .registry import discover
+from .registry import SECRET_ARGS, discover
 from .secrets import SecretStore, strip_one_newline
 
 
@@ -79,6 +79,13 @@ def load_job(path, commands, *, cwd=None, secret_store=None, command=None):
         for index, step in enumerate(steps):
             if not isinstance(step, dict):
                 problems.append(f"steps[{index}] must be an object")
+    if secret_store is not None:
+        # Before any validation can fail and log the job text.
+        job_command = job.get("command") or job.get("cmd") or command
+        for part in [job, *(step for step in steps if isinstance(step, dict))]:
+            part_command = part.get("cmd") or part.get("command") or job_command
+            if isinstance(part_command, str):
+                secret_store.add_args(part, part_command, SECRET_ARGS)
     if problems:
         raise BadArg(f"job has {len(problems)} problem(s): {problems[0]}", problems)
     if secret_store is not None:
@@ -253,6 +260,9 @@ def main(argv=None):
     try:
         commands = discover()
         argsv, password = store.extract(argsv)
+        named = next((token for token in argsv if token in commands), None)
+        if named:
+            store.add_args(argsv, named, SECRET_ARGS)
         job_path = None
         global_flags = {"-v": False, "--json": False, "--dry-run": False, "--stdout": False}
         remaining = []

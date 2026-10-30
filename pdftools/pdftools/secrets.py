@@ -23,14 +23,39 @@ class SecretStore:
 
     def add(self, value, *, owner=False):
         if value is not None:
-            value = str(value)
-            self.values.append(value)
+            value = self.add_value(value)
             if owner:
                 self.owner_password = value
             else:
                 self.password = value
             return value
         return None
+
+    def add_value(self, value):
+        """A secret that is not a password (a redaction target): redacted everywhere, never used to open a PDF."""
+        import clierr
+        value = str(value)
+        self.values.append(value)
+        clierr.register_secrets([value])
+        return value
+
+    def add_args(self, args, command, secret_args):
+        """Register the values of `command`'s secret arguments from argv tokens or a job step dict."""
+        dests = secret_args.get(command, ())
+        if isinstance(args, dict):
+            for dest in dests:
+                value = args.get(dest)
+                for item in value if isinstance(value, list) else [value]:
+                    if isinstance(item, str) and item:
+                        self.add_value(item)
+            return
+        flags = {"--" + dest.replace("_", "-") for dest in dests}
+        for i, token in enumerate(args):
+            name, eq, inline = token.partition("=")
+            if name in flags and eq and inline:
+                self.add_value(inline)
+            elif token in flags and i + 1 < len(args) and args[i + 1]:
+                self.add_value(args[i + 1])
 
     def extract(self, argv):
         clean, password = [], None

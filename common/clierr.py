@@ -121,9 +121,19 @@ def _tool_sections(run):
             + _section(f"tool stderr (last {TAIL})", tail or "(empty)"))
 
 
+_REGISTERED = []
+
+
+def register_secrets(values):
+    """Secrets every later log of this process is redacted against, on top of a call's own `secrets`
+    (a caller that writes a log without passing them still cannot leak them)."""
+    _REGISTERED.extend(str(value) for value in values if value)
+
+
 def write_log(tool, code, what, fix, exc=None, *, secrets=(), sections=None, log_name=None):
     """Write one log and keep the newest KEEP for this tool; returns its path (or a note if the
     log can't be written, so the ERROR line still prints)."""
+    secrets = [*secrets, *_REGISTERED]
     folder = LOG_ROOT / tool
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     suffix = f"-{log_name}" if log_name else ""

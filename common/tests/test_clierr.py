@@ -127,6 +127,14 @@ class ClierrTest(unittest.TestCase):
         self.assertNotIn(secret, log)
         self.assertNotIn(subprocess.list2cmdline([secret]), log)
 
+    def test_registered_secrets_redact_logs_written_without_them(self):
+        secret = "registered-target-7"
+        with patch.object(clierr, "_REGISTERED", []), patch.object(clierr, "LOG_ROOT", self.root), \
+                patch.object(sys, "argv", ["demo.py", "--text", secret]):
+            clierr.register_secrets([secret, None, ""])
+            log = Path(clierr.write_log("demo", "X", f"saw {secret}", "fix", sections={"detail": secret}))
+        self.assertNotIn(secret, log.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
