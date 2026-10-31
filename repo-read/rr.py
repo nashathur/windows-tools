@@ -1,6 +1,6 @@
 """Reads a remote git repo for an agent through gitingest (repo-read skill).
 
-    rr.py ingest <url> [-i P ...] [-e P ...] [--max-kb 100] [--out LABEL] [--local]
+    rr.py ingest <url> [-i P ...] [-e P ...] [--max-kb 5120] [--out LABEL] [--local]
         one gitingest digest of the repo, or of one folder with a .../tree/<branch>/<folder> URL;
         writes ~/gi/<owner>-<repo>[-LABEL].txt (file tree first, then file contents) and prints its size
 
@@ -125,7 +125,8 @@ def main():
     g.add_argument("source", help="repo URL; .../tree/<branch>/<folder> digests one folder")
     g.add_argument("-i", "--include", action="append", default=[])
     g.add_argument("-e", "--exclude", action="append", default=[])
-    g.add_argument("--max-kb", type=int, default=100, help="skip files larger than this (default 100 KB)")
+    # The API's default: a lower cap would drop big handwritten files (controllers, route tables) unseen.
+    g.add_argument("--max-kb", type=int, default=5120, help="skip files larger than this (default 5120 KB, the API's)")
     g.add_argument("--out", help="label appended to the digest file name")
     g.add_argument("--local", action="store_true", help="run gitingest in the workshop instead of gitingest.com")
     a = p.parse_args()
