@@ -299,7 +299,9 @@ if ($Resume) {
         $startCommit = Invoke-Git -C $Dir rev-parse HEAD   # the worktree branches from here
     }
     # Start-Process joins arguments unquoted, so Windows paths carry their own quotes; workshop ones are bash-quoted later.
-    $args_ += @('-s', $Sandbox, '-C', $(if ($Workshop) { $wsDir } else { "`"$Dir`"" }), '--skip-git-repo-check', '--color', 'never')
+    # Workshop builds run unsandboxed (user, 2026-10-31): the seal is the boundary, cc-safety-net's hook the accident guard.
+    $args_ += $(if ($Workshop -and $Sandbox -eq 'workspace-write') { '--dangerously-bypass-approvals-and-sandbox' } else { @('-s', $Sandbox) })
+    $args_ += @('-C', $(if ($Workshop) { $wsDir } else { "`"$Dir`"" }), '--skip-git-repo-check', '--color', 'never')
 }
 if (-not ($Keep -or $Resume -or $Worktree)) { $args_ += '--ephemeral' }   # the CLI rejects --worktree with --ephemeral
 $args_ += @('-o', $(if ($Workshop) { $wsOut } else { "`"$Out`"" }), '-c', "model_reasoning_effort=$Effort")
