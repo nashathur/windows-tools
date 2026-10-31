@@ -1,21 +1,17 @@
 """Reads a remote git repo for an agent in few calls (repo-read skill).
 
-    rr.py map <url> [--branch B] [--name N] [--depth 2] [--all]
-        clone (on GitHub, partial over 200 MB) and print estimated digest tokens per folder
+    rr.py clone <url> [--branch B] [--name N] [--depth 2]
+        clone (on GitHub, partial over 200 MB) and print a structure map: files per folder with their
+        top extensions, key files, CI workflows
         (a /tree/ URL gives the first segment as branch; branch names with / need --branch)
-    rr.py digest <name|path> [-i P ...] [-e P ...] [--out LABEL] [--all]
-        gitingest digest of the clone; a partial clone first checks out what -i names
-    rr.py checkout <name|path> <pattern> ...
-        add folders or patterns to a partial clone's checkout, for grepping them
     rr.py grep <name|path> <regex> [path ...] [-i] [--max 200]
         grep the clone where it lives; each match prints as <path>:<line>:<text>, path readable by the caller
+    rr.py checkout <name|path> <pattern> ...
+        add folders or patterns to a partial clone's checkout, for grepping them
 
-Patterns are gitignore-style, the language gitingest and git's sparse checkout both read: a bare
-name (tests) matches at any depth, one with a slash (src/*) is anchored at the repo root, /x is the
-root entry x (./x too). rr's default excludes (tests, translations, snapshots) stay out unless --all or named in -i;
-gitingest itself always skips lock, minified and binary files. Runs in the workshop (gitingest 0.3.1
-in the dev env); Windows calls it through the rr wrapper, which sets RR_WIN_PREFIX so paths print as
-\\\\wsl.localhost\\workshop\\... for Windows tools.
+Checkout patterns are gitignore-style (git sparse-checkout, no-cone): /x is the root entry x (./x too),
+a bare name (tests) matches at any depth. Runs in the workshop; Windows calls it through the rr
+wrapper, which sets RR_WIN_PREFIX so paths print as \\\\wsl.localhost\\workshop\\... for Windows tools.
 """
 import argparse
 import fnmatch
@@ -25,8 +21,8 @@ import re
 import shutil
 import subprocess
 import sys
-import urllib.parse
 import urllib.request
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
@@ -34,16 +30,15 @@ import clierr  # noqa: E402
 
 TOOL = "rr"
 ROOT = Path(os.environ.get("RR_ROOT") or Path.home() / "gi")
-PARTIAL_KB = 200_000  # repo size above which only what a digest names is downloaded
-READ_BUDGET = 12_000  # gitingest tokens that still fit one Read call (Read counts ~1.6x more and stops at 25k)
-MAX_FILE_BYTES = 10 * 1024 * 1024  # gitingest's default max_file_size
-DEFAULT_EXCLUDES = ["tests", "test", "__tests__", "__snapshots__", "e2e", "cypress", "fixtures",
-                    "testdata", "locales", "i18n", "l10n", "translations", "snapshots", "*.test.*", "*.spec.*", "*.snap"]
-# Binary files gitingest drops by content, which the map cannot read before cloning.
-BINARY = ["*.ttf", "*.otf", "*.woff", "*.woff2", "*.eot", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp",
-          "*.ico", "*.webp", "*.tif", "*.tiff", "*.pdf", "*.zip", "*.gz", "*.tgz", "*.7z", "*.jar", "*.onnx",
-          "*.bin", "*.dll", "*.so", "*.dylib", "*.exe", "*.mp3", "*.mp4", "*.wav", "*.webm", "*.wasm", "*.bcmap"]
-FILE_RULE = "=" * 48
+PARTIAL_KB = 200_000  # repo size above which only the root files are downloaded until checkout
+MAX_ROWS, MAX_KEY, MAX_WORKFLOWS, KEY_DEPTH = 60, 40, 15, 4
+# Folders whose files are noise in the key-file list (vendored, generated or test copies of manifests).
+NOISE_DIRS = {"node_modules", "vendor", "dist", "build", "test", "tests", "__tests__", "e2e", "fixtures", "testdata"}
+KEY_FILES = ["README*", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING*",
+             "package.json", "pyproject.toml", "setup.py", "Cargo.toml", "go.mod", "pom.xml", "build.gradle*", "settings.gradle*",
+             "Makefile", "Taskfile.y*ml", "justfile", "Dockerfile*", "docker-compose*.y*ml", "compose*.y*ml",
+             "main.*", "App.*", "app.py", "index.ts", "index.tsx", "index.js", "server.*", "cli.*", "__main__.py",
+             "*Application.java", "*Application.kt", "AndroidManifest.xml", "capacitor.config.*", "vite.config.*", "tauri.conf.json"]
 
 
 def shown(path):
@@ -85,27 +80,11 @@ def repo_key(url):
     return m.group(1) + m.group(2).lower() + ":" + m.group(3) if m else u
 
 
-def token_count(summary):
-    """gitingest's 'Estimated tokens: 36.6k' -> 36600, or None."""
-    m = re.search(r"Estimated tokens:\s*([\d.]+)\s*([kKmM]?)", summary or "")
-    if not m:
-        return None
-    return int(float(m.group(1)) * {"k": 1e3, "m": 1e6}.get(m.group(2).lower(), 1))
-
-
-def fmt(n):
-    return f"{n / 1e6:.1f}M" if n >= 1e6 else f"{n / 1e3:.1f}k" if n >= 1e3 else str(int(n))
-
-
 def split_patterns(values):
-    """-i a,b -i c -> [a, b, c]; a space would be split again by gitingest, so it is refused.
-    ./x is the root anchor /x: Git Bash rewrites arguments that start with / into Windows paths."""
+    """["a,b", "c"] -> [a, b, c]. ./x is the root anchor /x: Git Bash rewrites arguments that start
+    with / into Windows paths."""
     out = [p.strip() for v in values or [] for p in v.split(",") if p.strip()]
-    out = ["/" + p[2:] if p.startswith("./") else p for p in out]
-    for p in out:
-        if re.search(r"\s", p):
-            raise clierr.Fail("BAD_ARG", f"pattern '{p}' contains a space, which gitingest splits", "use ? or * in place of the space")
-    return out
+    return ["/" + p[2:] if p.startswith("./") else p for p in out]
 
 
 def git(*args, fix=None):
@@ -135,16 +114,6 @@ def github_api(path, token):
         raise clierr.Fail("TOOL_FAILED", f"GitHub API {e.code} for {path}", hint)
 
 
-def gitingest_ignores():
-    from gitingest.utils.ignore_patterns import DEFAULT_IGNORE_PATTERNS
-    return set(DEFAULT_IGNORE_PATTERNS)
-
-
-def spec(patterns):
-    import pathspec
-    return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
-
-
 def git_unquote(s):
     """git C-quotes paths with non-ASCII bytes: "src/\\303\\251/a.c" -> src/é/a.c."""
     if len(s) < 2 or not (s.startswith('"') and s.endswith('"')):
@@ -159,7 +128,46 @@ def current_branch(repo):
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def cmd_map(a):
+def render_map(paths, depth):
+    """Structure map lines for a file list: files per folder (to `depth` levels) with the two most common
+    extensions, then key files (README, manifests, entry points) and CI workflows."""
+    groups = {}
+    for p in paths:
+        segs = p.split("/")
+        key = "(root files)" if len(segs) == 1 else "/".join(segs[:min(depth, len(segs) - 1)]) + "/"
+        # No extension: the name stands for the kind (Dockerfile).
+        groups.setdefault(key, Counter())[os.path.splitext(segs[-1])[1].lstrip(".") or segs[-1]] += 1
+    keys = sorted(groups)
+    lines = []
+    for key in keys[:MAX_ROWS]:
+        top = sorted(groups[key].items(), key=lambda kv: (-kv[1], kv[0]))[:2]
+        lines.append(f"{sum(groups[key].values()):>6} files  {key}  {', '.join(f'{e} {n}' for e, n in top)}")
+    if len(keys) > MAX_ROWS:
+        lines.append(f"... +{len(keys) - MAX_ROWS} more folders (rr clone again with --depth 1, or grep)")
+
+    patterns = [k.lower() for k in KEY_FILES]
+    key_files = []
+    for p in paths:
+        segs = p.split("/")
+        if len(segs) <= KEY_DEPTH and not NOISE_DIRS.intersection(segs[:-1]) \
+                and any(fnmatch.fnmatchcase(segs[-1].lower(), k) for k in patterns):
+            key_files.append(p)
+    key_files.sort(key=lambda p: (p.count("/"), p))
+    lines += ["", "key files:", *(f"  {p}" for p in key_files[:MAX_KEY])]
+
+    names = sorted(p.rsplit("/", 1)[1] for p in paths if p.startswith(".github/workflows/") and p.count("/") == 2)
+    ci = []
+    if names:
+        more = f", ... +{len(names) - MAX_WORKFLOWS}" if len(names) > MAX_WORKFLOWS else ""
+        ci.append(f"{len(names)} in .github/workflows ({', '.join(names[:MAX_WORKFLOWS])}{more})")
+    if ".gitlab-ci.yml" in paths:
+        ci.append(".gitlab-ci.yml")
+    if ci:
+        lines.append("workflows: " + "; ".join(ci))
+    return lines
+
+
+def cmd_clone(a):
     ref = repo_ref(a.source)
     if not ref:
         raise clierr.Fail("BAD_ARG", f"not a repo URL: {a.source}", "pass https://<host>/<owner>/<repo> or git@<host>:<owner>/<repo>.git")
@@ -190,7 +198,7 @@ def cmd_map(a):
         if stored != wanted:
             raise clierr.Fail("BAD_INPUT", f"{dest} holds branch '{stored or 'default'}', not '{wanted or 'default'}'",
                               "pass --name <new folder name> to clone that branch alongside")
-        # HEAD can move (checkout, detach) after the clone; digest and grep read what is checked out.
+        # HEAD can move (checkout, detach) after the clone; grep reads what is checked out.
         r = subprocess.run(["git", "-C", str(dest), "config", "--get", "rr.head"], capture_output=True, text=True)
         if r.returncode != 0:
             raise clierr.Fail("BAD_INPUT", f"{dest} has no recorded checkout", "delete the folder or pass --name")
@@ -205,60 +213,37 @@ def cmd_map(a):
         git(*cmd, ref["clone_url"], str(dest), fix="check the URL and your git credentials")
         git("-C", str(dest), "config", "rr.branch", wanted)
         if partial:
-            # Root files only; digest adds what its -i names.
+            # Root files only; checkout adds folders.
             git("-C", str(dest), "sparse-checkout", "set", "--no-cone", "/*", "!/*/")
             git("-C", str(dest), "checkout")
         git("-C", str(dest), "config", "rr.head", current_branch(dest))
-        how = "partial clone (root files only until digest)" if partial else "shallow clone"
+        how = "partial clone" if partial else "shallow clone"
     sha = git("-C", str(dest), "rev-parse", "HEAD")
     if github:
-        # The tree of the checkout's own commit, so sizes match what the digest reads.
+        # The tree of the checkout's own commit; a partial clone has only the root files on disk.
         tree = github_api(f"repos/{ref['owner']}/{ref['repo']}/git/trees/{sha}?recursive=1", token)
         if tree.get("truncated"):
-            clierr.warn(TOOL, "TRUNCATED", "GitHub listed only part of the tree", "folder sizes are lower bounds")
-        files = [(t["path"], t.get("size", 0)) for t in tree["tree"] if t["type"] == "blob"]
+            clierr.warn(TOOL, "TRUNCATED", "GitHub listed only part of the tree", "the map and file count are lower bounds")
+        files = [t["path"] for t in tree["tree"] if t["type"] == "blob"]
     else:
-        # Other hosts: sizes from the full shallow clone (a partial clone would fetch each file to size it).
-        files = []
-        for line in git("-C", str(dest), "ls-tree", "-r", "-l", "HEAD").splitlines():
-            m = re.match(r"^\S+ blob \S+\s+(\d+)\t(.+)$", line)
-            if m:
-                files.append((git_unquote(m.group(2)), int(m.group(1))))
+        files = [git_unquote(l) for l in git("-C", str(dest), "ls-tree", "-r", "--name-only", "HEAD").splitlines() if l]
 
-    skip = spec(gitingest_ignores() | set(BINARY))
-    default = spec(DEFAULT_EXCLUDES)
-    rows, total, n_files, dropped, dropped_bytes = {}, 0, 0, 0, 0
-    for path, size in files:
-        if size > MAX_FILE_BYTES or skip.match_file(path):
-            continue
-        if not a.all and default.match_file(path):
-            dropped += 1
-            dropped_bytes += size
-            continue
-        segs = path.split("/")
-        key = "(root files)" if len(segs) == 1 else "/".join(segs[:min(a.depth, len(segs) - 1)]) + "/"
-        r = rows.setdefault(key, [0, 0])
-        r[0] += 1
-        r[1] += size
-        total += size
-        n_files += 1
     print(f"repo:   {ref['clone_url']} @ {sha[:7]} ({how})")
     print(f"clone:  {shown(dest)}")
-    print(f"digest candidates: {fmt(total / 4)} tokens in {n_files} files (bytes/4)")
-    if dropped:
-        print(f"excluded by default (tests, translations, snapshots): {dropped} files, {fmt(dropped_bytes / 4)} tokens; --all keeps them")
+    print(f"files:  {len(files)}")
+    if partial:
+        print(f"partial clone: root files only; rr checkout {name} <folder> ... before grepping or reading other folders")
     print()
-    for key in sorted(rows):
-        print(f"{fmt(rows[key][1] / 4):>8} {rows[key][0]:>6} files  {key}")
+    print("\n".join(render_map(files, a.depth)))
     print()
-    print(f"next: rr digest {name} -i <patterns> (keep each digest under {fmt(READ_BUDGET)} tokens)")
+    print(f"next: read the README's opening section and the build manifest, then rr grep {name} <regex> for the operation asked about")
 
 
 def find_clone(name_or_path):
     for c in (Path(name_or_path), ROOT / "src" / name_or_path):
         if (c / ".git").exists():
             return c.resolve()
-    raise clierr.Fail("NOT_FOUND", f"no clone named {name_or_path}", "run 'rr.py map <url>' first, or pass the clone's folder")
+    raise clierr.Fail("NOT_FOUND", f"no clone named {name_or_path}", "run 'rr.py clone <url>' first, or pass the clone's folder")
 
 
 def cmd_checkout(a):
@@ -268,7 +253,7 @@ def cmd_checkout(a):
     if git("-C", str(clone), "config", "--bool", "--default", "false", "core.sparseCheckout") != "true":
         print(f"{shown(clone)} is a full clone; every file is already there")
         return
-    git("-C", str(clone), "sparse-checkout", "add", *patterns, fix="check the patterns against rr map")
+    git("-C", str(clone), "sparse-checkout", "add", *patterns, fix="check the patterns against the rr clone map")
     print(f"checked out {', '.join(patterns)} in {shown(clone)}")
 
 
@@ -297,136 +282,25 @@ def cmd_grep(a):
         print("no matches")
 
 
-def cmd_digest(a):
-    clone = find_clone(a.source)
-    include, exclude = split_patterns(a.include), split_patterns(a.exclude)
-    if any(p.startswith("!") for p in include + exclude):
-        # gitingest keeps patterns in a set, so the order "!" relies on is lost.
-        raise clierr.Fail("BAD_ARG", "negation patterns (!) are not supported in digest", "list what to include, and exclude with -e")
-    sparse = git("-C", str(clone), "config", "--bool", "--default", "false", "core.sparseCheckout") == "true"
-    if sparse:
-        if not include:
-            raise clierr.Fail("BAD_ARG", "a partial clone needs -i", "name the folders or files to digest; rr.py map shows them")
-        git("-C", str(clone), "sparse-checkout", "add", *include, fix="check the -i patterns")
-
-    ignored = any(l.startswith("!! ") for l in git("-C", str(clone), "status", "--porcelain", "--ignored").splitlines())
-    if ignored:
-        clierr.warn(TOOL, "IGNORED_FILES", "the checkout holds git-ignored files; they are digested too",
-                    "digest a fresh clone (rr.py map) to read only tracked files")
-
-    import codecs
-    from gitingest.config import MAX_FILES
-    from gitingest.ingestion import ingest_query
-    from gitingest.output_formatter import _format_token_count
-    from gitingest.query_parser import parse_local_dir_path
-    from gitingest.schemas import filesystem
-    from gitingest.utils.pattern_utils import process_patterns
-    from loguru import logger
-    logger.remove()  # gitingest logs every step at INFO; nothing may reach stderr but our one-line errors
-
-    # gitingest calls a file binary when its first 1024-byte chunk fails a strict UTF-8 decode, so a
-    # multi-byte character cut at the chunk edge turned text into "[Binary file]"; let a cut tail pass.
-    original_decodes = filesystem._decodes
-
-    def decodes(chunk, encoding):
-        if codecs.lookup(encoding).name != "utf-8":
-            return original_decodes(chunk, encoding)
-        try:
-            codecs.getincrementaldecoder("utf-8")().decode(chunk, final=False)
-        except UnicodeDecodeError:
-            return False
-        return True
-
-    filesystem._decodes = decodes
-    # A default exclude that -i names (or sits under a named path) stays in; -e excludes stay.
-    comps = [c for p in include for c in p.strip("/").split("/") if c]
-    defaults = [] if a.all else [d for d in DEFAULT_EXCLUDES if not any(fnmatch.fnmatchcase(c, d) for c in comps)]
-    excludes = defaults + exclude
-
-    # Local ingestion, not ingest(): its source dispatcher takes any path containing github.com or gitlab.com
-    # for a remote URL and strips a trailing .git; its .gitignore loader keeps patterns unordered (it drops
-    # tracked folders) and opens .gitignore/.gitingestignore symlinks that point outside the clone.
-    query = parse_local_dir_path(str(clone))
-    query.max_file_size = MAX_FILE_BYTES
-    query.ignore_patterns, query.include_patterns = process_patterns(exclude_patterns=set(excludes) or None,
-                                                                     include_patterns=set(include) or None)
-    summary, tree, content = ingest_query(query)
-    count = int(m.group(1)) if (m := re.search(r"Files analyzed:\s*(\d+)", summary)) else 0
-    if count >= MAX_FILES:
-        clierr.warn(TOOL, "TRUNCATED", f"gitingest stops at {MAX_FILES} files", "narrow -i")
-
-    # gitingest's built-in ignores win over -i (build.gradle under *.gradle). That is the only omission
-    # repaired: a tracked file -i names outright (a glob-free pattern with the file's own name), that
-    # gitingest skipped, and the excludes allow. process_patterns drops from its ignores the entries equal to an include.
-    added = []
-    named = [p for p in include if not re.search(r"[*?\[]", p)]
-    if named:
-        built_in = spec(gitingest_ignores() - set(include))
-        excluded = spec([p for p in excludes if p not in include])  # gitingest drops an exclude named in -i
-        listing = clierr.run_tool(["git", "-C", str(clone), "ls-files", "-z"]).stdout
-        for rel in listing.split("\0"):
-            if not rel or not built_in.match_file(rel) or excluded.match_file(rel):
-                continue
-            name = rel.rsplit("/", 1)[-1]
-            if not any(spec([p]).match_file(rel) and name == p.rstrip("/").rsplit("/", 1)[-1] for p in named):
-                continue
-            f = clone / rel
-            if f.is_symlink() or not f.is_file() or not f.resolve().is_relative_to(clone) or f.stat().st_size > MAX_FILE_BYTES:
-                continue
-            try:
-                text = f.read_bytes().decode("utf-8")
-            except UnicodeDecodeError:
-                continue
-            if "\x00" not in text:
-                content += f"{FILE_RULE}\nFILE: {rel}\n{FILE_RULE}\n{text}\n\n"
-                added.append(rel)
-    final = tree + "\n" + content
-    label = f"-{a.out}" if a.out else ""
-    out = ROOT / f"{clone.name}{label}.txt"
-    out.write_text(final, encoding="utf-8")
-
-    counted = _format_token_count(final)
-    tokens, note = (token_count("Estimated tokens: " + counted) if counted else None), ""
-    if tokens is None:
-        tokens = len(final.encode()) // 4
-        note = " (estimated from size)"
-        clierr.warn(TOOL, "NO_ESTIMATE", "token recount failed", "the count is file size / 4")
-    if added:
-        note += f" (+{len(added)} named files gitingest skips: {', '.join(added)})"
-    print(f"digest: {shown(out)}  files={count + len(added)}  tokens={fmt(tokens)}{note}")
-    if count + len(added) == 0:
-        clierr.warn(TOOL, "EMPTY", "the patterns matched no files", "check -i against rr.py map; --all if they sit under a default exclude")
-    elif tokens > READ_BUDGET:
-        clierr.warn(TOOL, "TOO_BIG", f"digest is {fmt(tokens)} tokens, over the {fmt(READ_BUDGET)} one-Read budget",
-                    "drop the largest item, or split into one digest per folder with --out")
-
-
 def main():
-    p = argparse.ArgumentParser(prog="rr.py", description="map and digest remote git repos for agents")
+    p = argparse.ArgumentParser(prog="rr.py", description="clone, map and grep remote git repos for agents")
     sub = p.add_subparsers(dest="command", required=True)
-    m = sub.add_parser("map", help="clone and print estimated digest tokens per folder")
+    m = sub.add_parser("clone", help="clone and print a structure map: folders, key files, workflows")
     m.add_argument("source", help="repo URL")
     m.add_argument("--branch")
     m.add_argument("--name", help="clone folder name (default <owner>-<repo>)")
     m.add_argument("--depth", type=int, default=2, choices=range(1, 11), metavar="1-10")
-    m.add_argument("--all", action="store_true", help="count tests, translations and snapshots too")
-    d = sub.add_parser("digest", help="gitingest digest of a clone")
-    d.add_argument("source", help="clone name (from map) or folder")
-    d.add_argument("-i", "--include", action="append", default=[])
-    d.add_argument("-e", "--exclude", action="append", default=[])
-    d.add_argument("--out", help="label appended to the digest file name")
-    d.add_argument("--all", action="store_true", help="drop rr's default excludes")
     c = sub.add_parser("checkout", help="add folders or patterns to a partial clone, for grepping")
-    c.add_argument("source", help="clone name (from map) or folder")
+    c.add_argument("source", help="clone name (from clone) or folder")
     c.add_argument("patterns", nargs="+")
     g = sub.add_parser("grep", help="grep a clone inside the workshop; paths print readable from the caller")
-    g.add_argument("source", help="clone name (from map) or folder")
+    g.add_argument("source", help="clone name (from clone) or folder")
     g.add_argument("regex", help="extended regex")
     g.add_argument("paths", nargs="*", help="folders or files inside the clone (default: all)")
     g.add_argument("-i", "--ignore-case", action="store_true")
     g.add_argument("--max", type=int, default=200, help="matches to print (default 200)")
     a = p.parse_args()
-    {"map": cmd_map, "digest": cmd_digest, "checkout": cmd_checkout, "grep": cmd_grep}[a.command](a)
+    {"clone": cmd_clone, "checkout": cmd_checkout, "grep": cmd_grep}[a.command](a)
 
 
 if __name__ == "__main__":
