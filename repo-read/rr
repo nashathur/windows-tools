@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# rr: runs rr.py in the workshop's dev env, so clones, gitingest and Python always live in the sealed
+# workshop. From Windows Git Bash the arguments travel to wsl over stdin (no quoting or /path rewriting
+# on the way) and rr prints paths as \\wsl.localhost\workshop\... for Windows tools to read.
+# dev is activated directly: conda run is slower and adds its own ERROR line to every failure.
+if command -v wsl.exe >/dev/null 2>&1; then
+  printf 'export RR_WIN_PREFIX=%q; exec bash ~/src/windows-tools/repo-read/rr %s\n' \
+    '\\wsl.localhost\workshop' "$(printf '%q ' "$@")" | MSYS_NO_PATHCONV=1 wsl.exe -d workshop -- bash -l -s
+else
+  source "$HOME/miniforge3/etc/profile.d/conda.sh" && conda activate dev || exit 1
+  exec python "$(dirname "$(readlink -f "$0")")/rr.py" "$@"
+fi
